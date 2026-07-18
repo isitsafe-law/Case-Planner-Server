@@ -521,6 +521,19 @@ type DocumentGenerationResult = {
   missingFields: string[]
 }
 
+// Feeds the unified "Generated Documents" history - merged client-side with the legacy
+// document_exports list, not migrated into one schema (see build-plan step 7 follow-up).
+type DocumentGenerationHistoryItem = {
+  id: number
+  templateTitle: string
+  outputPath: string
+  renderedAt: string
+  generatedBy?: string | null
+  isDraft: boolean
+  isFinalized: boolean
+  missingFields: string[]
+}
+
 // Build-plan step 5 (unified Settings UI): Document Templates admin + Issue Tags admin.
 type DocumentTemplateSection = {
   sectionKey: string
@@ -1305,6 +1318,7 @@ function App() {
   const [platformRuntimeInputValues, setPlatformRuntimeInputValues] = useState<Record<string, string>>({})
   const [platformCaseTemplateKey, setPlatformCaseTemplateKey] = useState('')
   const [platformGenerationResult, setPlatformGenerationResult] = useState<DocumentGenerationResult | null>(null)
+  const [platformGenerationHistory, setPlatformGenerationHistory] = useState<DocumentGenerationHistoryItem[]>([])
   const [platformBusy, setPlatformBusy] = useState(false)
   const [platformTemplates, setPlatformTemplates] = useState<DocumentTemplateAdminSummary[]>([])
   const [selectedPlatformTemplateKey, setSelectedPlatformTemplateKey] = useState<string | null>(null)
@@ -1660,12 +1674,21 @@ function App() {
     }
   }
 
+  async function loadPlatformGenerationHistory(caseId: number) {
+    try {
+      setPlatformGenerationHistory(await api<DocumentGenerationHistoryItem[]>(`/api/cases/${caseId}/document-platform/generations`))
+    } catch {
+      setPlatformGenerationHistory([])
+    }
+  }
+
   async function loadWorkspace(caseId: number) {
     try {
       setErrorMessage('')
       const data = await api<WorkspaceResponse>(`/api/cases/${caseId}`)
       setWorkspace(data)
       setCaseDraft(data.case)
+      void loadPlatformGenerationHistory(caseId)
       setDeadlineDraft(emptyDeadline(caseId))
       setChecklistDraft(emptyChecklist(caseId))
       setDiscoveryDraft(emptyDiscovery(caseId))
@@ -3151,6 +3174,7 @@ function App() {
         `/api/cases/${caseId}/document-platform/templates/${platformChecklist.templateKey}/generate`,
         { method: 'POST', body: JSON.stringify({ selectedSectionKeys: platformSelectedSections, runtimeInputValues: platformRuntimeInputValues, outputFileName: null }) })
       setPlatformGenerationResult(result)
+      void loadPlatformGenerationHistory(caseId)
       setMessage('Document generated.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to generate document.')
@@ -4774,36 +4798,64 @@ function App() {
             </Panel>
 
             <Panel title="Generated Documents">
-              {workspace && workspace.documentExports.length > 0 ? (
-                <div className="table-wrap top-gap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Created</th>
-                        <th>Document Type</th>
-                        <th>Title</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {workspace.documentExports.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.createdAt.slice(0, 19).replace('T', ' ')}</td>
-                          <td>{item.documentType}</td>
-                          <td>{item.documentTitle}</td>
-                          <td><span className={`pill pill-${item.isDraft ? 'warn' : 'success'}`}>{item.isDraft ? 'Draft' : 'Finalized'}</span></td>
-                          <td>
-                            <div className="button-row compact-actions row-actions">
-                              <a className="button-like" href={`/api/document-exports/${item.id}/download`}>Download</a>
-                            </div>
-                          </td>
+              {(() => {
+                const legacyRows = (workspace?.documentExports ?? []).map((item) => ({
+                  key: `legacy-${item.id}`,
+                  createdAt: item.createdAt,
+                  source: 'Legacy' as const,
+                  documentType: item.documentType,
+                  title: item.documentTitle,
+                  isDraft: item.isDraft ?? false,
+                  missingFields: [] as string[],
+                  downloadHref: `/api/document-exports/${item.id}/download`,
+                }))
+                const platformRows = platformGenerationHistory.map((item) => ({
+                  key: `platform-${item.id}`,
+                  createdAt: item.renderedAt,
+                  source: 'Platform' as const,
+                  documentType: 'Document Platform',
+                  title: item.templateTitle,
+                  isDraft: item.isDraft,
+                  missingFields: item.missingFields,
+                  downloadHref: `/api/document-platform-generations/${item.id}/download`,
+                }))
+                const rows = [...legacyRows, ...platformRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                return rows.length > 0 ? (
+                  <div className="table-wrap top-gap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Created</th>
+                          <th>Source</th>
+                          <th>Document Type</th>
+                          <th>Title</th>
+                          <th>Status</th>
+                          <th>Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="top-gap">No generated documents yet.</p>}
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.createdAt.slice(0, 19).replace('T', ' ')}</td>
+                            <td><span className={`pill pill-${row.source === 'Platform' ? 'success' : 'neutral'}`}>{row.source}</span></td>
+                            <td>{row.documentType}</td>
+                            <td>{row.title}</td>
+                            <td>
+                              <span className={`pill pill-${row.isDraft ? 'warn' : 'success'}`}>{row.isDraft ? 'Draft' : 'Finalized'}</span>
+                              {row.missingFields.length > 0 && <span className="pill pill-warn" title={`Missing: ${row.missingFields.join(', ')}`}>Missing fields</span>}
+                            </td>
+                            <td>
+                              <div className="button-row compact-actions row-actions">
+                                <a className="button-like" href={row.downloadHref}>Download</a>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p className="top-gap">No generated documents yet.</p>
+              })()}
             </Panel>
           </div>
         )}

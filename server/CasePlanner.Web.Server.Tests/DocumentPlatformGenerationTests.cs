@@ -127,6 +127,36 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
         Assert.NotEqual(first.OutputPath, second.OutputPath);
     }
 
+    // Not a schema migration of document_exports - the case Documents tab merges this list with
+    // the legacy document_exports history client-side, since most document_exports rows (Case
+    // Summary/Review, retired custom templates) have no template to attach to here.
+    [Fact]
+    public async Task GetDocumentGenerationsForCaseAsyncReturnsNewestFirstWithTemplateTitle()
+    {
+        var caseRecord = await CreateCaseWithDrainageTagAsync();
+        var first = await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(
+            caseRecord.Id, "interrogatories_platform", ["Drainage"], new Dictionary<string, string>(), null);
+        var second = await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(
+            caseRecord.Id, "interrogatories_platform", [], new Dictionary<string, string>(), null);
+
+        var history = await _fixture.Repository.GetDocumentGenerationsForCaseAsync(caseRecord.Id);
+
+        Assert.Equal(2, history.Count);
+        Assert.Equal(second.GenerationId, history[0].Id);
+        Assert.Equal(first.GenerationId, history[1].Id);
+        Assert.All(history, item => Assert.Equal("Interrogatories & Requests for Production (Unified Platform)", item.TemplateTitle));
+    }
+
+    [Fact]
+    public async Task GetDocumentGenerationsForCaseAsyncReturnsEmptyForACaseWithNoGenerations()
+    {
+        var caseRecord = await CreateCaseWithDrainageTagAsync();
+
+        var history = await _fixture.Repository.GetDocumentGenerationsForCaseAsync(caseRecord.Id);
+
+        Assert.Empty(history);
+    }
+
     // Build-plan step 7 (cleanup): the retired IssueTagDiscoveryContent.cs held real drafted
     // interrogatory/RFP language for 14 issue tags beyond Drainage - ported into the platform
     // template as version 2 (EnsureInterrogatoriesAllIssueTagSectionsAsync) rather than lost when

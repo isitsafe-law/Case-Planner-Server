@@ -1010,6 +1010,11 @@ app.MapPost("/api/cases/{id:long}/document-platform/templates/{key}/generate", a
         return Results.BadRequest(new { error = ex.Message });
     }
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/document-platform/generations", async (long id,IDocumentPlatformService platform,CaseAccessService access,CancellationToken token) =>
+{
+    if(!await access.CanReadAsync(id,token))return Results.Forbid();
+    return Results.Ok(await platform.GetGenerationsForCaseAsync(id,token));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/document-platform-generations/{id:long}/download", async (long id,IDocumentPlatformService platform,CaseAccessService access,IDocumentStorage documents,CancellationToken token) =>
 {
     var record=await platform.GetGenerationByIdAsync(id,token);

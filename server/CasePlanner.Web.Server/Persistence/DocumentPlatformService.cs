@@ -11,6 +11,7 @@ public interface IDocumentPlatformService
     Task<DocumentGenerationChecklist?> GetChecklistAsync(long caseId, string templateKey, CancellationToken token = default);
     Task<DocumentGenerationResult> GenerateAsync(long caseId, string templateKey, DocumentGenerationRequest request, CancellationToken token = default);
     Task<DocumentGenerationRecord?> GetGenerationByIdAsync(long id, CancellationToken token = default);
+    Task<List<DocumentGenerationHistoryItem>> GetGenerationsForCaseAsync(long caseId, CancellationToken token = default);
 
     // Build-plan step 5 (unified Settings UI): Document Templates admin.
     Task<List<DocumentTemplateAdminSummary>> GetAllTemplatesAsync(CancellationToken token = default);
@@ -38,6 +39,12 @@ public sealed class SqliteDocumentPlatformService(CasePlannerRepository reposito
     {
         token.ThrowIfCancellationRequested();
         return repository.GetDocumentGenerationByIdAsync(id);
+    }
+
+    public Task<List<DocumentGenerationHistoryItem>> GetGenerationsForCaseAsync(long caseId, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return repository.GetDocumentGenerationsForCaseAsync(caseId);
     }
 
     public Task<List<DocumentTemplateAdminSummary>> GetAllTemplatesAsync(CancellationToken token = default)
@@ -87,6 +94,9 @@ public sealed class SqlServerDocumentPlatformService : IDocumentPlatformService
         throw new NotSupportedException(Message);
 
     public Task<DocumentGenerationRecord?> GetGenerationByIdAsync(long id, CancellationToken token = default) =>
+        throw new NotSupportedException(Message);
+
+    public Task<List<DocumentGenerationHistoryItem>> GetGenerationsForCaseAsync(long caseId, CancellationToken token = default) =>
         throw new NotSupportedException(Message);
 
     public Task<List<DocumentTemplateAdminSummary>> GetAllTemplatesAsync(CancellationToken token = default) =>

@@ -493,6 +493,42 @@ public sealed partial class CasePlannerRepository
         };
     }
 
+    // Feeds the case Documents tab's unified "Generated Documents" history - merged client-side
+    // with the legacy document_exports list (see DocumentGenerationHistoryItem) rather than a real
+    // schema migration, since most document_exports rows have no template to attach to here.
+    public async Task<List<DocumentGenerationHistoryItem>> GetDocumentGenerationsForCaseAsync(long caseId)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT g.id, t.title, g.output_path, g.rendered_at, g.generated_by, g.is_draft, g.is_finalized, g.missing_fields_json
+            FROM document_generations g
+            JOIN document_templates t ON t.id = g.template_id
+            WHERE g.case_id = @caseId
+            ORDER BY g.rendered_at DESC
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId);
+        var list = new List<DocumentGenerationHistoryItem>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new DocumentGenerationHistoryItem
+            {
+                Id = reader.GetInt64(0),
+                TemplateTitle = reader.GetString(1),
+                OutputPath = reader.GetString(2),
+                RenderedAt = reader.GetString(3),
+                GeneratedBy = reader.IsDBNull(4) ? null : reader.GetString(4),
+                IsDraft = reader.GetInt64(5) == 1,
+                IsFinalized = reader.GetInt64(6) == 1,
+                MissingFields = JsonSerializer.Deserialize<List<string>>(reader.GetString(7)) ?? [],
+            });
+        }
+
+        return list;
+    }
+
     private static string SanitizeFileName(string value)
     {
         var invalid = Path.GetInvalidFileNameChars();

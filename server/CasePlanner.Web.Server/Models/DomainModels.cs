@@ -1387,6 +1387,23 @@ public sealed class DocumentGenerationRecord
     public List<string> MissingFields { get; set; } = [];
 }
 
+// Lists a case's document_generations rows for the unified "Generated Documents" history view -
+// merged client-side with the legacy document_exports list rather than migrated into one schema,
+// since most legacy rows (Case Summary/Review, retired custom templates) have no template to
+// attach to in document_generations. Carries the template title (not on DocumentGenerationRecord)
+// since that's what the history list actually displays.
+public sealed class DocumentGenerationHistoryItem
+{
+    public long Id { get; set; }
+    public string TemplateTitle { get; set; } = "";
+    public string OutputPath { get; set; } = "";
+    public string RenderedAt { get; set; } = "";
+    public string? GeneratedBy { get; set; }
+    public bool IsDraft { get; set; } = true;
+    public bool IsFinalized { get; set; }
+    public List<string> MissingFields { get; set; } = [];
+}
+
 // Build-plan step 4 (unified case UI): the checklist the generation form shows before rendering -
 // every named section available for this template, pre-checked from the case's actual issue
 // tags, freely togglable, with overlap warnings surfaced up front rather than discovered after

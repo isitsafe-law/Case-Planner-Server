@@ -23,10 +23,10 @@ import { getApiAccessToken } from './auth'
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
-type CaseTabKey = 'overview' | 'details' | 'deadlines' | 'checklist' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'hearings'
+type CaseTabKey = 'overview' | 'details' | 'deadlines' | 'checklist' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'hearings' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
 type ThemeMode = 'light' | 'dark' | 'system'
-type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion'
+type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
 type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags'
@@ -222,10 +222,29 @@ type TrialMotion = {
 
 type PublicationEntry = {
   id: number
+  rowVersion?: string | null
   caseId: number
+  publicationNumber: string
   publicationDate?: string | null
   newspaper?: string | null
+  proofFiled: boolean
   proofFiledDate?: string | null
+  serviceResolved: boolean
+  notes?: string | null
+}
+
+const serviceLogStatuses = ['Served', 'Not Served', 'Attempted', 'Refused'] as const
+
+type ServiceLogEntry = {
+  id: number
+  caseId: number
+  partyName: string
+  status: string
+  method?: string | null
+  eventDate?: string | null
+  notes?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 type PublicationRecord = {
@@ -331,10 +350,13 @@ type CaseNote = {
   updatedAt: string
 }
 
+const eventTypes = ['Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Other'] as const
+
 type Hearing = {
   id: number
   caseId: number
   title: string
+  eventType?: string | null
   hearingDate?: string | null
   location?: string | null
   description?: string | null
@@ -435,6 +457,7 @@ type WorkspaceResponse = {
   discoveryItems: DiscoveryItem[]
   publicationEntries: PublicationEntry[]
   publication: PublicationRecord
+  serviceLogEntries: ServiceLogEntry[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -705,6 +728,14 @@ const RISK_ANALYSIS_SLOT_OPTIONS: Record<string, string[]> = {
 
 const HOURLY_FEE_RISK_OPTIONS = [20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, 65000, 70000, 75000, 80000, 85000, 90000]
 
+function emptyServiceLogEntry(caseId: number): ServiceLogEntry {
+  return { id: 0, caseId, partyName: '', status: 'Not Served', method: '', eventDate: '', notes: '' }
+}
+
+function emptyPublicationEntry(caseId: number): PublicationEntry {
+  return { id: 0, caseId, publicationNumber: '', publicationDate: '', newspaper: '', proofFiled: false, proofFiledDate: '', serviceResolved: false, notes: '' }
+}
+
 function offerMakerFromLabel(label: string): OfferMaker {
   return label.toUpperCase().includes('ASHC') ? 'ASHC' : 'Landowner'
 }
@@ -778,7 +809,8 @@ function reportCellValue(record: CaseRecord, column: ReportColumnKey): string {
 
 const caseTabs: { key: CaseTabKey; label: string }[] = [
   { key: 'overview', label: 'Status' },
-  { key: 'hearings', label: 'Hearings' },
+  { key: 'servicePublication', label: 'Service & Publication' },
+  { key: 'hearings', label: 'Events' },
   { key: 'deadlines', label: 'Deadlines' },
   { key: 'checklist', label: 'Tasks' },
   { key: 'discovery', label: 'Discovery' },
@@ -834,6 +866,7 @@ const modalKindLabels: Record<ModalKind, string> = {
   witness: 'Witness',
   exhibit: 'Exhibit',
   trialMotion: 'Trial Motion',
+  event: 'Event',
 }
 
 const discoveryStatuses = ['Waiting for Responses', 'Follow-Up Needed', 'Responses Received', 'Complete', 'Reopened']
@@ -1006,6 +1039,10 @@ function emptyWitness(caseId: number): Witness {
 
 function emptyExhibit(caseId: number): Exhibit {
   return { id: 0, caseId, label: '', side: 'ASHC', description: '', status: 'Pre-Labeled', notes: '' }
+}
+
+function emptyHearing(caseId: number): Hearing {
+  return { id: 0, caseId, title: '', eventType: 'Hearing', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' }
 }
 
 function emptyTrialMotion(caseId: number): TrialMotion {
@@ -1295,6 +1332,7 @@ function App() {
   const [workQueueSort, setWorkQueueSort] = useState<'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'>('dueAsc')
   const [workQueueSearch, setWorkQueueSearch] = useState('')
   const [caseSearch, setCaseSearch] = useState('')
+  const [topbarSearch, setTopbarSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [caseStatusFilter, setCaseStatusFilter] = useState('')
   const [countyFilter, setCountyFilter] = useState('')
@@ -1351,6 +1389,12 @@ function App() {
   const [offerLog, setOfferLog] = useState<RiskAnalysisOfferLogEntry[]>([])
   const [offerLogDraft, setOfferLogDraft] = useState<RiskAnalysisOfferLogEntry>(() => emptyOfferLogEntry(0))
   const [offerLogFormOpen, setOfferLogFormOpen] = useState(false)
+  const [serviceLogEntries, setServiceLogEntries] = useState<ServiceLogEntry[]>([])
+  const [serviceLogDraft, setServiceLogDraft] = useState<ServiceLogEntry>(() => emptyServiceLogEntry(0))
+  const [serviceLogFormOpen, setServiceLogFormOpen] = useState(false)
+  const [publicationEntries, setPublicationEntries] = useState<PublicationEntry[]>([])
+  const [publicationEntryDraft, setPublicationEntryDraft] = useState<PublicationEntry>(() => emptyPublicationEntry(0))
+  const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
   const [narrativeInputDraft, setNarrativeInputDraft] = useState<RiskNarrativeManualInputs | null>(null)
   const [narrativeGenerating, setNarrativeGenerating] = useState(false)
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([])
@@ -1435,7 +1479,7 @@ function App() {
   // Type-ahead for the topbar search: debounced fetch against the same /api/cases search the
   // full list uses (matches case number, name, job number, and tract).
   useEffect(() => {
-    const query = caseSearch.trim()
+    const query = topbarSearch.trim()
     if (query.length < 2) {
       setSearchSuggestions([])
       setSearchDropdownOpen(false)
@@ -1450,7 +1494,7 @@ function App() {
         .catch(() => setSearchSuggestions([]))
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [caseSearch])
+  }, [topbarSearch])
 
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
@@ -1686,6 +1730,12 @@ function App() {
       setChecklistDraft(emptyChecklist(caseId))
       setDiscoveryDraft(emptyDiscovery(caseId))
       setPublicationDraft(data.publication ?? emptyPublication(caseId))
+      setServiceLogEntries(data.serviceLogEntries ?? [])
+      setServiceLogDraft(emptyServiceLogEntry(caseId))
+      setServiceLogFormOpen(false)
+      setPublicationEntries(data.publicationEntries ?? [])
+      setPublicationEntryDraft(emptyPublicationEntry(caseId))
+      setPublicationEntryFormOpen(false)
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -1740,6 +1790,8 @@ function App() {
       setExhibitDraft(mode === 'edit' ? exhibitDraft : emptyExhibit(caseId))
     } else if (kind === 'trialMotion') {
       setTrialMotionDraft(mode === 'edit' ? trialMotionDraft : emptyTrialMotion(caseId))
+    } else if (kind === 'event') {
+      setHearingDraft(mode === 'edit' ? hearingDraft : emptyHearing(caseId))
     }
   }
 
@@ -1776,6 +1828,8 @@ function App() {
       setExhibitDraft(emptyExhibit(selectedCaseId ?? caseDraft.id))
     } else if (kind === 'trialMotion') {
       setTrialMotionDraft(emptyTrialMotion(selectedCaseId ?? caseDraft.id))
+    } else if (kind === 'event') {
+      setHearingDraft(emptyHearing(selectedCaseId ?? caseDraft.id))
     }
   }
 
@@ -1819,9 +1873,11 @@ function App() {
 
   function submitGlobalSearch(event: FormEvent) {
     event.preventDefault()
+    const query = topbarSearch
     setPage('cases')
     setCasesView('list')
-    void loadCasesWithOverride({ search: caseSearch })
+    setCaseSearch(query)
+    void loadCasesWithOverride({ search: query })
   }
 
   function goToTriageQueue() {
@@ -2114,11 +2170,13 @@ function App() {
   function startNewHearing() {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
+    setHearingDraft(emptyHearing(caseId))
+    openModal('event', 'create')
   }
 
   function startEditHearing(hearing: Hearing) {
     setHearingDraft(hearing)
+    openModal('event', 'edit')
   }
 
   function startDeadlineModal(item?: DeadlineItem) {
@@ -2512,7 +2570,7 @@ function App() {
   }
 
   async function persistDeadline(draft: DeadlineItem, successMessage: string, closeAfterSave: boolean) {
-    const caseId = selectedCaseId ?? caseDraft.id
+    const caseId = draft.caseId || selectedCaseId || caseDraft.id
     if (!caseId) return
     const payload = serializeDeadlineDraft(draft, caseId)
     const validation = validateDeadlineDraft(payload)
@@ -2538,7 +2596,7 @@ function App() {
   }
 
   async function persistChecklist(draft: ChecklistItem, successMessage: string, closeAfterSave: boolean) {
-    const caseId = selectedCaseId ?? caseDraft.id
+    const caseId = draft.caseId || selectedCaseId || caseDraft.id
     if (!caseId) return
     const payload = serializeChecklistDraft(draft, caseId)
     const validation = validateChecklistDraft(payload)
@@ -2560,33 +2618,6 @@ function App() {
       const text = error instanceof Error ? error.message : 'Unable to save task.'
       setErrorMessage(text)
       setModalFeedback(text)
-    }
-  }
-
-  // Quick actions for the global Work Queues page. persistDeadline/persistChecklist derive
-  // caseId from the ambient selectedCaseId/caseDraft.id, which is wrong here - the Work Queues
-  // page spans every case and has no "current" case, so these take the item's own caseId
-  // explicitly instead of risking silently reassigning the item to whatever case happens to be
-  // selected in the background.
-  async function markGlobalDeadlineDone(item: DeadlineItem) {
-    try {
-      setErrorMessage('')
-      await api<DeadlineItem>('/api/deadlines', { method: 'POST', body: JSON.stringify(serializeDeadlineDraft({ ...item, status: 'Done' }, item.caseId)) })
-      setQueueDeadlines((current) => current.filter((d) => d.id !== item.id))
-      setMessage('Deadline marked done.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the deadline.')
-    }
-  }
-
-  async function markGlobalChecklistDone(item: ChecklistItem) {
-    try {
-      setErrorMessage('')
-      await api<ChecklistItem>('/api/checklist', { method: 'POST', body: JSON.stringify(serializeChecklistDraft({ ...item, status: 'Done' }, item.caseId)) })
-      setQueueChecklist((current) => current.filter((c) => c.id !== item.id))
-      setMessage('Task marked done.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the task.')
     }
   }
 
@@ -2631,10 +2662,8 @@ function App() {
     })
   }
 
-  async function applyBulkDeadlineAction(action: 'complete' | 'reopen' | 'dueDate' | 'delete') {
-    const caseId = selectedCaseId ?? workspace?.case.id
-    if (!caseId || !workspace) return
-    const selectedItems = workspace.deadlines.filter((item) => selectedDeadlineIds.includes(item.id))
+  async function applyBulkDeadlineAction(action: 'complete' | 'reopen' | 'dueDate' | 'delete', items: DeadlineItem[]) {
+    const selectedItems = items.filter((item) => selectedDeadlineIds.includes(item.id))
     if (selectedItems.length === 0) {
       setMessage('Select at least one deadline first.')
       return
@@ -2658,10 +2687,10 @@ function App() {
             : action === 'reopen'
               ? { ...item, status: 'Reopened' }
               : { ...item, dueDate: bulkDeadlineDueDate }
-          return api<DeadlineItem>('/api/deadlines', { method: 'POST', body: JSON.stringify(serializeDeadlineDraft(updated, caseId)) })
+          return api<DeadlineItem>('/api/deadlines', { method: 'POST', body: JSON.stringify(serializeDeadlineDraft(updated, item.caseId)) })
         }))
       }
-      await refreshAll(caseId)
+      await refreshAll(selectedCaseId ?? undefined)
       setSelectedDeadlineIds([])
       setBulkDeadlineDueDate('')
       setMessage(
@@ -2678,10 +2707,8 @@ function App() {
     }
   }
 
-  async function applyBulkChecklistAction(action: 'complete' | 'reopen' | 'dueDate' | 'delete') {
-    const caseId = selectedCaseId ?? workspace?.case.id
-    if (!caseId || !workspace) return
-    const selectedItems = workspace.checklistItems.filter((item) => selectedChecklistIds.includes(item.id))
+  async function applyBulkChecklistAction(action: 'complete' | 'reopen' | 'dueDate' | 'delete', items: ChecklistItem[]) {
+    const selectedItems = items.filter((item) => selectedChecklistIds.includes(item.id))
     if (selectedItems.length === 0) {
       setMessage('Select at least one task first.')
       return
@@ -2705,10 +2732,10 @@ function App() {
             : action === 'reopen'
               ? { ...item, status: 'Reopened' }
               : { ...item, dueDate: bulkChecklistDueDate }
-          return api<ChecklistItem>('/api/checklist', { method: 'POST', body: JSON.stringify(serializeChecklistDraft(updated, caseId)) })
+          return api<ChecklistItem>('/api/checklist', { method: 'POST', body: JSON.stringify(serializeChecklistDraft(updated, item.caseId)) })
         }))
       }
-      await refreshAll(caseId)
+      await refreshAll(selectedCaseId ?? undefined)
       setSelectedChecklistIds([])
       setBulkChecklistDueDate('')
       setMessage(
@@ -3421,48 +3448,53 @@ function App() {
     }
   }
 
-  async function saveHearing() {
+  async function saveHearing(event: FormEvent) {
+    event.preventDefault()
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
     if (!hearingDraft.title.trim()) {
-      setErrorMessage('Enter a hearing title before saving.')
+      setModalFeedback('Enter an event title before saving.', { title: 'Title is required.' })
       return
     }
     try {
       setErrorMessage('')
+      clearModalFeedback()
       await api<Hearing>('/api/hearings', {
         method: 'POST',
         body: JSON.stringify({
           ...hearingDraft,
           caseId,
           title: hearingDraft.title.trim(),
+          eventType: hearingDraft.eventType?.trim() || 'Hearing',
           hearingDate: normalizeDateValue(hearingDraft.hearingDate),
           location: normalizeTextValue(hearingDraft.location),
           description: normalizeTextValue(hearingDraft.description),
         }),
       })
       await refreshAll(caseId)
-      setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
-      setMessage('Hearing saved.')
+      setHearingDraft(emptyHearing(caseId))
+      setActiveModal(null)
+      setModalDirty(false)
+      setMessage('Event saved.')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the hearing.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the event.')
     }
   }
 
   async function deleteHearing(hearing: Hearing) {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    if (!window.confirm(`Delete hearing "${hearing.title}"?`)) return
+    if (!window.confirm(`Delete event "${hearing.title}"?`)) return
     try {
       setErrorMessage('')
       await api(`/api/hearings/${hearing.id}`, { method: 'DELETE' })
       await refreshAll(caseId)
       if (hearingDraft.id === hearing.id) {
-        setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
+        setHearingDraft(emptyHearing(caseId))
       }
-      setMessage('Hearing deleted.')
+      setMessage('Event deleted.')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the hearing.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the event.')
     }
   }
 
@@ -3784,6 +3816,92 @@ function App() {
       setMessage('Old offer removed.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to remove the old offer.')
+    }
+  }
+
+  function startNewServiceLogEntry() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    setServiceLogDraft(emptyServiceLogEntry(caseId))
+    setServiceLogFormOpen(true)
+  }
+
+  function startEditServiceLogEntry(entry: ServiceLogEntry) {
+    setServiceLogDraft(entry)
+    setServiceLogFormOpen(true)
+  }
+
+  async function saveServiceLogEntry() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    if (!serviceLogDraft.partyName.trim()) {
+      setErrorMessage('Enter a party name before saving.')
+      return
+    }
+    try {
+      setErrorMessage('')
+      await api('/api/service-log', { method: 'POST', body: JSON.stringify({ ...serviceLogDraft, caseId }) })
+      const entries = await api<ServiceLogEntry[]>(`/api/cases/${caseId}/service-log`)
+      setServiceLogEntries(entries)
+      setServiceLogDraft(emptyServiceLogEntry(caseId))
+      setServiceLogFormOpen(false)
+      setMessage('Service log entry saved.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the service log entry.')
+    }
+  }
+
+  async function deleteServiceLogEntry(entry: ServiceLogEntry) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId || !window.confirm(`Remove the service entry for "${entry.partyName}"?`)) return
+    try {
+      setErrorMessage('')
+      await api(`/api/service-log/${entry.id}`, { method: 'DELETE' })
+      setServiceLogEntries(serviceLogEntries.filter((e) => e.id !== entry.id))
+      if (serviceLogDraft.id === entry.id) setServiceLogDraft(emptyServiceLogEntry(caseId))
+      setMessage('Service log entry removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove the service log entry.')
+    }
+  }
+
+  function startNewPublicationEntry() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    setPublicationEntryDraft(emptyPublicationEntry(caseId))
+    setPublicationEntryFormOpen(true)
+  }
+
+  function startEditPublicationEntry(entry: PublicationEntry) {
+    setPublicationEntryDraft(entry)
+    setPublicationEntryFormOpen(true)
+  }
+
+  async function savePublicationEntry() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    try {
+      setErrorMessage('')
+      await api('/api/publication-service', { method: 'POST', body: JSON.stringify({ ...publicationEntryDraft, caseId }) })
+      const entries = await api<PublicationEntry[]>(`/api/cases/${caseId}/publication-service`)
+      setPublicationEntries(entries)
+      setPublicationEntryDraft(emptyPublicationEntry(caseId))
+      setPublicationEntryFormOpen(false)
+      setMessage('Publication entry saved.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the publication entry.')
+    }
+  }
+
+  async function deletePublicationEntry(entry: PublicationEntry) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId || !window.confirm('Remove this publication entry?')) return
+    try {
+      setErrorMessage('')
+      await api(`/api/publication-service/${entry.id}`, { method: 'DELETE' })
+      setPublicationEntries(publicationEntries.filter((e) => e.id !== entry.id))
+      if (publicationEntryDraft.id === entry.id) setPublicationEntryDraft(emptyPublicationEntry(caseId))
+      setMessage('Publication entry removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove the publication entry.')
     }
   }
 
@@ -4257,6 +4375,18 @@ function App() {
             </div>
           )}
           <div className="metric-tile-row">
+            {selectedCase.filingDate && (
+              <div className="metric-tile">
+                <span>Filing Date</span>
+                <strong>{displayDate(selectedCase.filingDate)}</strong>
+              </div>
+            )}
+            {selectedCase.dateOfTaking && (
+              <div className="metric-tile">
+                <span>Date of Taking</span>
+                <strong>{displayDate(selectedCase.dateOfTaking)}</strong>
+              </div>
+            )}
             {selectedCase.trialDate && (
               <div className="metric-tile">
                 <span>Trial / hearing</span>
@@ -4465,6 +4595,108 @@ function App() {
           </div>
         )}
 
+        {caseTab === 'servicePublication' && (
+          <div className="workspace-sections">
+            <Panel title="Service &amp; Publication">
+              <p className="helper-text">Primary factual record for service perfection and publication.</p>
+              <label className="toggle-inline"><span>Service Perfected</span><input type="checkbox" checked={selectedCase.servicePerfected} onChange={(event) => void toggleServicePerfected(event.target.checked)} /></label>
+              <form className="form-grid top-gap-small" onSubmit={savePublication}>
+                <label><span>First Publication Date</span><input type="date" value={publicationDraft.firstPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, firstPublicationDate: event.target.value })} /></label>
+                <label><span>Second Publication Date</span><input type="date" min={publicationDraft.firstPublicationDate || undefined} value={publicationDraft.secondPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, secondPublicationDate: event.target.value })} /></label>
+                <label><span>Newspaper / Publication Name</span><input value={publicationDraft.publicationName || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, publicationName: event.target.value, overrideMissingPublicationName: false })} /></label>
+                <label className="toggle-inline"><span>Marked Perfected</span><input type="checkbox" checked={publicationDraft.markedPerfected} onChange={(event) => setPublicationDraft({ ...publicationDraft, markedPerfected: event.target.checked })} /></label>
+                {(publicationDraft.firstPublicationDate || publicationDraft.secondPublicationDate) && !publicationDraft.publicationName && <label className="toggle-inline full-span"><span>Override missing publication name warning</span><input type="checkbox" checked={Boolean(publicationDraft.overrideMissingPublicationName)} onChange={(event) => setPublicationDraft({ ...publicationDraft, overrideMissingPublicationName: event.target.checked })} /></label>}
+                <div className="button-row compact-actions full-span"><button className="primary" type="submit">Save Service &amp; Publication</button></div>
+                <p className="helper-text full-span">Last updated {displayDateTime(workspace?.publication?.lastUpdatedAt)} by {workspace?.publication?.lastUpdatedBy || 'Local development user'}.</p>
+              </form>
+            </Panel>
+
+            <Panel title="Service Log" headerAction={<button className="primary" onClick={startNewServiceLogEntry}>Add Service Entry</button>}>
+              <p className="helper-text">Track each defendant separately - who's served, who isn't, method, dates, and attempts.</p>
+              {serviceLogFormOpen && (
+                <form className="form-grid top-gap-small" onSubmit={(event) => { event.preventDefault(); void saveServiceLogEntry() }}>
+                  <label><span>Party Name</span><input value={serviceLogDraft.partyName} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, partyName: event.target.value })} placeholder="Defendant name" required /></label>
+                  <label><span>Status</span><select value={serviceLogDraft.status} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, status: event.target.value })}>{serviceLogStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+                  <label><span>Method</span><input value={serviceLogDraft.method || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, method: event.target.value })} placeholder="e.g. Certified mail, Sheriff, Publication" /></label>
+                  <label><span>Date</span><input type="date" value={serviceLogDraft.eventDate || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, eventDate: event.target.value })} /></label>
+                  <label className="full-span"><span>Notes</span><textarea value={serviceLogDraft.notes || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, notes: event.target.value })} placeholder="Attempt details, wrangling notes" /></label>
+                  <div className="button-row compact-actions full-span">
+                    <button className="primary" type="submit">{serviceLogDraft.id === 0 ? 'Save Entry' : 'Update Entry'}</button>
+                    <button type="button" onClick={() => setServiceLogFormOpen(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+              {serviceLogEntries.length === 0 ? <p className="top-gap-small">No parties logged yet.</p> : (
+                <div className="table-wrap top-gap-small">
+                  <table className="compact-table">
+                    <thead><tr><th>Party</th><th>Status</th><th>Method</th><th>Date</th><th>Notes</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {serviceLogEntries.map((entry) => (
+                        <tr key={entry.id}>
+                          <td>{entry.partyName}</td>
+                          <td><span className={`pill pill-${entry.status === 'Served' ? 'success' : entry.status === 'Refused' ? 'danger' : entry.status === 'Attempted' ? 'warn' : 'neutral'}`}>{entry.status}</span></td>
+                          <td>{entry.method || 'Not set'}</td>
+                          <td>{displayDate(entry.eventDate)}</td>
+                          <td>{entry.notes || '—'}</td>
+                          <td>
+                            <div className="button-row compact-actions row-actions">
+                              <button onClick={() => startEditServiceLogEntry(entry)}>Edit</button>
+                              <button onClick={() => void deleteServiceLogEntry(entry)}>Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Publication" headerAction={<button className="primary" onClick={startNewPublicationEntry}>Add Publication Entry</button>}>
+              <p className="helper-text">Multiple publication attempts for unknown/unlocatable owners - newspaper, dates, and proof filed.</p>
+              {publicationEntryFormOpen && (
+                <form className="form-grid top-gap-small" onSubmit={(event) => { event.preventDefault(); void savePublicationEntry() }}>
+                  <label><span>Publication Number</span><input value={publicationEntryDraft.publicationNumber} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, publicationNumber: event.target.value })} placeholder="e.g. 1st, 2nd" /></label>
+                  <label><span>Newspaper</span><input value={publicationEntryDraft.newspaper || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, newspaper: event.target.value })} /></label>
+                  <label><span>Publication Date</span><input type="date" value={publicationEntryDraft.publicationDate || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, publicationDate: event.target.value })} /></label>
+                  <label className="toggle-inline"><span>Proof Filed</span><input type="checkbox" checked={publicationEntryDraft.proofFiled} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, proofFiled: event.target.checked })} /></label>
+                  {publicationEntryDraft.proofFiled && <label><span>Proof Filed Date</span><input type="date" value={publicationEntryDraft.proofFiledDate || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, proofFiledDate: event.target.value })} /></label>}
+                  <label className="toggle-inline"><span>Service Resolved</span><input type="checkbox" checked={publicationEntryDraft.serviceResolved} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, serviceResolved: event.target.checked })} /></label>
+                  <label className="full-span"><span>Notes</span><textarea value={publicationEntryDraft.notes || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, notes: event.target.value })} /></label>
+                  <div className="button-row compact-actions full-span">
+                    <button className="primary" type="submit">{publicationEntryDraft.id === 0 ? 'Save Entry' : 'Update Entry'}</button>
+                    <button type="button" onClick={() => setPublicationEntryFormOpen(false)}>Cancel</button>
+                  </div>
+                </form>
+              )}
+              {publicationEntries.length === 0 ? <p className="top-gap-small">No publication entries yet.</p> : (
+                <div className="table-wrap top-gap-small">
+                  <table className="compact-table">
+                    <thead><tr><th>#</th><th>Newspaper</th><th>Date</th><th>Proof Filed</th><th>Resolved</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {publicationEntries.map((entry) => (
+                        <tr key={entry.id}>
+                          <td>{entry.publicationNumber || 'Not set'}</td>
+                          <td>{entry.newspaper || 'Not set'}</td>
+                          <td>{displayDate(entry.publicationDate)}</td>
+                          <td>{entry.proofFiled ? displayDate(entry.proofFiledDate) : 'No'}</td>
+                          <td>{entry.serviceResolved ? 'Yes' : 'No'}</td>
+                          <td>
+                            <div className="button-row compact-actions row-actions">
+                              <button onClick={() => startEditPublicationEntry(entry)}>Edit</button>
+                              <button onClick={() => void deletePublicationEntry(entry)}>Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+          </div>
+        )}
+
         {caseTab === 'hearings' && (
           <div className="workspace-sections">
             <Panel title="Trial / Hearing Date">
@@ -4481,41 +4713,29 @@ function App() {
               </div>
             </Panel>
 
-            <div className="workspace-panel-grid two-col">
-              <Panel title={hearingDraft.id === 0 ? 'New Hearing' : 'Edit Hearing'}>
-                <div className="form-grid">
-                  <label><span>Title</span><input value={hearingDraft.title} onChange={(event) => setHearingDraft({ ...hearingDraft, title: event.target.value })} placeholder="e.g. Motion Hearing, Trial" /></label>
-                  <label><span>Date</span><input type="date" value={hearingDraft.hearingDate || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, hearingDate: event.target.value })} /></label>
-                  <label><span>Location</span><input value={hearingDraft.location || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, location: event.target.value })} placeholder="Courtroom, address, or venue" /></label>
-                  <label className="full-span"><span>Description</span><textarea value={hearingDraft.description || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, description: event.target.value })} placeholder="What this hearing covers" /></label>
-                </div>
-                <div className="button-row compact-actions top-gap-small">
-                  <button className="primary" onClick={() => void saveHearing()}>{hearingDraft.id === 0 ? 'Save Hearing' : 'Update Hearing'}</button>
-                  <button onClick={startNewHearing}>Clear</button>
-                </div>
-                {hearingDraft.updatedAt && <p className="helper-text top-gap-small">Last edited {displayDateTime(hearingDraft.updatedAt)}.</p>}
-              </Panel>
-
-              <Panel title="Hearings">
-                {workspace && workspace.hearings.length > 0 ? (
-                  <div className="stacked-panels compact-stack">
-                    {workspace.hearings.map((hearing) => (
-                      <article key={hearing.id} className="summary-card note-card">
-                        <div className="button-row split-row">
+            <Panel title="Events" headerAction={<button className="primary" onClick={startNewHearing}>Add Event</button>}>
+              <p className="helper-text">A dated record of what's happened in the case - hearings, depositions, and anything else worth logging.</p>
+              {workspace && workspace.hearings.length > 0 ? (
+                <div className="stacked-panels compact-stack top-gap-small">
+                  {workspace.hearings.map((hearing) => (
+                    <article key={hearing.id} className="summary-card note-card">
+                      <div className="button-row split-row">
+                        <div>
+                          <span className="pill pill-neutral inline-pill">{hearing.eventType || 'Hearing'}</span>
                           <strong>{hearing.title}</strong>
-                          <div className="button-row compact-actions row-actions">
-                            <button onClick={() => startEditHearing(hearing)}>Edit</button>
-                            <button onClick={() => void deleteHearing(hearing)}>Delete</button>
-                          </div>
                         </div>
-                        <p className="helper-text">{displayDate(hearing.hearingDate)}{hearing.location ? ` | ${hearing.location}` : ''}</p>
-                        {hearing.description && <p className="preformatted-note top-gap-small">{hearing.description}</p>}
-                      </article>
-                    ))}
-                  </div>
-                ) : <p>No hearings logged yet. Use this tab as a quick reference alongside your calendaring system.</p>}
-              </Panel>
-            </div>
+                        <div className="button-row compact-actions row-actions">
+                          <button onClick={() => startEditHearing(hearing)}>Edit</button>
+                          <button onClick={() => void deleteHearing(hearing)}>Delete</button>
+                        </div>
+                      </div>
+                      <p className="helper-text">{displayDate(hearing.hearingDate)}{hearing.location ? ` | ${hearing.location}` : ''}</p>
+                      {hearing.description && <p className="preformatted-note top-gap-small">{hearing.description}</p>}
+                    </article>
+                  ))}
+                </div>
+              ) : <p className="top-gap-small">No events logged yet. Use this tab as a quick reference alongside your calendaring system.</p>}
+            </Panel>
           </div>
         )}
 
@@ -4565,28 +4785,28 @@ function App() {
 
         {caseTab === 'discovery' && (
           <div className="workspace-sections">
-            {discoveryPosture && (
-              <Panel title="Discovery Overview">
-                <div className="discovery-overview-row"><label className="discovery-overview-strategy"><span>Strategy</span><select value={discoveryPosture.strategy} onChange={(event) => { const next = { ...discoveryPosture, strategy: event.target.value }; setDiscoveryPosture(next); void api<DiscoveryPosture>(`/api/cases/${next.caseId}/discovery-posture`, { method: 'POST', body: JSON.stringify(next) }).then(setDiscoveryPosture).catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Unable to update discovery strategy.')) }}>{DISCOVERY_STRATEGIES.map((strategy) => <option key={strategy}>{strategy}</option>)}</select></label>
-                <label className="toggle-inline discovery-complete-toggle"><span>Discovery Complete</span><input type="checkbox" checked={discoveryPosture.isComplete} onChange={(event) => { const next = { ...discoveryPosture, isComplete: event.target.checked }; setDiscoveryPosture(next); void api<DiscoveryPosture>(`/api/cases/${next.caseId}/discovery-posture`, { method: 'POST', body: JSON.stringify(next) }).then(setDiscoveryPosture).catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Unable to update discovery status.')) }} /></label></div>
-                <p className="helper-text">{discoveryPosture.isComplete ? `Discovery Complete${discoveryPosture.completionChangedAt ? ` · ${displayDateTime(discoveryPosture.completionChangedAt)}` : ''}${discoveryPosture.completionChangedBy ? ` by ${discoveryPosture.completionChangedBy}` : ''}` : 'Discovery remains open. Individual requests and deadlines are unchanged.'}</p>
-              </Panel>
-            )}
-            <Panel title="Discovery Details">
+            <Panel title="Discovery Strategy">
               {!selectedCase ? <p>Save the case first to set a discovery strategy.</p> : !discoveryPosture ? <p>Loading...</p> : !discoveryStrategyEditing ? (
-                <div className="button-row split-row">
-                  <div>
-                    <strong>{discoveryPosture.strategy}</strong>
-                    <div className="flag-text muted">
-                      {discoveryPosture.nextReviewDate ? `Next review ${displayDate(discoveryPosture.nextReviewDate)}` : 'No next review date'}
-                      {discoveryPosture.nextDecision ? ` | ${discoveryPosture.nextDecision}` : ''}
+                <>
+                  <div className="button-row split-row">
+                    <div>
+                      <strong>{discoveryPosture.strategy}</strong>
+                      <div className="flag-text muted">
+                        {discoveryPosture.nextReviewDate ? `Next review ${displayDate(discoveryPosture.nextReviewDate)}` : 'No next review date'}
+                        {discoveryPosture.nextDecision ? ` | ${discoveryPosture.nextDecision}` : ''}
+                      </div>
+                    </div>
+                    <div className="button-row compact-actions row-actions">
+                      {discoveryPosture.isComplete && <span className="pill pill-success">Complete</span>}
+                      <button onClick={() => setDiscoveryStrategyEditing(true)}>Edit</button>
                     </div>
                   </div>
-                  <div className="button-row compact-actions row-actions">
-                    {discoveryPosture.isComplete && <span className="pill pill-success">Complete</span>}
-                    <button onClick={() => setDiscoveryStrategyEditing(true)}>Edit</button>
+                  <div className="discovery-overview-row top-gap-small">
+                    <label className="discovery-overview-strategy"><span>Quick-change strategy</span><select value={discoveryPosture.strategy} onChange={(event) => { const next = { ...discoveryPosture, strategy: event.target.value }; setDiscoveryPosture(next); void api<DiscoveryPosture>(`/api/cases/${next.caseId}/discovery-posture`, { method: 'POST', body: JSON.stringify(next) }).then(setDiscoveryPosture).catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Unable to update discovery strategy.')) }}>{DISCOVERY_STRATEGIES.map((strategy) => <option key={strategy}>{strategy}</option>)}</select></label>
+                    <label className="toggle-inline discovery-complete-toggle"><span>Discovery Complete</span><input type="checkbox" checked={discoveryPosture.isComplete} onChange={(event) => { const next = { ...discoveryPosture, isComplete: event.target.checked }; setDiscoveryPosture(next); void api<DiscoveryPosture>(`/api/cases/${next.caseId}/discovery-posture`, { method: 'POST', body: JSON.stringify(next) }).then(setDiscoveryPosture).catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Unable to update discovery status.')) }} /></label>
                   </div>
-                </div>
+                  <p className="helper-text top-gap-small">{discoveryPosture.isComplete ? `Discovery Complete${discoveryPosture.completionChangedAt ? ` · ${displayDateTime(discoveryPosture.completionChangedAt)}` : ''}${discoveryPosture.completionChangedBy ? ` by ${discoveryPosture.completionChangedBy}` : ''}` : 'Discovery remains open. Individual requests and deadlines are unchanged.'}</p>
+                </>
               ) : (
                 <>
                   <div className="form-grid">
@@ -4848,74 +5068,13 @@ function App() {
 
         {caseTab === 'riskAnalysis' && (
           <div className="workspace-sections">
-            <Panel title="Case & Deposit Summary">
-              <div className="metric-tile-row">
-                <div className="metric-tile"><span>Initial Deposit</span><strong>{displayCurrency(selectedCase.depositAmount)}</strong></div>
-                <div className="metric-tile"><span>Additional Deposit</span><strong>{displayCurrency(selectedCase.additionalDepositAmount)}</strong></div>
-                <div className="metric-tile"><span>Total Deposited</span><strong>{displayCurrency((selectedCase.depositAmount ?? 0) + (selectedCase.additionalDepositAmount ?? 0))}</strong></div>
-                <div className="metric-tile"><span>Days Since Filing</span><strong>{riskAnalysisPreview?.daysSinceFiling ?? '—'}</strong></div>
-              </div>
-              <div className="metric-tile-row top-gap-small">
-                <div className="metric-tile"><span>Filing Date</span><strong>{displayDate(selectedCase.filingDate)}</strong></div>
-                <div className="metric-tile"><span>Additional Deposit Date</span><strong>{displayDate(selectedCase.additionalDepositDate)}</strong></div>
-                <div className="metric-tile"><span>Whole Property (acres)</span><strong>{selectedCase.wholePropertyAcres ?? '—'}</strong></div>
-                <div className="metric-tile"><span>Acquisition (acres)</span><strong>{selectedCase.acquisitionAcres ?? '—'}</strong></div>
-              </div>
-              <div className="metric-tile-row top-gap-small">
-                <div className="metric-tile"><span>Assigned Attorney</span><strong>{selectedCase.assignedAttorney || '—'}</strong></div>
-                <div className="metric-tile"><span>Opposing Counsel</span><strong>{selectedCase.opposingCounsel || '—'}</strong></div>
-                <div className="metric-tile"><span>Appraiser (ASHC)</span><strong>{selectedCase.appraiser || '—'}</strong></div>
-                <div className="metric-tile"><span>Appraiser (Landowner)</span><strong>{selectedCase.landownerAppraiserName || '—'}</strong></div>
-              </div>
-              <p className="helper-text top-gap-small">Deposit amounts, filing date, and additional deposit date come from Case Record. Interest accrues at 6% per annum on the amount above the deposit, per Ark. Code Ann. § 27-67-316(e).</p>
-            </Panel>
-
-            <Panel title="Valuation Comparison">
-              <div className="metric-tile-row">
-                <div className="metric-tile"><span>ASHC Value</span><strong>{displayCurrency(ashcValue)}</strong></div>
-                <div className="metric-tile"><span>Landowner Value</span><strong>{displayCurrency(landownerValue)}</strong></div>
-                <div className="metric-tile"><span>Gap</span><strong>{valuationGap != null ? displayCurrency(valuationGap) : 'Not set'}</strong></div>
-                <div className="metric-tile"><span>Gap / Acre</span><strong>{gapPerAcre != null ? displayCurrency(gapPerAcre) : 'Not set'}</strong></div>
-              </div>
-              <p className="helper-text top-gap-small">Gap is the landowner's position minus ASHC's position. Gap / Acre uses Acquisition Acres from Case Details.</p>
-            </Panel>
-
-            <div className="workspace-panel-grid two-col">
-              {(['ASHC', 'Landowner'] as ValuationSide[]).map((side) => (
-                <Panel key={side} title={`${side} Position`}>
-                  {(editingValuationSide === side || valuationDrafts[side].appraiserName || valuationDrafts[side].appraisedValue != null || valuationDrafts[side].methodology || valuationDrafts[side].notes) ? <>
-                  <div className="form-grid">
-                    <label><span>Appraiser</span><input value={valuationDrafts[side].appraiserName || ''} onChange={(event) => patchValuationDraft(side, { appraiserName: event.target.value })} placeholder="Appraiser name" /></label>
-                    <label>
-                      <span>Appraised Value</span>
-                      <input value={valuationDrafts[side].appraisedValue ?? ''} onChange={(event) => patchValuationDraft(side, { appraisedValue: event.target.value === '' ? null : Number(event.target.value.replaceAll(',', '')) })} placeholder="$" />
-                    </label>
-                    <label><span>Value Date</span><input type="date" value={valuationDrafts[side].valueDate || ''} onChange={(event) => patchValuationDraft(side, { valueDate: event.target.value })} /></label>
-                    <label className="full-span"><span>Methodology</span><textarea value={valuationDrafts[side].methodology || ''} onChange={(event) => patchValuationDraft(side, { methodology: event.target.value })} placeholder="Approach used, key comps, adjustments" /></label>
-                    <label className="full-span"><span>Notes</span><textarea value={valuationDrafts[side].notes || ''} onChange={(event) => patchValuationDraft(side, { notes: event.target.value })} placeholder="Additional notes" /></label>
-                  </div>
-                  <div className="button-row compact-actions top-gap-small">
-                    <button className="primary" onClick={() => void saveValuationPosition(side)}>Save {side} Position</button>
-                  </div>
-                  {valuationDrafts[side].updatedAt && <p className="helper-text top-gap-small">Last updated {(valuationDrafts[side].updatedAt || '').slice(0, 10)}.</p>}
-                  </> : <div className="compact-empty-state"><p>No {side} position entered.</p><button className="primary" onClick={() => setEditingValuationSide(side)}>Add {side} Position</button></div>}
-
-                  <div className="button-row compact-actions top-gap">
-                    {valuationDrafts[side].appraisedValue != null && editingValuationSide !== side && <button onClick={() => setEditingValuationSide(side)}>Edit Position</button>}
-                    <button onClick={() => startComparableSaleModal(side)}>Add Comparable Sale</button>
-                  </div>
-                  {renderComparableSalesTable(comparableSales.filter((sale) => sale.side === side))}
-                </Panel>
-              ))}
-            </div>
-
             {riskAnalysisHistory.length > 0 && <Panel title="Saved Risk Analyses">
               <div className="table-wrap compact-table-wrap"><table className="compact-table"><thead><tr><th>Analysis date</th><th>Key scenario</th><th>Just compensation</th><th>Created</th><th>Actions</th></tr></thead><tbody>{riskAnalysisHistory.map((history) => <tr key={history.id}><td>{displayDate(history.analysisDate)}</td><td>{history.keyScenarioLabel || 'No populated scenario'}</td><td>{displayCurrency(history.keyScenarioValue)}</td><td>{history.createdAt.slice(0, 10)}</td><td><div className="button-row compact-actions row-actions"><button onClick={() => void openRiskAnalysisHistory(history.id)}>Open</button><button onClick={() => void compareRiskAnalysisHistory(history)}>Compare</button><button className="danger-button" onClick={() => void deleteRiskAnalysisHistory(history)}>Delete</button></div></td></tr>)}</tbody></table></div>
               <p className="helper-text top-gap-small">Each save retains an immutable snapshot with formula version <strong>risk-v1</strong>.</p>
               {riskAnalysisComparison && <div className="risk-comparison-card top-gap-small"><div><strong>Saved snapshot</strong><div>{displayDate(riskAnalysisComparison.left.analysisDate)} · {riskAnalysisComparison.left.keyScenarioLabel || 'No key scenario'} · {displayCurrency(riskAnalysisComparison.left.keyScenarioValue)}</div></div><div><strong>Rendered values</strong><div>Total deposited {displayCurrency(riskAnalysisComparison.right.totalDeposited)} · {riskAnalysisComparison.right.rows.filter((row) => !row.isSplit && row.justCompensation != null).length} populated scenarios</div></div><button onClick={() => setRiskAnalysisComparison(null)}>Close comparison</button></div>}
             </Panel>}
 
-            <Panel title="Risk Analysis Ledger">
+            <Panel title="Risk Analysis Ledger" className="panel-featured">
               {!riskAnalysisEditorOpen ? <div className="compact-empty-state risk-analysis-summary-state">
                 {riskAnalysisPreview?.id ? <><p>Current risk analysis saved on {riskAnalysisPreview.updatedAt ? displayDateTime(riskAnalysisPreview.updatedAt) : 'recorded date'}.</p><div className="button-row compact-actions"><button className="primary" onClick={() => setRiskAnalysisEditorOpen(true)}>Open Analysis</button>{selectedCaseId && <a className="button-like" href={`/api/cases/${selectedCaseId}/risk-analysis/export`}>Download Excel</a>}</div></> : <><p>No risk analyses added yet.</p><button className="primary" onClick={() => setRiskAnalysisEditorOpen(true)}>Add Risk Analysis</button></>}
               </div> : <>
@@ -5058,6 +5217,67 @@ function App() {
                 </div>
               </form>}
             </Panel>
+
+            <CollapsiblePanel title="Case & Deposit Summary" defaultOpen={false}>
+              <div className="metric-tile-row">
+                <div className="metric-tile"><span>Initial Deposit</span><strong>{displayCurrency(selectedCase.depositAmount)}</strong></div>
+                <div className="metric-tile"><span>Additional Deposit</span><strong>{displayCurrency(selectedCase.additionalDepositAmount)}</strong></div>
+                <div className="metric-tile"><span>Total Deposited</span><strong>{displayCurrency((selectedCase.depositAmount ?? 0) + (selectedCase.additionalDepositAmount ?? 0))}</strong></div>
+                <div className="metric-tile"><span>Days Since Filing</span><strong>{riskAnalysisPreview?.daysSinceFiling ?? '—'}</strong></div>
+              </div>
+              <div className="metric-tile-row top-gap-small">
+                <div className="metric-tile"><span>Filing Date</span><strong>{displayDate(selectedCase.filingDate)}</strong></div>
+                <div className="metric-tile"><span>Additional Deposit Date</span><strong>{displayDate(selectedCase.additionalDepositDate)}</strong></div>
+                <div className="metric-tile"><span>Whole Property (acres)</span><strong>{selectedCase.wholePropertyAcres ?? '—'}</strong></div>
+                <div className="metric-tile"><span>Acquisition (acres)</span><strong>{selectedCase.acquisitionAcres ?? '—'}</strong></div>
+              </div>
+              <div className="metric-tile-row top-gap-small">
+                <div className="metric-tile"><span>Assigned Attorney</span><strong>{selectedCase.assignedAttorney || '—'}</strong></div>
+                <div className="metric-tile"><span>Opposing Counsel</span><strong>{selectedCase.opposingCounsel || '—'}</strong></div>
+                <div className="metric-tile"><span>Appraiser (ASHC)</span><strong>{selectedCase.appraiser || '—'}</strong></div>
+                <div className="metric-tile"><span>Appraiser (Landowner)</span><strong>{selectedCase.landownerAppraiserName || '—'}</strong></div>
+              </div>
+              <p className="helper-text top-gap-small">Deposit amounts, filing date, and additional deposit date come from Case Record. Interest accrues at 6% per annum on the amount above the deposit, per Ark. Code Ann. § 27-67-316(e).</p>
+            </CollapsiblePanel>
+
+            <CollapsiblePanel title="Valuation Comparison" defaultOpen={false}>
+              <div className="metric-tile-row">
+                <div className="metric-tile"><span>ASHC Value</span><strong>{displayCurrency(ashcValue)}</strong></div>
+                <div className="metric-tile"><span>Landowner Value</span><strong>{displayCurrency(landownerValue)}</strong></div>
+                <div className="metric-tile"><span>Gap</span><strong>{valuationGap != null ? displayCurrency(valuationGap) : 'Not set'}</strong></div>
+                <div className="metric-tile"><span>Gap / Acre</span><strong>{gapPerAcre != null ? displayCurrency(gapPerAcre) : 'Not set'}</strong></div>
+              </div>
+              <p className="helper-text top-gap-small">Gap is the landowner's position minus ASHC's position. Gap / Acre uses Acquisition Acres from Case Details.</p>
+            </CollapsiblePanel>
+
+            <div className="workspace-panel-grid two-col">
+              {(['ASHC', 'Landowner'] as ValuationSide[]).map((side) => (
+                <CollapsiblePanel key={side} title={`${side} Position`} defaultOpen={false}>
+                  {(editingValuationSide === side || valuationDrafts[side].appraiserName || valuationDrafts[side].appraisedValue != null || valuationDrafts[side].methodology || valuationDrafts[side].notes) ? <>
+                  <div className="form-grid">
+                    <label><span>Appraiser</span><input value={valuationDrafts[side].appraiserName || ''} onChange={(event) => patchValuationDraft(side, { appraiserName: event.target.value })} placeholder="Appraiser name" /></label>
+                    <label>
+                      <span>Appraised Value</span>
+                      <input value={valuationDrafts[side].appraisedValue ?? ''} onChange={(event) => patchValuationDraft(side, { appraisedValue: event.target.value === '' ? null : Number(event.target.value.replaceAll(',', '')) })} placeholder="$" />
+                    </label>
+                    <label><span>Value Date</span><input type="date" value={valuationDrafts[side].valueDate || ''} onChange={(event) => patchValuationDraft(side, { valueDate: event.target.value })} /></label>
+                    <label className="full-span"><span>Methodology</span><textarea value={valuationDrafts[side].methodology || ''} onChange={(event) => patchValuationDraft(side, { methodology: event.target.value })} placeholder="Approach used, key comps, adjustments" /></label>
+                    <label className="full-span"><span>Notes</span><textarea value={valuationDrafts[side].notes || ''} onChange={(event) => patchValuationDraft(side, { notes: event.target.value })} placeholder="Additional notes" /></label>
+                  </div>
+                  <div className="button-row compact-actions top-gap-small">
+                    <button className="primary" onClick={() => void saveValuationPosition(side)}>Save {side} Position</button>
+                  </div>
+                  {valuationDrafts[side].updatedAt && <p className="helper-text top-gap-small">Last updated {(valuationDrafts[side].updatedAt || '').slice(0, 10)}.</p>}
+                  </> : <div className="compact-empty-state"><p>No {side} position entered.</p><button className="primary" onClick={() => setEditingValuationSide(side)}>Add {side} Position</button></div>}
+
+                  <div className="button-row compact-actions top-gap">
+                    {valuationDrafts[side].appraisedValue != null && editingValuationSide !== side && <button onClick={() => setEditingValuationSide(side)}>Edit Position</button>}
+                    <button onClick={() => startComparableSaleModal(side)}>Add Comparable Sale</button>
+                  </div>
+                  {renderComparableSalesTable(comparableSales.filter((sale) => sale.side === side))}
+                </CollapsiblePanel>
+              ))}
+            </div>
           </div>
         )}
 
@@ -5206,31 +5426,6 @@ function App() {
                   </div>
                 </div>
 
-                {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.serviceNotes) || shouldShowRecordValue(selectedCase.publicationServiceNotes)) && (
-                  <div className="record-section">
-                    <div className="record-section-header">
-                      <h4>Service &amp; Publication Notes</h4>
-                      <p>Legacy notes are preserved read-only for historical reference.</p>
-                    </div>
-                    {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.serviceNotes)) && <label className="full-span"><span>Service Notes</span><textarea readOnly value={selectedCase.serviceNotes || 'No service notes yet.'} /></label>}
-                    {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.publicationServiceNotes)) && <label className="full-span top-gap-small"><span>Publication Notes</span><textarea readOnly value={selectedCase.publicationServiceNotes || 'No publication notes yet.'} /></label>}
-                  </div>
-                )}
-
-                <div className="record-section">
-                  <div className="record-section-header"><h4>Service &amp; Publication</h4><p>Primary factual record for service perfection and publication.</p></div>
-                  <label className="toggle-inline"><span>Service Perfected</span><input type="checkbox" checked={selectedCase.servicePerfected} onChange={(event) => void toggleServicePerfected(event.target.checked)} /></label>
-                  <form className="form-grid top-gap-small" onSubmit={savePublication}>
-                    <label><span>First Publication Date</span><input type="date" value={publicationDraft.firstPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, firstPublicationDate: event.target.value })} /></label>
-                    <label><span>Second Publication Date</span><input type="date" min={publicationDraft.firstPublicationDate || undefined} value={publicationDraft.secondPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, secondPublicationDate: event.target.value })} /></label>
-                    <label><span>Newspaper / Publication Name</span><input value={publicationDraft.publicationName || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, publicationName: event.target.value, overrideMissingPublicationName: false })} /></label>
-                    <label className="toggle-inline"><span>Marked Perfected</span><input type="checkbox" checked={publicationDraft.markedPerfected} onChange={(event) => setPublicationDraft({ ...publicationDraft, markedPerfected: event.target.checked })} /></label>
-                    {(publicationDraft.firstPublicationDate || publicationDraft.secondPublicationDate) && !publicationDraft.publicationName && <label className="toggle-inline full-span"><span>Override missing publication name warning</span><input type="checkbox" checked={Boolean(publicationDraft.overrideMissingPublicationName)} onChange={(event) => setPublicationDraft({ ...publicationDraft, overrideMissingPublicationName: event.target.checked })} /></label>}
-                    <div className="button-row compact-actions full-span"><button className="primary" type="submit">Save Service &amp; Publication</button></div>
-                    <p className="helper-text full-span">Last updated {displayDateTime(workspace?.publication?.lastUpdatedAt)} by {workspace?.publication?.lastUpdatedBy || 'Local development user'}.</p>
-                  </form>
-                </div>
-
                 <div className="record-section">
                   <div className="record-section-header">
                     <h4>People</h4>
@@ -5274,7 +5469,7 @@ function App() {
     )
   }
 
-  function renderDeadlineTable(items: DeadlineItem[], compact: boolean) {
+  function renderDeadlineTable(items: DeadlineItem[], compact: boolean, showCase = false) {
     const allSelected = items.length > 0 && items.every((item) => selectedDeadlineIds.includes(item.id))
     const selectedCount = items.filter((item) => selectedDeadlineIds.includes(item.id)).length
 
@@ -5290,12 +5485,12 @@ function App() {
               <span className="helper-text">{selectedCount} selected</span>
             </div>
             <div className="bulk-action-controls">
-              <button onClick={() => void applyBulkDeadlineAction('complete')} disabled={selectedCount === 0}>Mark Done</button>
-              <button onClick={() => void applyBulkDeadlineAction('reopen')} disabled={selectedCount === 0}>Reopen</button>
+              <button onClick={() => void applyBulkDeadlineAction('complete', items)} disabled={selectedCount === 0}>Mark Done</button>
+              <button onClick={() => void applyBulkDeadlineAction('reopen', items)} disabled={selectedCount === 0}>Reopen</button>
               <input type="date" value={bulkDeadlineDueDate} onChange={(event) => setBulkDeadlineDueDate(event.target.value)} disabled={selectedCount === 0} />
-              <button onClick={() => void applyBulkDeadlineAction('dueDate')} disabled={selectedCount === 0 || !bulkDeadlineDueDate}>Apply Due Date</button>
+              <button onClick={() => void applyBulkDeadlineAction('dueDate', items)} disabled={selectedCount === 0 || !bulkDeadlineDueDate}>Apply Due Date</button>
               <button onClick={() => setSelectedDeadlineIds([])} disabled={selectedCount === 0}>Clear</button>
-              <button onClick={() => void applyBulkDeadlineAction('delete')} disabled={selectedCount === 0}>Delete</button>
+              <button onClick={() => void applyBulkDeadlineAction('delete', items)} disabled={selectedCount === 0}>Delete</button>
             </div>
           </div>
         )}
@@ -5304,6 +5499,7 @@ function App() {
             <thead>
               <tr>
                 {!compact && <th className="selection-cell">Select</th>}
+                {showCase && <th>Case</th>}
                 <th>Title</th>
                 <th>Due Date</th>
                 <th>Status</th>
@@ -5314,7 +5510,7 @@ function App() {
             <tbody>
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={compact ? 4 : 6}>No deadlines for this case yet.</td>
+                  <td colSpan={compact ? 4 : (showCase ? 7 : 6)}>No deadlines for this case yet.</td>
                 </tr>
               ) : items.map((item) => (
                 <tr key={item.id}>
@@ -5323,6 +5519,7 @@ function App() {
                       <input type="checkbox" checked={selectedDeadlineIds.includes(item.id)} onChange={() => toggleSelectedDeadline(item.id)} aria-label={`Select deadline ${item.title}`} />
                     </td>
                   )}
+                  {showCase && <td><button className="link-button row-title-button" onClick={() => openCase(item.caseId, 'deadlines')}>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</button></td>}
                   <td>
                     {compact ? item.title : (
                       <button className="link-button row-title-button" onClick={() => startDeadlineModal(item)}>{item.title}</button>
@@ -5350,13 +5547,18 @@ function App() {
                         {item.completedAt && <div className="flag-text muted">Done {displayDate(item.completedAt.slice(0, 10))}</div>}
                       </>
                     ) : (
-                      <select
-                        className="inline-edit-select"
-                        value={item.status}
-                        onChange={(event) => void persistDeadline({ ...item, status: event.target.value }, 'Deadline status updated.', false)}
-                      >
-                        {deadlineStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                      </select>
+                      <div className="button-row compact-actions row-actions">
+                        <select
+                          className="inline-edit-select"
+                          value={item.status}
+                          onChange={(event) => void persistDeadline({ ...item, status: event.target.value }, 'Deadline status updated.', false)}
+                        >
+                          {deadlineStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                        </select>
+                        {!isDeadlineDone(item) && (
+                          <button className="row-icon-button" title="Mark done" aria-label={`Mark deadline ${item.title} done`} onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>✓</button>
+                        )}
+                      </div>
                     )}
                   </td>
                   <td>
@@ -5386,9 +5588,9 @@ function App() {
     )
   }
 
-  function renderChecklistTable(items: ChecklistItem[], compact: boolean, totalsItems?: ChecklistItem[], showBulkToolbar = true) {
+  function renderChecklistTable(items: ChecklistItem[], compact: boolean, totalsItems?: ChecklistItem[], showBulkToolbar = true, showCase = false) {
     const sorted = sortChecklistForDisplay(items)
-    const columnCount = compact ? 4 : 5
+    const columnCount = compact ? 4 : (showCase ? 6 : 5)
     const allSelected = items.length > 0 && items.every((item) => selectedChecklistIds.includes(item.id))
     const selectedCount = items.filter((item) => selectedChecklistIds.includes(item.id)).length
     const phaseTotals = new Map<string, { done: number; total: number }>()
@@ -5447,6 +5649,7 @@ function App() {
             </td>
           )}
           {compact && <td>{phaseLabel}</td>}
+          {showCase && <td><button className="link-button row-title-button" onClick={() => openCase(item.caseId, 'checklist')}>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</button></td>}
           <td>
             {isDone && <span className="status-icon" aria-hidden="true">✓</span>}
             {compact ? (
@@ -5475,13 +5678,18 @@ function App() {
           </td>
           <td>
             {compact ? item.notes || 'No notes' : (
-              <select
-                className="inline-edit-select"
-                value={item.status}
-                onChange={(event) => void persistChecklist({ ...item, status: event.target.value }, 'Checklist status updated.', false)}
-              >
-                {checklistStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-              </select>
+              <div className="button-row compact-actions row-actions">
+                <select
+                  className="inline-edit-select"
+                  value={item.status}
+                  onChange={(event) => void persistChecklist({ ...item, status: event.target.value }, 'Checklist status updated.', false)}
+                >
+                  {checklistStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+                {!isDone && (
+                  <button className="row-icon-button" title="Mark done" aria-label={`Mark task ${item.task} done`} onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>✓</button>
+                )}
+              </div>
             )}
           </td>
           {!compact && (
@@ -5505,12 +5713,12 @@ function App() {
               <span className="helper-text">{selectedCount} selected</span>
             </div>
             <div className="bulk-action-controls">
-              <button onClick={() => void applyBulkChecklistAction('complete')} disabled={selectedCount === 0}>Mark Done</button>
-              <button onClick={() => void applyBulkChecklistAction('reopen')} disabled={selectedCount === 0}>Reopen</button>
+              <button onClick={() => void applyBulkChecklistAction('complete', items)} disabled={selectedCount === 0}>Mark Done</button>
+              <button onClick={() => void applyBulkChecklistAction('reopen', items)} disabled={selectedCount === 0}>Reopen</button>
               <button onClick={() => setBulkChecklistDueDateOpen((open) => !open)} disabled={selectedCount === 0}>Change Due Date</button>
-              {bulkChecklistDueDateOpen && <span className="bulk-date-popover"><input type="date" value={bulkChecklistDueDate} onChange={(event) => setBulkChecklistDueDate(event.target.value)} autoFocus /><button onClick={() => { setBulkChecklistDueDateOpen(false); void applyBulkChecklistAction('dueDate') }} disabled={!bulkChecklistDueDate}>Apply</button><button onClick={() => setBulkChecklistDueDateOpen(false)}>Cancel</button></span>}
+              {bulkChecklistDueDateOpen && <span className="bulk-date-popover"><input type="date" value={bulkChecklistDueDate} onChange={(event) => setBulkChecklistDueDate(event.target.value)} autoFocus /><button onClick={() => { setBulkChecklistDueDateOpen(false); void applyBulkChecklistAction('dueDate', items) }} disabled={!bulkChecklistDueDate}>Apply</button><button onClick={() => setBulkChecklistDueDateOpen(false)}>Cancel</button></span>}
               <button onClick={() => setSelectedChecklistIds([])} disabled={selectedCount === 0}>Clear</button>
-              <button onClick={() => void applyBulkChecklistAction('delete')} disabled={selectedCount === 0}>Delete</button>
+              <button onClick={() => void applyBulkChecklistAction('delete', items)} disabled={selectedCount === 0}>Delete</button>
             </div>
           </div>
         )}
@@ -5520,6 +5728,7 @@ function App() {
               <tr>
                 {!compact && <th className="selection-cell">Select</th>}
                 {compact && <th>Phase</th>}
+                {showCase && <th>Case</th>}
                 <th>Task</th>
                 <th>Due Date</th>
                 {compact ? <th>Notes</th> : <th>Status</th>}
@@ -5579,7 +5788,17 @@ function App() {
                     <div key={item.id} className="command-list-row-compact">
                       <div className="clickable-row button-row split-row" onClick={() => setExpandedDiscoveryItemId(expandedDiscoveryItemId === item.id ? null : item.id)}>
                         <div><strong>{item.requestTitle || `${item.direction} ${item.discoveryType}`}</strong><div className="flag-text muted">{item.direction} · Served {displayDate(item.servedDate)} · Due {displayDate(item.dueDate)} · Follow-up {displayDate(item.followUpDate)}</div></div>
-                        <div className="button-row compact-actions row-actions"><span className={`pill pill-${discoveryStatusPillTone(item.status)}`}>{item.status}</span><button onClick={(event) => { event.stopPropagation(); startDiscoveryModal(item) }}>Edit</button></div>
+                        <div className="button-row compact-actions row-actions" onClick={(event) => event.stopPropagation()}>
+                          <select
+                            className={`inline-edit-select pill-select pill-${discoveryStatusPillTone(item.status)}`}
+                            value={item.status}
+                            aria-label="Discovery status"
+                            onChange={(event) => void persistDiscovery({ ...item, status: event.target.value }, 'Discovery status updated.', false)}
+                          >
+                            {discoveryStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                          </select>
+                          <button onClick={() => startDiscoveryModal(item)}>Edit</button>
+                        </div>
                       </div>
                       {expandedDiscoveryItemId === item.id && (
                         <div className="top-gap-small">
@@ -5592,16 +5811,6 @@ function App() {
                           </div>
                           {item.escalationNote && <div className="inline-message warn">{item.escalationNote}</div>}
                           {item.notes && <p className="flag-text muted">{item.notes}</p>}
-                          <div className="compact-card-actions top-gap-small">
-                            <select
-                              className="inline-edit-select"
-                              value={item.status}
-                              onChange={(event) => void persistDiscovery({ ...item, status: event.target.value }, 'Discovery status updated.', false)}
-                            >
-                              {discoveryStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                            </select>
-                            <button onClick={() => startDiscoveryModal(item)}>Edit</button>
-                          </div>
                         </div>
                       )}
                     </div>
@@ -5662,8 +5871,8 @@ function App() {
         <div className="topbar-actions">
           <form className="topbar-search" onSubmit={(event) => { setSearchDropdownOpen(false); submitGlobalSearch(event) }}>
             <input
-              value={caseSearch}
-              onChange={(event) => setCaseSearch(event.target.value)}
+              value={topbarSearch}
+              onChange={(event) => setTopbarSearch(event.target.value)}
               onFocus={() => { if (searchSuggestions.length > 0) setSearchDropdownOpen(true) }}
               onBlur={() => window.setTimeout(() => setSearchDropdownOpen(false), 150)}
               onKeyDown={(event) => { if (event.key === 'Escape') setSearchDropdownOpen(false) }}
@@ -5679,7 +5888,7 @@ function App() {
                     type="button"
                     className="search-suggestion"
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => { setSearchDropdownOpen(false); openCase(match.id, 'overview') }}
+                    onClick={() => { setSearchDropdownOpen(false); setTopbarSearch(''); setSearchSuggestions([]); openCase(match.id, 'overview') }}
                   >
                     <strong>{match.caseName || match.caseNumber || `Case ${match.id}`}</strong>
                     <span>{[match.caseNumber, match.jobNumber && `Job ${match.jobNumber}`, match.tract && `Tract ${match.tract}`].filter(Boolean).join(' · ')}</span>
@@ -5815,21 +6024,6 @@ function App() {
                 </>
               )}
               <p className="helper-text full-span">Service perfection, deadlines, and publication entries are managed on the Status tab.</p>
-              {shouldShowRecordValue(caseDraft.serviceNotes) && (
-                <div className="full-span legacy-field-notice">
-                  <strong>Legacy service note</strong>
-                  <p>{caseDraft.serviceNotes}</p>
-                  <span className="helper-text">Read-only historical data. Current service facts are maintained on the Status tab.</span>
-                </div>
-              )}
-              {shouldShowRecordValue(caseDraft.publicationServiceNotes) && (
-                <div className="full-span legacy-field-notice">
-                  <strong>Legacy publication note</strong>
-                  <p>{caseDraft.publicationServiceNotes}</p>
-                  <span className="helper-text">Read-only historical data. Current publication facts are maintained on the Status tab.</span>
-                </div>
-              )}
-
               <div className="full-span">
                 <h4>Issue Tags</h4>
                 <div className="button-row compact-actions top-gap-small">
@@ -6069,6 +6263,36 @@ function App() {
               </div>
             </form>
           )}
+
+          {activeModal === 'event' && (
+            <form className="form-grid modal-form" onSubmit={saveHearing} noValidate>
+              <label>
+                <span>Type</span>
+                <select
+                  value={(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') ? hearingDraft.eventType || 'Hearing' : '__custom'}
+                  onChange={(event) => setHearingDraft({ ...hearingDraft, eventType: event.target.value === '__custom' ? '' : event.target.value })}
+                >
+                  {eventTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                  <option value="__custom">Custom…</option>
+                </select>
+              </label>
+              {!(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') && (
+                <label><span>Custom Type</span><input value={hearingDraft.eventType || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, eventType: event.target.value })} placeholder="e.g. Site Visit" /></label>
+              )}
+              <label className="full-span">
+                <span>Title</span>
+                <input value={hearingDraft.title} onChange={(event) => setHearingDraft({ ...hearingDraft, title: event.target.value })} placeholder="e.g. Motion Hearing, Trial" />
+                {modalFieldErrors.title && <small className="field-error">{modalFieldErrors.title}</small>}
+              </label>
+              <label><span>Date</span><input type="date" value={hearingDraft.hearingDate || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, hearingDate: event.target.value })} /></label>
+              <label><span>Location</span><input value={hearingDraft.location || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, location: event.target.value })} placeholder="Courtroom, address, or venue" /></label>
+              <label className="full-span"><span>Notes</span><textarea value={hearingDraft.description || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, description: event.target.value })} placeholder="What this event covers" /></label>
+              <div className="button-row compact-actions full-span modal-footer">
+                <button className="primary" type="submit">{hearingDraft.id === 0 ? 'Save Event' : 'Update Event'}</button>
+                <button type="button" onClick={cancelModal}>Cancel</button>
+              </div>
+            </form>
+          )}
         </ModalShell>
       )}
 
@@ -6275,6 +6499,27 @@ function App() {
             </div>
           </section>
 
+          {dashboard && dashboard.attentionCases.length > 0 && (
+            <Panel title="Cases Flagged Urgent / Attention" headerAction={<span className="pill pill-neutral">{dashboard.attentionCases.length} case{dashboard.attentionCases.length === 1 ? '' : 's'}</span>}>
+              <div className="upcoming-work-list">
+                {dashboard.attentionCases.map((item) => (
+                  <div className="upcoming-work-row" key={item.id}>
+                    <div className="upcoming-work-main">
+                      <div className="upcoming-work-title">
+                        <span className={`pill pill-${attentionPillTone(item.attentionStatus)}`}>{attentionLabels[item.attentionStatus || 'onTrack']}</span>
+                        <strong>{item.caseName || item.caseNumber || `Case ${item.id}`}</strong>
+                      </div>
+                      <span className="subtle-text">{item.caseNumber}{item.nextDeadlineTitle ? ` · ${item.nextDeadlineTitle} (${displayDate(item.nextDeadlineDate)})` : ' · No upcoming deadline on file'}</span>
+                    </div>
+                    <div className="button-row compact-actions">
+                      <button onClick={() => openCase(item.id, 'overview')}>Open Case</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
           {attorneyDashboardError && <ErrorState message={attorneyDashboardError} onRetry={() => void loadAttorneyDashboard(attorneyDashboardFilters)} />}
 
           {attorneyDashboardLoading && !attorneyDashboard ? (
@@ -6341,8 +6586,8 @@ function App() {
                     {dashboardUpcomingWorkItems.map((item) => <div className="upcoming-work-row" key={item.key}>
                       <div className="upcoming-work-main"><div className="upcoming-work-title"><span className={`pill pill-${item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10) ? 'danger' : 'neutral'}`}>{item.type}</span><strong>{item.title}</strong></div><span className="subtle-text">{item.caseName} · {item.dueDate ? displayDate(item.dueDate) : 'No due date'}</span></div>
                       <div className="button-row compact-actions upcoming-work-actions">
-                        {item.type === 'task' && <button onClick={() => { const source = item.source as ChecklistItem | undefined ?? queueChecklist.find((candidate) => item.key === `task-${candidate.id}`); if (source) void markGlobalChecklistDone(source) }}>Mark Done</button>}
-                        {item.type === 'deadline' && <button onClick={() => { const source = item.source as DeadlineItem | undefined ?? queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`); if (source) void markGlobalDeadlineDone(source) }}>Complete</button>}
+                        {item.type === 'task' && <button onClick={() => { const source = item.source as ChecklistItem | undefined ?? queueChecklist.find((candidate) => item.key === `task-${candidate.id}`); if (source) void persistChecklist({ ...source, status: 'Done' }, 'Task marked done.', false) }}>Mark Done</button>}
+                        {item.type === 'deadline' && <button onClick={() => { const source = item.source as DeadlineItem | undefined ?? queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`); if (source) void persistDeadline({ ...source, status: 'Done' }, 'Deadline marked done.', false) }}>Complete</button>}
                         {item.type === 'service' && <button onClick={() => void markGlobalServicePerfected(item.caseId)}>Perfect Service</button>}
                         {item.type === 'discovery' && <button onClick={() => { const source = item.source as DiscoveryItem | undefined ?? queueDiscovery.find((candidate) => item.key === `discovery-${candidate.id}`); if (source) void recordDiscoveryResponse(source) }}>Record Response</button>}
                         <button onClick={() => openCase(item.caseId, item.tab)}>Open Case</button>
@@ -6587,7 +6832,7 @@ function App() {
               { key: 'deadlines', label: 'Deadlines' },
               { key: 'checklist', label: 'Tasks' },
               { key: 'discovery', label: 'Discovery' },
-              { key: 'hearings', label: 'Hearings' },
+              { key: 'hearings', label: 'Events' },
             ] as { key: typeof workQueueFilter; label: string }[]).map((option) => (
               <button key={option.key} className={workQueueFilter === option.key ? 'chip active' : 'chip'} onClick={() => setWorkQueueFilter(option.key)}>
                 {option.label}
@@ -6651,71 +6896,13 @@ function App() {
 
             {(workQueueFilter === 'all' || workQueueFilter === 'deadlines') && (
               <Panel title="Global Deadlines">
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Due</th>
-                        <th>Case</th>
-                        <th>Title</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedDeadlineQueue.length === 0 ? <tr><td colSpan={5}>No deadlines match the current filters.</td></tr> : sortedDeadlineQueue.map((item) => (
-                        <tr key={item.id}>
-                          <td>{displayDate(item.dueDate)}</td>
-                          <td>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</td>
-                          <td>{item.title}</td>
-                          <td>{item.status}</td>
-                          <td>
-                            <div className="button-row compact-actions row-actions">
-                              <button onClick={() => void markGlobalDeadlineDone(item)}>Mark Done</button>
-                              <button onClick={() => openCase(item.caseId, 'deadlines')}>Open Case</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {renderDeadlineTable(sortedDeadlineQueue, false, true)}
               </Panel>
             )}
 
             {(workQueueFilter === 'all' || workQueueFilter === 'checklist') && (
               <Panel title="Global Tasks">
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Due</th>
-                        <th>Case</th>
-                        <th>Phase</th>
-                        <th>Task</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedChecklistQueue.length === 0 ? <tr><td colSpan={6}>No tasks match the current filters.</td></tr> : sortedChecklistQueue.map((item) => (
-                        <tr key={item.id}>
-                          <td>{displayDate(item.dueDate)}</td>
-                          <td>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</td>
-                          <td>{item.phase}</td>
-                          <td>{item.task}</td>
-                          <td>{item.status}</td>
-                          <td>
-                            <div className="button-row compact-actions row-actions">
-                              <button onClick={() => void markGlobalChecklistDone(item)}>Mark Done</button>
-                              <button onClick={() => openCase(item.caseId, 'checklist')}>Open Case</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {renderChecklistTable(sortedChecklistQueue, false, sortedChecklistQueue, true, true)}
               </Panel>
             )}
 
@@ -7373,9 +7560,9 @@ function NumericField({ value, onCommit, placeholder, money }: { value: number |
   )
 }
 
-export function Panel({ title, headerAction, children }: { title: string; headerAction?: ReactNode; children: ReactNode }) {
+export function Panel({ title, headerAction, children, className }: { title: string; headerAction?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className="panel">
+    <section className={className ? `panel ${className}` : 'panel'}>
       <div className="panel-header">
         <h3>{title}</h3>
         {headerAction}

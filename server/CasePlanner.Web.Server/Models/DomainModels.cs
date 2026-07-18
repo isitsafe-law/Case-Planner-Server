@@ -385,6 +385,12 @@ public sealed class HearingRecord
     public long Id { get; set; }
     public long CaseId { get; set; }
     public string Title { get; set; } = "";
+    // Generalizes the old "Hearings" tab into "Events" - Hearing/Deposition/Mediation/Filing
+    // Deadline/Other, or a free-typed custom label. Existing rows default to "Hearing" (see
+    // migration 028_case_events.sql); the hearings table/HearingRecord name are unchanged to
+    // avoid a much larger mechanical rename across the dashboard/work-queue/SQL-pilot code that
+    // reads this table - only the client-facing tab label and event-type vocabulary changed.
+    public string EventType { get; set; } = "Hearing";
     public string? HearingDate { get; set; }
     public string? Location { get; set; }
     public string? Description { get; set; }
@@ -1184,6 +1190,22 @@ public sealed class RiskAnalysisOfferLogEntry
     public string? UpdatedAt { get; set; }
 }
 
+// Per-party service-of-process tracking - a case can have multiple defendants being served
+// separately, each with their own method/status/attempt history, distinct from the single
+// case-level servicePerfected/serviceMethod fields which only ever held one value for the case.
+public sealed class ServiceLogEntry
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public string PartyName { get; set; } = "";
+    public string Status { get; set; } = "Not Served";
+    public string? Method { get; set; }
+    public string? EventDate { get; set; }
+    public string? Notes { get; set; }
+    public string? CreatedAt { get; set; }
+    public string? UpdatedAt { get; set; }
+}
+
 // One current-state appraisal position per side of the case ("ASHC" or "Landowner").
 // Enforced as at most one row per (case, side) - editing always overwrites the same row.
 public sealed class ValuationPositionRecord
@@ -1294,6 +1316,7 @@ public sealed class CaseWorkspaceResponse
     public List<DiscoveryItemRecord> DiscoveryItems { get; set; } = [];
     public List<PublicationEntryRecord> PublicationEntries { get; set; } = [];
     public PublicationRecord Publication { get; set; } = new();
+    public List<ServiceLogEntry> ServiceLogEntries { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];
     public List<IssueTagRecord> AvailableIssueTags { get; set; } = [];
     public List<CaseNoteRecord> CaseNotes { get; set; } = [];

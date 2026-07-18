@@ -978,6 +978,7 @@ public sealed partial class CasePlannerRepository
             DiscoveryItems = await GetDiscoveryItemsAsync(caseId),
             PublicationEntries = publicationEntries,
             Publication = publication,
+            ServiceLogEntries = await GetServiceLogEntriesAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
             CaseIssueTags = await GetCaseIssueTagsAsync(caseId),
             CaseNotes = await GetCaseNotesAsync(caseId),
@@ -1054,6 +1055,7 @@ public sealed partial class CasePlannerRepository
             "checklist"=>"checklist_items","comparable-sale"=>"comparable_sales","witness"=>"witnesses",
             "exhibit"=>"exhibits","trial-motion"=>"trial_motions","case-issue-tag"=>"case_issue_tags",
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
+            "service-log"=>"service_log_entries","publication-entry"=>"publication_dates",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -2632,6 +2634,19 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task DeletePublicationEntryAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM publication_dates WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            return 0;
+        });
+    }
+
     public async Task<List<IssueTagRecord>> GetIssueTagsAsync()
     {
         var list = new List<IssueTagRecord>();
@@ -2907,10 +2922,10 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, title, hearing_date, location, description, created_at, updated_at
+            SELECT id, case_id, title, hearing_date, location, description, created_at, updated_at, event_type
             FROM hearings
             WHERE (@caseId IS NULL OR case_id = @caseId)
-            ORDER BY COALESCE(hearing_date, '9999-12-31') ASC, id ASC
+            ORDER BY COALESCE(hearing_date, '9999-12-31') DESC, id DESC
             """;
         cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -2925,7 +2940,8 @@ public sealed partial class CasePlannerRepository
                 Location = reader.IsDBNull(4) ? null : reader.GetString(4),
                 Description = reader.IsDBNull(5) ? null : reader.GetString(5),
                 CreatedAt = reader.IsDBNull(6) ? "" : reader.GetString(6),
-                UpdatedAt = reader.IsDBNull(7) ? "" : reader.GetString(7)
+                UpdatedAt = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                EventType = reader.IsDBNull(8) ? "Hearing" : reader.GetString(8),
             });
         }
 
@@ -2942,8 +2958,8 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO hearings (case_id, title, hearing_date, location, description, created_at, updated_at)
-                    VALUES (@case_id, @title, @hearing_date, @location, @description, @created_at, @updated_at);
+                    INSERT INTO hearings (case_id, title, hearing_date, location, description, created_at, updated_at, event_type)
+                    VALUES (@case_id, @title, @hearing_date, @location, @description, @created_at, @updated_at, @event_type);
                     SELECT last_insert_rowid();
                     """;
                 cmd.Parameters.AddWithValue("@created_at", now);
@@ -2952,7 +2968,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE hearings
-                    SET title=@title, hearing_date=@hearing_date, location=@location, description=@description, updated_at=@updated_at
+                    SET title=@title, hearing_date=@hearing_date, location=@location, description=@description, updated_at=@updated_at, event_type=@event_type
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -2965,6 +2981,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@location", DbValue(model.Location));
             cmd.Parameters.AddWithValue("@description", DbValue(model.Description));
             cmd.Parameters.AddWithValue("@updated_at", now);
+            cmd.Parameters.AddWithValue("@event_type", DbValue(BlankToNull(model.EventType) ?? "Hearing"));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CreatedAt = string.IsNullOrWhiteSpace(model.CreatedAt) ? now : model.CreatedAt;
             model.UpdatedAt = now;
@@ -3747,6 +3764,90 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task<List<ServiceLogEntry>> GetServiceLogEntriesAsync(long caseId)
+    {
+        var list = new List<ServiceLogEntry>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, party_name, status, method, event_date, notes, created_at, updated_at
+            FROM service_log_entries WHERE case_id=@caseId
+            ORDER BY party_name, COALESCE(event_date, '9999-12-31')
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new ServiceLogEntry
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                PartyName = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Status = reader.IsDBNull(3) ? "Not Served" : reader.GetString(3),
+                Method = reader.IsDBNull(4) ? null : reader.GetString(4),
+                EventDate = NormalizeDate(reader.IsDBNull(5) ? null : reader.GetString(5)),
+                Notes = reader.IsDBNull(6) ? null : reader.GetString(6),
+                CreatedAt = reader.IsDBNull(7) ? null : reader.GetString(7),
+                UpdatedAt = reader.IsDBNull(8) ? null : reader.GetString(8),
+            });
+        }
+
+        return list;
+    }
+
+    public async Task<ServiceLogEntry> SaveServiceLogEntryAsync(ServiceLogEntry model)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            if (model.Id == 0)
+            {
+                cmd.CommandText = """
+                    INSERT INTO service_log_entries (case_id, party_name, status, method, event_date, notes, created_at, updated_at)
+                    VALUES (@case_id, @party_name, @status, @method, @event_date, @notes, @created_at, @updated_at);
+                    SELECT last_insert_rowid();
+                    """;
+                cmd.Parameters.AddWithValue("@created_at", now);
+            }
+            else
+            {
+                cmd.CommandText = """
+                    UPDATE service_log_entries SET party_name=@party_name, status=@status, method=@method, event_date=@event_date, notes=@notes, updated_at=@updated_at
+                    WHERE id=@id;
+                    SELECT @id;
+                    """;
+                cmd.Parameters.AddWithValue("@id", model.Id);
+            }
+
+            cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@party_name", DbValue(model.PartyName));
+            cmd.Parameters.AddWithValue("@status", DbValue(model.Status));
+            cmd.Parameters.AddWithValue("@method", DbValue(model.Method));
+            cmd.Parameters.AddWithValue("@event_date", DbValue(model.EventDate));
+            cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+            cmd.Parameters.AddWithValue("@updated_at", now);
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            model.UpdatedAt = now;
+            return model;
+        });
+    }
+
+    public async Task DeleteServiceLogEntryAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM service_log_entries WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            return 0;
+        });
+    }
+
     public async Task<ImportResult> ImportCasesCsvAsync(Stream stream)
     {
         return await WithWriteAsync(async (connection, tx) =>
@@ -4261,6 +4362,7 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "discovery_tracking", "request_title", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_tracking", "escalation_note", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analysis_offer_log", "updated_at", "TEXT");
+        await AddColumnIfMissingAsync(connection, "hearings", "event_type", "TEXT NOT NULL DEFAULT 'Hearing'");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "analysis_date", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "interest_rate", "REAL NOT NULL DEFAULT 0.06");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "contingency_fee_percent", "REAL NOT NULL DEFAULT 0.30");
@@ -6738,7 +6840,8 @@ public sealed partial class CasePlannerRepository
             location TEXT,
             description TEXT,
             created_at TEXT,
-            updated_at TEXT
+            updated_at TEXT,
+            event_type TEXT NOT NULL DEFAULT 'Hearing'
         );
         CREATE TABLE IF NOT EXISTS checklist_templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6798,6 +6901,17 @@ public sealed partial class CasePlannerRepository
             offer_date TEXT,
             party TEXT,
             amount REAL,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS service_log_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            party_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Not Served',
+            method TEXT,
+            event_date TEXT,
+            notes TEXT,
             created_at TEXT,
             updated_at TEXT
         );

@@ -104,6 +104,12 @@ builder.Services.AddSingleton<IDocumentPlatformService>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerDocumentPlatformService>()
         : services.GetRequiredService<SqliteDocumentPlatformService>());
+builder.Services.AddSingleton<SqliteServiceLogStore>();
+builder.Services.AddSingleton<SqlServerServiceLogStore>();
+builder.Services.AddSingleton<IServiceLogStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerServiceLogStore>()
+        : services.GetRequiredService<SqliteServiceLogStore>());
 builder.Services.AddSingleton<SqliteCaseCatalogReader>();
 builder.Services.AddSingleton<SqlServerCaseCatalogReader>();
 builder.Services.AddSingleton<ICaseCatalogReader>(services =>
@@ -720,6 +726,21 @@ app.MapDelete("/api/trial-motions/{id:long}", async (long id,ITrialMotionStore m
 app.MapGet("/api/cases/{id:long}/publication-service", async (long id,IPublicationEntryStore publications) => Results.Ok(await publications.GetAsync(id)));
 app.MapPost("/api/publication-service", async (PublicationEntryRecord model,IPublicationEntryStore publications,CaseAccessService access,CancellationToken token) =>
     await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await publications.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/publication-service/{id:long}", async (long id,IPublicationEntryStore publications,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("publication-entry",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await publications.DeleteAsync(id,null,token);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/service-log", async (long id,IServiceLogStore serviceLog,CancellationToken token) => Results.Ok(await serviceLog.GetAsync(id,token)));
+app.MapPost("/api/service-log", async (ServiceLogEntry model,IServiceLogStore serviceLog,CaseAccessService access,CancellationToken token) =>
+    await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await serviceLog.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/service-log/{id:long}", async (long id,IServiceLogStore serviceLog,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("service-log",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await serviceLog.DeleteAsync(id,token);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/publication", async (long id,IPublicationSummaryStore publications,CancellationToken token) =>
     Results.Ok(await publications.GetAsync(id,token) ?? new PublicationRecord { CaseId = id }));
 app.MapPut("/api/cases/{id:long}/publication", async (long id, PublicationRecord model,IPublicationSummaryStore publications,CaseAccessService access,CancellationToken token) =>

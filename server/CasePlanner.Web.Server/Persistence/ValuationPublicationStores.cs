@@ -21,6 +21,7 @@ public interface IPublicationEntryStore
     string Provider { get; }
     Task<List<PublicationEntryRecord>> GetAsync(long? caseId,CancellationToken token=default);
     Task<PublicationEntryRecord> SaveAsync(PublicationEntryRecord model,CancellationToken token=default);
+    Task DeleteAsync(long id,string? rowVersion=null,CancellationToken token=default);
 }
 public interface IPublicationSummaryStore
 {
@@ -40,7 +41,7 @@ public sealed class SqliteComparableSaleStore(CasePlannerRepository repository):
 }
 public sealed class SqlitePublicationEntryStore(CasePlannerRepository repository):IPublicationEntryStore
 {
-    public string Provider=>"Sqlite"; public Task<List<PublicationEntryRecord>> GetAsync(long? caseId,CancellationToken token=default)=>repository.GetPublicationEntriesAsync(caseId); public Task<PublicationEntryRecord> SaveAsync(PublicationEntryRecord model,CancellationToken token=default)=>repository.SavePublicationEntryAsync(model);
+    public string Provider=>"Sqlite"; public Task<List<PublicationEntryRecord>> GetAsync(long? caseId,CancellationToken token=default)=>repository.GetPublicationEntriesAsync(caseId); public Task<PublicationEntryRecord> SaveAsync(PublicationEntryRecord model,CancellationToken token=default)=>repository.SavePublicationEntryAsync(model); public Task DeleteAsync(long id,string? rowVersion=null,CancellationToken token=default)=>repository.DeletePublicationEntryAsync(id);
 }
 public sealed class SqlitePublicationSummaryStore(CasePlannerRepository repository):IPublicationSummaryStore
 {

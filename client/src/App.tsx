@@ -29,7 +29,7 @@ type ThemeMode = 'light' | 'dark' | 'system'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'developer'
 
 type CaseRecord = {
   id: number
@@ -235,6 +235,10 @@ type PublicationEntry = {
 
 const serviceLogStatuses = ['Served', 'Not Served', 'Attempted', 'Refused'] as const
 
+const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
+
+const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement'] as const
+
 type ServiceLogEntry = {
   id: number
   caseId: number
@@ -277,7 +281,6 @@ type ServiceStatusSummary = {
   serviceDeadlineCalculated: boolean
   publicationDate?: string | null
   newspaper?: string | null
-  publicationProofFiled: boolean
   proofFiledDate?: string | null
   publicationEntryExists: boolean
   publicationNotes?: string | null
@@ -426,7 +429,6 @@ type DashboardData = {
   discoveryDue: number
   discoveryFollowUps: number
   checklistDueSoon: number
-  publicationWarnings: number
   serviceDueSoon: number
   serviceOverdue: number
   casesWithoutPerfectedService: number
@@ -834,6 +836,8 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
   { key: 'about', label: 'About / IT Notes' },
+  // Dev-only - strip this section (and the Developer settings category below) before a real release.
+  { key: 'developer', label: 'Developer' },
 ]
 
 const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = [
@@ -843,6 +847,8 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
   { label: 'Diagnostics and Help', sections: ['diagnostics', 'about'] },
+  // Dev-only category - strip before a real release.
+  { label: 'Developer', sections: ['developer'] },
 ]
 
 const caseStages = [
@@ -1353,8 +1359,9 @@ function App() {
   const [platformBusy, setPlatformBusy] = useState(false)
   const [platformTemplates, setPlatformTemplates] = useState<DocumentTemplateAdminSummary[]>([])
   const [selectedPlatformTemplateKey, setSelectedPlatformTemplateKey] = useState<string | null>(null)
-  const [platformUploadDraft, setPlatformUploadDraft] = useState({ templateKey: '', title: '', description: '', category: 'Other' })
+  const [platformUploadDraft, setPlatformUploadDraft] = useState({ templateKey: '', title: '', description: '', category: '' })
   const [platformUploadFile, setPlatformUploadFile] = useState<File | null>(null)
+  const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
   const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
   const [newSectionDraft, setNewSectionDraft] = useState({ sectionKey: '', label: '', description: '', issueTagName: '' })
   const [newOverlapDraft, setNewOverlapDraft] = useState({ sectionAKey: '', sectionBKey: '', note: '' })
@@ -1392,6 +1399,7 @@ function App() {
   const [serviceLogEntries, setServiceLogEntries] = useState<ServiceLogEntry[]>([])
   const [serviceLogDraft, setServiceLogDraft] = useState<ServiceLogEntry>(() => emptyServiceLogEntry(0))
   const [serviceLogFormOpen, setServiceLogFormOpen] = useState(false)
+  const [servicePerfectedConfirming, setServicePerfectedConfirming] = useState(false)
   const [publicationEntries, setPublicationEntries] = useState<PublicationEntry[]>([])
   const [publicationEntryDraft, setPublicationEntryDraft] = useState<PublicationEntry>(() => emptyPublicationEntry(0))
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
@@ -3246,12 +3254,30 @@ function App() {
         throw new Error(parsed?.error ?? 'Unable to upload template.')
       }
       setMessage('Template uploaded.')
-      setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: 'Other' })
+      setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
       setPlatformUploadFile(null)
+      setPlatformUploadKeyLocked(false)
       await loadPlatformTemplates()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to upload template.')
     }
+  }
+
+  function startUploadNewVersion(summary: DocumentTemplateAdminSummary) {
+    setPlatformUploadDraft({
+      templateKey: summary.template.templateKey,
+      title: summary.template.title,
+      description: summary.template.description || '',
+      category: summary.template.category,
+    })
+    setPlatformUploadFile(null)
+    setPlatformUploadKeyLocked(true)
+  }
+
+  function startNewPlatformTemplateUpload() {
+    setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
+    setPlatformUploadFile(null)
+    setPlatformUploadKeyLocked(false)
   }
 
   async function savePlatformConfiguration() {
@@ -3847,6 +3873,20 @@ function App() {
       setMessage('Service log entry saved.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save the service log entry.')
+    }
+  }
+
+  async function updateServiceLogStatus(entry: ServiceLogEntry, status: string) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    try {
+      setErrorMessage('')
+      await api('/api/service-log', { method: 'POST', body: JSON.stringify({ ...entry, status, caseId }) })
+      const entries = await api<ServiceLogEntry[]>(`/api/cases/${caseId}/service-log`)
+      setServiceLogEntries(entries)
+      setMessage('Service log status updated.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the service log entry.')
     }
   }
 
@@ -4599,12 +4639,23 @@ function App() {
           <div className="workspace-sections">
             <Panel title="Service &amp; Publication">
               <p className="helper-text">Primary factual record for service perfection and publication.</p>
-              <label className="toggle-inline"><span>Service Perfected</span><input type="checkbox" checked={selectedCase.servicePerfected} onChange={(event) => void toggleServicePerfected(event.target.checked)} /></label>
+              <div className="button-row compact-actions top-gap-small">
+                <span>Service Perfected</span>
+                <span className={`pill pill-${selectedCase.servicePerfected ? 'success' : 'neutral'}`}>{selectedCase.servicePerfected ? 'Perfected' : 'Not Perfected'}</span>
+                {!servicePerfectedConfirming ? (
+                  <button onClick={() => setServicePerfectedConfirming(true)}>{selectedCase.servicePerfected ? 'Mark Not Perfected…' : 'Mark Perfected…'}</button>
+                ) : (
+                  <span className="button-row compact-actions">
+                    <span className="helper-text">{selectedCase.servicePerfected ? 'Confirm reverting this case to not perfected?' : 'Confirm service has been perfected for this case?'}</span>
+                    <button className="primary" onClick={() => { void toggleServicePerfected(!selectedCase.servicePerfected); setServicePerfectedConfirming(false) }}>Confirm</button>
+                    <button onClick={() => setServicePerfectedConfirming(false)}>Cancel</button>
+                  </span>
+                )}
+              </div>
               <form className="form-grid top-gap-small" onSubmit={savePublication}>
                 <label><span>First Publication Date</span><input type="date" value={publicationDraft.firstPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, firstPublicationDate: event.target.value })} /></label>
                 <label><span>Second Publication Date</span><input type="date" min={publicationDraft.firstPublicationDate || undefined} value={publicationDraft.secondPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, secondPublicationDate: event.target.value })} /></label>
                 <label><span>Newspaper / Publication Name</span><input value={publicationDraft.publicationName || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, publicationName: event.target.value, overrideMissingPublicationName: false })} /></label>
-                <label className="toggle-inline"><span>Marked Perfected</span><input type="checkbox" checked={publicationDraft.markedPerfected} onChange={(event) => setPublicationDraft({ ...publicationDraft, markedPerfected: event.target.checked })} /></label>
                 {(publicationDraft.firstPublicationDate || publicationDraft.secondPublicationDate) && !publicationDraft.publicationName && <label className="toggle-inline full-span"><span>Override missing publication name warning</span><input type="checkbox" checked={Boolean(publicationDraft.overrideMissingPublicationName)} onChange={(event) => setPublicationDraft({ ...publicationDraft, overrideMissingPublicationName: event.target.checked })} /></label>}
                 <div className="button-row compact-actions full-span"><button className="primary" type="submit">Save Service &amp; Publication</button></div>
                 <p className="helper-text full-span">Last updated {displayDateTime(workspace?.publication?.lastUpdatedAt)} by {workspace?.publication?.lastUpdatedBy || 'Local development user'}.</p>
@@ -4629,15 +4680,25 @@ function App() {
               {serviceLogEntries.length === 0 ? <p className="top-gap-small">No parties logged yet.</p> : (
                 <div className="table-wrap top-gap-small">
                   <table className="compact-table">
-                    <thead><tr><th>Party</th><th>Status</th><th>Method</th><th>Date</th><th>Notes</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>Party</th><th>Status</th><th>Method</th><th>Date</th><th>Notes</th><th>Last Updated</th><th>Actions</th></tr></thead>
                     <tbody>
                       {serviceLogEntries.map((entry) => (
                         <tr key={entry.id}>
                           <td>{entry.partyName}</td>
-                          <td><span className={`pill pill-${entry.status === 'Served' ? 'success' : entry.status === 'Refused' ? 'danger' : entry.status === 'Attempted' ? 'warn' : 'neutral'}`}>{entry.status}</span></td>
+                          <td>
+                            <select
+                              className={`inline-edit-select pill-select pill-${entry.status === 'Served' ? 'success' : entry.status === 'Refused' ? 'danger' : entry.status === 'Attempted' ? 'warn' : 'neutral'}`}
+                              value={entry.status}
+                              aria-label={`Status for ${entry.partyName}`}
+                              onChange={(event) => void updateServiceLogStatus(entry, event.target.value)}
+                            >
+                              {serviceLogStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                            </select>
+                          </td>
                           <td>{entry.method || 'Not set'}</td>
                           <td>{displayDate(entry.eventDate)}</td>
                           <td>{entry.notes || '—'}</td>
+                          <td>{entry.updatedAt ? displayDateTime(entry.updatedAt) : 'Not set'}</td>
                           <td>
                             <div className="button-row compact-actions row-actions">
                               <button onClick={() => startEditServiceLogEntry(entry)}>Edit</button>
@@ -4661,7 +4722,6 @@ function App() {
                   <label><span>Publication Date</span><input type="date" value={publicationEntryDraft.publicationDate || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, publicationDate: event.target.value })} /></label>
                   <label className="toggle-inline"><span>Proof Filed</span><input type="checkbox" checked={publicationEntryDraft.proofFiled} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, proofFiled: event.target.checked })} /></label>
                   {publicationEntryDraft.proofFiled && <label><span>Proof Filed Date</span><input type="date" value={publicationEntryDraft.proofFiledDate || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, proofFiledDate: event.target.value })} /></label>}
-                  <label className="toggle-inline"><span>Service Resolved</span><input type="checkbox" checked={publicationEntryDraft.serviceResolved} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, serviceResolved: event.target.checked })} /></label>
                   <label className="full-span"><span>Notes</span><textarea value={publicationEntryDraft.notes || ''} onChange={(event) => setPublicationEntryDraft({ ...publicationEntryDraft, notes: event.target.value })} /></label>
                   <div className="button-row compact-actions full-span">
                     <button className="primary" type="submit">{publicationEntryDraft.id === 0 ? 'Save Entry' : 'Update Entry'}</button>
@@ -4672,7 +4732,7 @@ function App() {
               {publicationEntries.length === 0 ? <p className="top-gap-small">No publication entries yet.</p> : (
                 <div className="table-wrap top-gap-small">
                   <table className="compact-table">
-                    <thead><tr><th>#</th><th>Newspaper</th><th>Date</th><th>Proof Filed</th><th>Resolved</th><th>Actions</th></tr></thead>
+                    <thead><tr><th>#</th><th>Newspaper</th><th>Date</th><th>Proof Filed</th><th>Actions</th></tr></thead>
                     <tbody>
                       {publicationEntries.map((entry) => (
                         <tr key={entry.id}>
@@ -4680,7 +4740,6 @@ function App() {
                           <td>{entry.newspaper || 'Not set'}</td>
                           <td>{displayDate(entry.publicationDate)}</td>
                           <td>{entry.proofFiled ? displayDate(entry.proofFiledDate) : 'No'}</td>
-                          <td>{entry.serviceResolved ? 'Yes' : 'No'}</td>
                           <td>
                             <div className="button-row compact-actions row-actions">
                               <button onClick={() => startEditPublicationEntry(entry)}>Edit</button>
@@ -5897,9 +5956,6 @@ function App() {
               </div>
             )}
           </form>
-          <button className="topbar-exit" type="button" onClick={() => void exitCasePlanner()} disabled={shutdownBusy} title="Stop the local Case Planner server">
-            {shutdownBusy ? 'Exiting…' : 'Exit Case Planner'}
-          </button>
         </div>
       </header>
 
@@ -7151,9 +7207,9 @@ function App() {
                   </div>
                 </div>
               )}
-              <p className="helper-text">These are real prior-case documents and the AMI jury instruction library — reference material to copy from, not auto-generated. They don't change per case.</p>
+              <p className="helper-text">Reference material to copy from when drafting — prior-case documents, jury instructions, or anything else worth keeping on hand. Nothing here is auto-generated, and nothing changes per case. Starts empty; add your own documents below.</p>
               {referenceLibrary.length === 0 ? (
-                <p className="top-gap-small">Loading reference library…</p>
+                <p className="top-gap-small">No reference documents yet. Use "Add Reference Document" above to add one.</p>
               ) : (
                 <div className="stacked-panels top-gap-small">
                   {referenceLibrary.map((doc) => (
@@ -7284,17 +7340,26 @@ function App() {
 
           {settingsSection === 'documentPlatformTemplates' && (
             <Panel title="Document Templates">
-              <p className="helper-text">Upload templates, label their sections for the case-generation checklist, flag overlapping sections, and declare runtime inputs - the single document platform, replacing the retired Document Templates / Discovery Content screens (build-plan step 7).</p>
+              <div className="settings-subpanel">
+                <h4>How this works</h4>
+                <p className="helper-text"><strong>Make content and formatting changes in Word, then upload the edited file as a new version.</strong> This settings area manages the metadata around a template - not its content - so there's normally no reason to change anything here after the initial setup.</p>
+                <p className="helper-text"><strong>Section key</strong>: a named block in the document, written as a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> pair around the text in Word. Labeling it here is what lets the case Documents tab show it as a checklist item (and pre-check it when the case carries a matching issue tag) - it doesn't create the block itself, that has to already exist in the uploaded .docx.</p>
+                <p className="helper-text"><strong>Runtime input / field key</strong>: tells the generator to prompt the attorney for a value at generation time (e.g. opposing counsel) instead of pulling it from the case record automatically. Like section keys, this only configures how an existing <code>{'{{FieldKey}}'}</code> token in the .docx gets its value - it doesn't add that token to the document.</p>
+                <p className="helper-text"><strong>Overlap warning</strong>: a note that two sections cover similar ground. When both are checked at generation time, the case checklist shows the note so the attorney can decide whether to drop one - it never blocks generation on its own.</p>
+              </div>
               <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
 
-              <h4 className="top-gap">Upload a Template</h4>
+              <h4 className="top-gap">{platformUploadKeyLocked ? `Upload New Version of "${platformUploadDraft.title}"` : 'Upload a New Template'}</h4>
               <div className="form-grid top-gap-small">
-                <label><span>Template Key</span><input value={platformUploadDraft.templateKey} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, templateKey: e.target.value })} placeholder="e.g. settlement_memo_platform" /></label>
+                <label><span>Template Key</span><input value={platformUploadDraft.templateKey} disabled={platformUploadKeyLocked} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, templateKey: e.target.value })} placeholder="e.g. settlement_memo_platform" /></label>
                 <label><span>Title</span><input value={platformUploadDraft.title} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, title: e.target.value })} /></label>
-                <label><span>Category</span><input value={platformUploadDraft.category} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, category: e.target.value })} /></label>
+                <label><span>Category</span><select value={platformUploadDraft.category} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, category: e.target.value })}><option value="">Select category…</option>{documentTemplateCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
                 <label className="full-span"><span>Description</span><input value={platformUploadDraft.description} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, description: e.target.value })} /></label>
                 <label className="full-span"><span>File (.docx)</span><input type="file" accept=".docx" onChange={(e) => setPlatformUploadFile(e.target.files?.[0] ?? null)} /></label>
-                <div className="full-span"><button className="primary" onClick={() => void uploadPlatformTemplate()}>Upload (creates a new version if the key already exists)</button></div>
+                <div className="full-span button-row compact-actions">
+                  <button className="primary" onClick={() => void uploadPlatformTemplate()}>{platformUploadKeyLocked ? 'Upload New Version' : 'Upload Template'}</button>
+                  {platformUploadKeyLocked && <button type="button" onClick={startNewPlatformTemplateUpload}>Cancel (upload a different template instead)</button>}
+                </div>
               </div>
 
               <h4 className="top-gap">Templates</h4>
@@ -7311,6 +7376,7 @@ function App() {
                         <td>{t.template.isBuiltin ? <span className="pill pill-neutral">Built-in</span> : <span className="pill pill-success">Custom</span>}</td>
                         <td>
                           <div className="button-row compact-actions row-actions">
+                            <button className="primary" onClick={() => startUploadNewVersion(t)}>Upload New Version</button>
                             <button onClick={() => selectPlatformTemplate(t)}>Configure</button>
                             {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey)}>Delete</button>}
                           </div>
@@ -7439,12 +7505,13 @@ function App() {
           {settingsSection === 'issueTags' && (
             <Panel title="Issue Tags">
               <p className="helper-text">Create, rename, and retire the issue-tag vocabulary cases use, and see which document-template sections a tag drives (build-plan step 5 - this was the fixed, developer-only vocabulary the Phase 1 audit flagged). Retiring a tag is a soft-delete: its name becomes available again, but case history keeps the original assignment.</p>
+              <p className="helper-text">Tagging a case with an issue (e.g. "Timber") automatically pulls in that tag's interrogatory and request-for-production questions when generating Interrogatories or Requests for Admission for that case - see the "Used By" column below for which templates a tag drives, and Document Templates for the actual section content each tag inserts.</p>
               <button className="compact-action-button" onClick={() => void loadIssueTagUsage()}>Load Usage</button>
 
               <h4 className="top-gap">Create a Tag</h4>
               <div className="form-grid top-gap-small">
                 <label><span>Name</span><input value={newIssueTagDraft.name} onChange={(e) => setNewIssueTagDraft({ ...newIssueTagDraft, name: e.target.value })} /></label>
-                <label><span>Category</span><input value={newIssueTagDraft.category} onChange={(e) => setNewIssueTagDraft({ ...newIssueTagDraft, category: e.target.value })} /></label>
+                <label><span>Category</span><select value={newIssueTagDraft.category} onChange={(e) => setNewIssueTagDraft({ ...newIssueTagDraft, category: e.target.value })}><option value="">Select category…</option>{issueTagCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
                 <label className="full-span"><span>Description</span><input value={newIssueTagDraft.description} onChange={(e) => setNewIssueTagDraft({ ...newIssueTagDraft, description: e.target.value })} /></label>
                 <div className="full-span"><button className="primary" onClick={() => void createIssueTagFromSettings()}>Create Tag</button></div>
               </div>
@@ -7462,7 +7529,7 @@ function App() {
                           {isEditing && issueTagEditDraft ? (
                             <>
                               <td><input value={issueTagEditDraft.name} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, name: e.target.value })} /></td>
-                              <td><input value={issueTagEditDraft.category} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, category: e.target.value })} /></td>
+                              <td><select value={issueTagEditDraft.category} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, category: e.target.value })}>{issueTagCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></td>
                               <td><input value={issueTagEditDraft.description} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, description: e.target.value })} /></td>
                               <td>{usage ? usage.templateTitles.join(', ') : '—'}</td>
                               <td>
@@ -7508,6 +7575,21 @@ function App() {
             <Panel title="About / IT Notes">
               <p>Court documents (Interrogatories, Requests for Admission, Judgment, Settlement Justification) are generated from real <code>.docx</code> templates under <code>templates/documents/platform</code> through a native C# merge engine — section and loop content and merge fields are resolved directly against the OpenXml document tree, with no third-party templating library and no external Word automation. CSV and Excel (.xlsx/.xlsm) import are both supported. All data stays local.</p>
               <p>SQLite is the active runtime database. SQL Server support is already built as a parallel, provider-selected implementation — including migration scripts, a dedicated database migrator, and reconciliation services — for an eventual IT-supported shared deployment; SQL Server activation remains intentionally disabled until reconciliation, identity, and authorization work is complete.</p>
+            </Panel>
+          )}
+
+          {/* Dev-only settings section - strip this entire block, the 'developer' SettingsSectionKey,
+              and its settingsCategories entry before a real release. */}
+          {settingsSection === 'developer' && (
+            <Panel title="Developer">
+              <p className="helper-text">Dev-only tools. Not part of the shipped product - strip this section before a real release.</p>
+              <h4 className="top-gap">Server Shutdown</h4>
+              <p className="helper-text">A clean way to stop the local server during development instead of killing the process via Task Manager.</p>
+              <div className="button-row compact-actions top-gap-small">
+                <button type="button" onClick={() => void exitCasePlanner()} disabled={shutdownBusy} title="Stop the local Case Planner server">
+                  {shutdownBusy ? 'Exiting…' : 'Exit Case Planner'}
+                </button>
+              </div>
             </Panel>
           )}
             </section>

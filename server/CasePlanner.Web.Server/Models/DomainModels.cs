@@ -456,7 +456,6 @@ public sealed class DashboardData
     public int DiscoveryDue { get; set; }
     public int DiscoveryFollowUps { get; set; }
     public int ChecklistDueSoon { get; set; }
-    public int PublicationWarnings { get; set; }
     public int ServiceDueSoon { get; set; }
     public int ServiceOverdue { get; set; }
     public int CasesWithoutPerfectedService { get; set; }
@@ -876,7 +875,6 @@ public sealed class ServiceStatusSummary
     public bool ServiceDeadlineCalculated { get; set; }
     public string? PublicationDate { get; set; }
     public string? Newspaper { get; set; }
-    public bool PublicationProofFiled { get; set; }
     public string? ProofFiledDate { get; set; }
     public bool PublicationEntryExists { get; set; }
     public string? PublicationNotes { get; set; }

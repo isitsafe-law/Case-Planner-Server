@@ -23,7 +23,7 @@ public static class ServiceStatusEngine
             ServiceStatus=Blank(caseRecord.ServiceStatus),ServiceNotes=Blank(caseRecord.ServiceNotes),
             ServiceDeadlineCalculated=manual is null&&basis is not null,PublicationEntryExists=publication is not null,
             PublicationDate=publication?.SecondPublicationDate??publication?.FirstPublicationDate,
-            Newspaper=Blank(publication?.PublicationName),PublicationProofFiled=publication?.MarkedPerfected??false,
+            Newspaper=Blank(publication?.PublicationName),
             PublicationNotes=Blank(caseRecord.PublicationServiceNotes)
         };
         if(!result.ServiceRequired)return Set(result,"none","Service is not required for this case.");

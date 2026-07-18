@@ -489,7 +489,6 @@ public sealed partial class CasePlannerRepository
             DiscoveryDue = discovery.Count(d => d.Status.Contains("Waiting", StringComparison.OrdinalIgnoreCase) && ParseDate(d.DueDate) is { } due && due <= today.AddDays(7)),
             DiscoveryFollowUps = discovery.Count(d => d.Status.Contains("Follow-Up", StringComparison.OrdinalIgnoreCase)),
             ChecklistDueSoon = checklist.Count(i => i.Status is not "Done" and not "Complete" and not "N/A" && ParseDate(i.DueDate) is { } due && due <= today.AddDays(7)),
-            PublicationWarnings = publicationEntries.Count(p => !p.MarkedPerfected),
             ServiceDueSoon = serviceSummaries.Count(s => s.WarningLevel is "urgent" or "upcoming"),
             ServiceOverdue = serviceSummaries.Count(s => s.WarningLevel == "overdue"),
             CasesWithoutPerfectedService = serviceSummaries.Count(s => s.ServiceRequired && !s.ServicePerfected),

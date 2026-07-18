@@ -1,17 +1,11 @@
 # Reference Library source files
 
 This folder holds the plain-text source files for the Settings → Reference Library
-feature. The `.txt` files are excluded from version control because they contain real
-prior-case litigation content (actual names, testimony, and figures), not generic
-templates.
+feature (`FileReferenceLibraryStore` in `server/CasePlanner.Web.Server/Persistence/ReferenceLibraryStore.cs`).
+Any `.txt` file placed here shows up in the Reference Library automatically; `.txt` files
+are excluded from version control (see `.gitignore`) since reference content is real,
+firm-specific litigation material (names, testimony, figures), not generic templates.
 
-The app expects these four files here, read live at request time
-(`GetReferenceLibraryAsync` in `CasePlannerRepository.cs`):
-
-- `JuryInstructions.txt`
-- `OpeningStatement_Reyes.txt`
-- `DirectExamination_MaxwellFanning.txt`
-- `DirectExamination_ChesBartlett.txt`
-
-If this repo is cloned fresh, restore these files from the original source documents
-before the Reference Library section will show real content.
+There are no built-in defaults - the Reference Library starts empty on a fresh clone or
+install. Add documents through Settings → Reference Library in the app, or drop `.txt`
+files directly in this folder.

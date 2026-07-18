@@ -610,22 +610,6 @@ app.MapGet("/api/cases", async (string? search, string? status, string? county, 
     return Results.Ok(visible is null?result:result.Where(c=>visible.Contains(c.Id)));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/case-statuses", () => Results.Ok(new[] { "Pipeline", "Filed / Service Pending", "Active Litigation", "Settlement Pending", "Trial Preparation", "Resolved / Closed", "Triage" })).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapGet("/api/reports/lifecycle-readiness", async (ICaseCatalogReader cases, CaseAccessService access, CancellationToken token) =>
-{
-    var rows = await cases.GetCasesAsync(new(IncludeClosed: true), token);
-    var visible = await access.GetVisibleCaseIdsAsync(token);
-    if (visible is not null) rows = rows.Where(item => visible.Contains(item.Id)).ToList();
-    var closed = rows.Where(item => !string.IsNullOrWhiteSpace(item.ClosedDate)).ToList();
-    return Results.Ok(new
-    {
-        totalCases = rows.Count,
-        openedDatesPresent = rows.Count(item => !string.IsNullOrWhiteSpace(item.DateOpened)),
-        openedDatesMissing = rows.Count(item => string.IsNullOrWhiteSpace(item.DateOpened)),
-        closedCases = closed.Count,
-        closedDatesMissing = rows.Count(item => (item.Status is "Closed" or "Complete" || item.CaseStatus == "Resolved / Closed") && string.IsNullOrWhiteSpace(item.ClosedDate)),
-        invalidDateOrder = rows.Count(item => DateOnly.TryParse(item.DateOpened, out var opened) && DateOnly.TryParse(item.ClosedDate, out var closedDate) && closedDate < opened)
-    });
-}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/case-status-mapping-review", async (CaseAccessService access,CancellationToken token) =>
 {
     var result=(await repo.GetCasesAsync("","","","",true)).Where(c=>c.StatusMappingReview);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?result:result.Where(c=>visible.Contains(c.Id)));

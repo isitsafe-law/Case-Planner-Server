@@ -1244,21 +1244,14 @@ function App() {
   const [shutdownBusy, setShutdownBusy] = useState(false)
   const [reportStatusFilter, setReportStatusFilter] = useState('')
   const [reportCountyFilter, setReportCountyFilter] = useState('')
-  const [reportHolderFilter, setReportHolderFilter] = useState('')
   const [reportSearch, setReportSearch] = useState('')
   const [reportOpenedFrom, setReportOpenedFrom] = useState('')
   const [reportOpenedTo, setReportOpenedTo] = useState('')
-  const [reportClosedFrom, setReportClosedFrom] = useState('')
-  const [reportClosedTo, setReportClosedTo] = useState('')
   const [reportPreset, setReportPreset] = useState('')
   const [reportServerRows, setReportServerRows] = useState<CaseRecord[]>([])
-  const [reportLoading, setReportLoading] = useState(false)
-  const [lifecycleReadiness, setLifecycleReadiness] = useState<{ totalCases: number; openedDatesMissing: number; closedCases: number; closedDatesMissing: number; invalidDateOrder: number } | null>(null)
-  const [reportIncludeClosed, setReportIncludeClosed] = useState(false)
   const [reportColumns, setReportColumns] = useState<ReportColumnKey[]>(['caseName', 'caseNumber', 'county', 'caseStatus', 'currentHolder', 'nextAction', 'trialDate'])
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
-  const [reportLayoutOpen, setReportLayoutOpen] = useState(true)
   const [attorneyDashboard, setAttorneyDashboard] = useState<AttorneyDashboardResponse | null>(null)
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
@@ -3860,26 +3853,23 @@ function App() {
   }
   useEffect(() => {
     if (page !== 'reports') return
-    const params = new URLSearchParams({ includeClosed: String(reportIncludeClosed || reportStatusFilter === '__closed'), status: reportStatusFilter === '__closed' ? '' : reportStatusFilter, county: reportCountyFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, dateClosedFrom: reportClosedFrom, dateClosedTo: reportClosedTo })
+    const params = new URLSearchParams({ includeClosed: String(reportStatusFilter === '__closed'), status: reportStatusFilter === '__closed' ? '' : reportStatusFilter, county: reportCountyFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo })
     if (reportStatusFilter === '__closed') params.set('status', 'Closed')
-    setReportLoading(true)
-    void api<CaseRecord[]>(`/api/cases?${params.toString()}`).then(setReportServerRows).catch(() => setReportServerRows([])).finally(() => setReportLoading(false))
-  }, [page, reportIncludeClosed, reportStatusFilter, reportCountyFilter, reportSearch, reportOpenedFrom, reportOpenedTo, reportClosedFrom, reportClosedTo])
+    void api<CaseRecord[]>(`/api/cases?${params.toString()}`).then(setReportServerRows).catch(() => setReportServerRows([]))
+  }, [page, reportStatusFilter, reportCountyFilter, reportSearch, reportOpenedFrom, reportOpenedTo])
 
   const reportRows = useMemo(() => {
     const query = reportSearch.trim().toLocaleLowerCase()
+    const includeClosed = reportStatusFilter === '__closed'
     const rows = reportServerRows.filter((record) => {
       const status = record.caseStatus || 'Pipeline'
-      if (!reportIncludeClosed && !['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation'].includes(status)) return false
-      if (reportIncludeClosed ? false : record.status === 'Triage') return false
-      if (reportStatusFilter === '__closed' && ['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation'].includes(status)) return false
+      if (!includeClosed && !['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation'].includes(status)) return false
+      if (!includeClosed && record.status === 'Triage') return false
+      if (includeClosed && ['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation'].includes(status)) return false
       if (reportStatusFilter && reportStatusFilter !== '__closed' && status !== reportStatusFilter) return false
       if (reportCountyFilter && record.county !== reportCountyFilter) return false
-      if (reportHolderFilter && (record.currentHolder || '') !== reportHolderFilter) return false
       if (reportOpenedFrom && (!record.dateOpened || record.dateOpened < reportOpenedFrom)) return false
       if (reportOpenedTo && (!record.dateOpened || record.dateOpened > reportOpenedTo)) return false
-      if (reportClosedFrom && (!record.closedDate || record.closedDate < reportClosedFrom)) return false
-      if (reportClosedTo && (!record.closedDate || record.closedDate > reportClosedTo)) return false
       if (query && ![record.caseName, record.caseNumber, record.jobNumber, record.tract, record.county, record.projectName].join(' ').toLocaleLowerCase().includes(query)) return false
       return true
     })
@@ -3889,7 +3879,7 @@ function App() {
       const comparison = left.localeCompare(right, undefined, { numeric: true })
       return reportSortDirection === 'asc' ? comparison : -comparison
     })
-  }, [reportServerRows, reportIncludeClosed, reportStatusFilter, reportCountyFilter, reportHolderFilter, reportOpenedFrom, reportOpenedTo, reportClosedFrom, reportClosedTo, reportSearch, reportSortColumn, reportSortDirection])
+  }, [reportServerRows, reportStatusFilter, reportCountyFilter, reportOpenedFrom, reportOpenedTo, reportSearch, reportSortColumn, reportSortDirection])
 
   const reportMetrics = useMemo(() => {
     const closed = reportRows.filter((record) => Boolean(record.closedDate))
@@ -3899,14 +3889,14 @@ function App() {
     const ageBands = { under90: ages.filter((value) => value < 90).length, days90to179: ages.filter((value) => value >= 90 && value < 180).length, days180to364: ages.filter((value) => value >= 180 && value < 365).length, year1to2: ages.filter((value) => value >= 365 && value < 730).length, year2to3: ages.filter((value) => value >= 730 && value < 1095).length, over3: ages.filter((value) => value >= 1095).length }
     const ordered = [...durations].sort((a, b) => a - b)
     const medianDuration = ordered.length ? (ordered.length % 2 ? ordered[(ordered.length - 1) / 2] : Math.round((ordered[ordered.length / 2 - 1] + ordered[ordered.length / 2]) / 2)) : null
-    return { total: reportRows.length, open: open.length, closed: closed.length, averageDuration: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : null, medianDuration, shortestDuration: ordered[0] ?? null, longestDuration: ordered.at(-1) ?? null, averageAge: ages.length ? Math.round(ages.reduce((sum, value) => sum + value, 0) / ages.length) : null, missingDates: closed.length - durations.length, ageBands }
+    return { open: open.length, closed: closed.length, averageDuration: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : null, medianDuration, shortestDuration: ordered[0] ?? null, longestDuration: ordered.at(-1) ?? null, averageAge: ages.length ? Math.round(ages.reduce((sum, value) => sum + value, 0) / ages.length) : null, missingDates: closed.length - durations.length, ageBands }
   }, [reportRows])
 
   function exportReportCsv() {
     const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
     const escape = (value: string) => `"${value.replaceAll('"', '""')}"`
     const generated = new Date().toISOString()
-    const filters = `Opened ${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}; Closed ${reportClosedFrom || 'any'} to ${reportClosedTo || 'any'}; Status ${reportStatusFilter || 'all'}`
+    const filters = `Opened ${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}; Status ${reportStatusFilter || 'all'}`
     const csv = [['Case Report'], [`Generated: ${generated}`], [`Filters: ${filters}`], [], headers, ...reportRows.map((record) => reportColumns.map((column) => reportCellValue(record, column)))].map((row) => row.map(escape).join(',')).join('\r\n')
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
@@ -3920,7 +3910,7 @@ function App() {
     const columns = reportColumns.map((key) => ({ key, label: reportColumnOptions.find((option) => option.key === key)?.label ?? key }))
     const rows = reportRows.map((record) => Object.fromEntries(reportColumns.map((column) => [column, reportCellValue(record, column)])))
     const generated = new Date().toISOString()
-    const filters = { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, dateClosed: `${reportClosedFrom || 'any'} to ${reportClosedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all' }
+    const filters = { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all' }
     const response = await fetch('/api/reports/export.xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Case Lifecycle Report', generatedAt: generated, filters, fileName: `Open_Case_Report_${new Date().toISOString().slice(0, 10)}.xlsx`, columns, rows }) })
     if (!response.ok) throw new Error('Unable to export the Excel report.')
     const blob = await response.blob()
@@ -3930,10 +3920,6 @@ function App() {
     link.download = `Open_Case_Report_${new Date().toISOString().slice(0, 10)}.xlsx`
     link.click()
     URL.revokeObjectURL(url)
-  }
-
-  async function loadLifecycleReadiness() {
-    try { setLifecycleReadiness(await api('/api/reports/lifecycle-readiness')) } catch { setLifecycleReadiness(null) }
   }
 
   async function exitCasePlanner() {
@@ -6546,45 +6532,38 @@ function App() {
         <main className="page">
           <section className="hero-panel">
             <div><p className="eyebrow dark">Reports</p><h2>Open Case Reports</h2><p className="subtle-text">Build a read-only case list from the same consolidated status data used throughout the application.</p></div>
-            <div className="button-row compact-actions"><button onClick={() => void loadLifecycleReadiness()}>Check Lifecycle Data</button><button onClick={exportReportCsv}>Export CSV</button><button className="primary" onClick={() => void exportReportExcel()}>Export Excel</button></div>
+            <div className="button-row compact-actions"><button onClick={exportReportCsv}>Export CSV</button><button className="primary" onClick={() => void exportReportExcel()}>Export Excel</button></div>
           </section>
-          {lifecycleReadiness && <p className="helper-text top-gap-small">Lifecycle readiness: {lifecycleReadiness.totalCases} cases; {lifecycleReadiness.openedDatesMissing} missing Date Opened; {lifecycleReadiness.closedDatesMissing} closed cases missing Date Closed; {lifecycleReadiness.invalidDateOrder} invalid date order. No records were changed.</p>}
-          <div className="metric-tile-row top-gap-small">
-            <div className="metric-tile"><span>Matching cases</span><strong>{reportLoading ? 'â€¦' : reportMetrics.total}</strong></div>
-            <div className="metric-tile"><span>Open</span><strong>{reportMetrics.open}</strong></div>
-            <div className="metric-tile"><span>Closed</span><strong>{reportMetrics.closed}</strong></div>
-            <div className="metric-tile"><span>Avg. closed duration</span><strong>{reportMetrics.averageDuration == null ? 'â€”' : `${reportMetrics.averageDuration} days`}</strong></div>
-            <div className="metric-tile"><span>Avg. open age</span><strong>{reportMetrics.averageAge == null ? 'â€”' : `${reportMetrics.averageAge} days`}</strong></div>
-          </div>
-          <div className="metric-tile-row top-gap-small">
-            <div className="metric-tile"><span>Median closed duration</span><strong>{reportMetrics.medianDuration == null ? 'â€”' : `${reportMetrics.medianDuration} days`}</strong></div>
-            <div className="metric-tile"><span>Shortest closed duration</span><strong>{reportMetrics.shortestDuration == null ? 'â€”' : `${reportMetrics.shortestDuration} days`}</strong></div>
-            <div className="metric-tile"><span>Longest closed duration</span><strong>{reportMetrics.longestDuration == null ? 'â€”' : `${reportMetrics.longestDuration} days`}</strong></div>
-            <div className="metric-tile"><span>Missing lifecycle dates</span><strong>{reportMetrics.missingDates}</strong></div>
-          </div>
-          {reportMetrics.closed > 0 && <p className="helper-text top-gap-small">Duration metrics use {reportMetrics.closed - reportMetrics.missingDates} of {reportMetrics.closed} closed cases. Cases missing Date Opened or Date Closed are excluded.</p>}
-          {reportMetrics.open > 0 && <p className="helper-text">Open-case age bands: &lt;90 days {reportMetrics.ageBands.under90} · 90–179 {reportMetrics.ageBands.days90to179} · 180–364 {reportMetrics.ageBands.days180to364} · 1–2 years {reportMetrics.ageBands.year1to2} · 2–3 years {reportMetrics.ageBands.year2to3} · &gt;3 years {reportMetrics.ageBands.over3}.</p>}
           <div className="report-builder-grid">
-            <Panel title="Filters">
+            <CollapsiblePanel title="Filters">
               <div className="form-grid">
                 <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>
                 <label><span>County</span><select value={reportCountyFilter} onChange={(event) => setReportCountyFilter(event.target.value)}><option value="">All counties</option>{arkansasCounties.map((county) => <option key={county}>{county}</option>)}</select></label>
-                <label><span>Current holder</span><input value={reportHolderFilter} onChange={(event) => setReportHolderFilter(event.target.value)} placeholder="Any holder" /></label>
                 <label><span>Search cases</span><input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Name, number, job, tract..." /></label>
-                <label><span>Opened-date preset</span><select value={reportPreset} onChange={(event) => applyReportPreset(event.target.value)}><option value="">Custom range</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="6m">Last 6 months</option><option value="12m">Last 12 months</option><option value="thisYear">This calendar year</option><option value="previousYear">Previous calendar year</option></select></label>
-                <label><span>Date opened from</span><input type="date" value={reportOpenedFrom} onChange={(event) => setReportOpenedFrom(event.target.value)} /></label>
-                <label><span>Date opened to</span><input type="date" value={reportOpenedTo} onChange={(event) => setReportOpenedTo(event.target.value)} /></label>
-                <label><span>Date closed from</span><input type="date" value={reportClosedFrom} onChange={(event) => setReportClosedFrom(event.target.value)} /></label>
-                <label><span>Date closed to</span><input type="date" value={reportClosedTo} onChange={(event) => setReportClosedTo(event.target.value)} /></label>
-                <label className="toggle-inline"><span>Include closed and triage</span><input type="checkbox" checked={reportIncludeClosed} onChange={(event) => setReportIncludeClosed(event.target.checked)} /></label>
+                <label><span>Date preset</span><select value={reportPreset} onChange={(event) => applyReportPreset(event.target.value)}><option value="">Custom range</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="6m">Last 6 months</option><option value="12m">Last 12 months</option><option value="thisYear">This calendar year</option><option value="previousYear">Previous calendar year</option></select></label>
+                {reportPreset === '' && <>
+                  <label><span>Date opened from</span><input type="date" value={reportOpenedFrom} onChange={(event) => setReportOpenedFrom(event.target.value)} /></label>
+                  <label><span>Date opened to</span><input type="date" value={reportOpenedTo} onChange={(event) => setReportOpenedTo(event.target.value)} /></label>
+                </>}
               </div>
-              <div className="button-row compact-actions top-gap-small"><button onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportHolderFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo(''); setReportClosedFrom(''); setReportClosedTo(''); setReportIncludeClosed(false) }}>Reset Filters</button><span className="helper-text">Date boundaries are inclusive; presets populate editable fields.</span></div>
-            </Panel>
-            <Panel title="Columns and layout" headerAction={<button className="link-button" onClick={() => setReportLayoutOpen((open) => !open)}>{reportLayoutOpen ? 'Collapse' : 'Expand'}</button>}>
-              {reportLayoutOpen && <><div className="report-column-picker">{reportColumnOptions.map((option) => <label className="toggle-inline" key={option.key}><span>{option.label}</span><input type="checkbox" checked={reportColumns.includes(option.key)} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /></label>)}</div>
-                <div className="form-grid top-gap-small"><label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label><label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label></div></>}
-            </Panel>
+              <div className="button-row compact-actions top-gap-small"><button onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset Filters</button><span className="helper-text">Date boundaries are inclusive; presets populate the range automatically.</span></div>
+            </CollapsiblePanel>
+            <CollapsiblePanel title="Columns and layout">
+              <div className="report-column-picker">{reportColumnOptions.map((option) => <label className="toggle-inline" key={option.key}><span>{option.label}</span><input type="checkbox" checked={reportColumns.includes(option.key)} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /></label>)}</div>
+              <div className="form-grid top-gap-small"><label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label><label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label></div>
+            </CollapsiblePanel>
           </div>
+          <CollapsiblePanel title="Case duration & age" defaultOpen={false}>
+            <div className="metric-tile-row">
+              <div className="metric-tile"><span>Avg. closed duration</span><strong>{reportMetrics.averageDuration == null ? '—' : `${reportMetrics.averageDuration} days`}</strong></div>
+              <div className="metric-tile"><span>Avg. open age</span><strong>{reportMetrics.averageAge == null ? '—' : `${reportMetrics.averageAge} days`}</strong></div>
+              <div className="metric-tile"><span>Median closed duration</span><strong>{reportMetrics.medianDuration == null ? '—' : `${reportMetrics.medianDuration} days`}</strong></div>
+              <div className="metric-tile"><span>Shortest closed duration</span><strong>{reportMetrics.shortestDuration == null ? '—' : `${reportMetrics.shortestDuration} days`}</strong></div>
+              <div className="metric-tile"><span>Longest closed duration</span><strong>{reportMetrics.longestDuration == null ? '—' : `${reportMetrics.longestDuration} days`}</strong></div>
+            </div>
+            {reportMetrics.closed > 0 && <p className="helper-text top-gap-small">Duration metrics use {reportMetrics.closed - reportMetrics.missingDates} of {reportMetrics.closed} closed cases. Cases missing Date Opened or Date Closed are excluded.</p>}
+            {reportMetrics.open > 0 && <p className="helper-text">Open-case age bands: &lt;90 days {reportMetrics.ageBands.under90} · 90–179 {reportMetrics.ageBands.days90to179} · 180–364 {reportMetrics.ageBands.days180to364} · 1–2 years {reportMetrics.ageBands.year1to2} · 2–3 years {reportMetrics.ageBands.year2to3} · &gt;3 years {reportMetrics.ageBands.over3}.</p>}
+          </CollapsiblePanel>
           <Panel title="Preview" headerAction={<span className="pill pill-neutral">{reportRows.length} matching case{reportRows.length === 1 ? '' : 's'}</span>}>
             {reportColumns.length === 0 ? <p>Select at least one column to preview the report.</p> : reportRows.length === 0 ? <p>No cases match the current filters.</p> : <div className="table-wrap"><table className="compact-table"><thead><tr>{reportColumns.map((column) => <th key={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</th>)}<th>Open</th></tr></thead><tbody>{reportRows.map((record) => <tr key={record.id}>{reportColumns.map((column) => <td key={column}>{reportCellValue(record, column) || '—'}</td>)}<td><button onClick={() => openCase(record.id, 'overview')}>Open Case</button></td></tr>)}</tbody></table></div>}
           </Panel>
@@ -7403,6 +7382,15 @@ export function Panel({ title, headerAction, children }: { title: string; header
       </div>
       <div className="panel-body">{children}</div>
     </section>
+  )
+}
+
+export function CollapsiblePanel({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <Panel title={title} headerAction={<button className="link-button" onClick={() => setOpen((current) => !current)}>{open ? 'Collapse' : 'Expand'}</button>}>
+      {open && children}
+    </Panel>
   )
 }
 

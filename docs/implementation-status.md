@@ -275,3 +275,52 @@ These limitations are explicit so a release review can distinguish working accep
   columns when enabled.
 - Closing a case now prompts for Date Closed instead of silently assigning today; reopening prompts whether the
   active closure date should be cleared while preserving the prior value in audit history.
+
+## 2026-07-17 unified document platform rebuild
+
+A full audit-and-rebuild of the document generation subsystem, delivered in phases with an explicit stop for
+review after the audit and target-architecture plan (published as an artifact) before any implementation code.
+
+- Phase 1 audit inventoried the then-current pipeline: `IDocumentPipeline`/`IDocumentRendererRegistry`/
+  per-kind renderer hierarchy, the split Custom Templates/Discovery Content Settings screens, and five
+  plain-`.txt` built-in document kinds with no real Word formatting.
+- Empirically evaluated `docx-templates` vs `docxtemplater` against hand-built and real attorney-authored
+  fixtures (native numbering, split-run tokens, field codes). Selected native C# on the existing
+  `DocumentFormat.OpenXml` stack over introducing a Node dependency, decided against automatic numbering
+  renumbering in favor of leaving Word's own numbering/field mechanisms untouched, and confirmed the
+  all-caps-tag-signals-uppercase-output convention against a real two-version attorney test file.
+- Build-plan step 1 (thin slice): `DocxSectionMerger`/`MergeContext`/`MergeContextBuilder` - a run-splitting-aware
+  merge engine with `{{#Section}}...{{/Section}}` paragraph-granular conditional/loop blocks, proven against a
+  hand-authored Interrogatories template with a real `SEQ` field.
+- Build-plan step 2: generalized the section engine to all 22 issue tags, added `DocxTemplateLinter` for
+  upload-time structural/field validation.
+- Build-plan step 3 (data model cutover): new DB-backed schema - `document_templates`,
+  `document_template_versions`, `document_template_sections`, `document_section_overlaps`,
+  `document_runtime_inputs`, `document_generations` - authored SQL-Server-first with a SQLite-compatible shape;
+  SQL migration `023_document_platform.sql`.
+- Build-plan step 4: unified case Documents-tab generation flow - a checklist pre-checked from the case's real
+  issue tags, togglable with declarative overlap warnings, generating and recording history in one step.
+- Build-plan step 5: unified Settings screen for template upload/versioning/section-and-overlap configuration,
+  plus a rebuilt Issue Tags admin screen (create/rename/retire, "which templates use this tag").
+- Build-plan step 6: re-authored the remaining built-ins as real `.docx` templates through the platform -
+  Judgment (unified into one template with `{{#TaxesOwed}}`/`{{#NoTaxesOwed}}` branching instead of two
+  duplicate files), Settlement Justification, Requests for Admission, and ported all 14 remaining issue-tag
+  interrogatory/RFP sections (previously hard-coded in `IssueTagDiscoveryContent.cs`) into the Interrogatories
+  template as real sections, bringing it to all 15 tags.
+- Build-plan step 7 (cleanup): retired the three systems the platform replaced - the fixed 5 built-in document
+  kinds, the standalone Custom Templates upload screen, and the Discovery Content bulk-text editor - deleting
+  their C# (`IDocumentPipeline`, `DiscoveryDocumentRenderers`, `IssueTagDiscoveryContent`,
+  `DocumentTemplateCatalog`, both custom-template/discovery-template SQL Server stores, ~35 dead endpoints) and
+  dropping their dead schema: `document_tags`/`document_template_tag_links`/`discovery_item_tag_links` (added
+  in migration 021 for a feature never built) and `custom_document_templates` in migration 025.
+- Resolved the data-migration items deferred at step 3: `custom_document_templates` and `discovery_generations`
+  were confirmed empty everywhere with no future writers and dropped outright (migration 026 for the latter);
+  `document_exports` stays live (Case Summary/Review still write to it) and was not schema-migrated - instead
+  the case Documents tab's "Generated Documents" panel now merges `document_exports` and the new
+  `document_generations` history client-side into one chronologically-sorted list with a Source column, so nothing
+  from either system is invisible to the attorney.
+- Server test suite: 165/165 passing. Client `tsc`/production build clean. Live-verified in-browser: template
+  upload/configuration, checklist-driven generation with section branching, runtime-input fields, Risk Analysis
+  narrative (re-pointed off the retired pipeline), and the merged generation history.
+- **Not done**: `IDocumentPlatformService`'s SQL Server implementation remains a deliberate `NotSupportedException`
+  stub - no SQL Server sandbox has been available to build or verify a real implementation against yet.

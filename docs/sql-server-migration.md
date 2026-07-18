@@ -718,7 +718,7 @@ intended production target going forward, not a parallel path kept in sync with 
 remains the day-to-day development database only because the development environment does not yet have sandbox
 access to a SQL Server instance on the agency network. When provisioning the real instance:
 
-1. Run migrations `001` through `025` in order against a fresh, dedicated database (the migrator tool refuses to
+1. Run migrations `001` through `026` in order against a fresh, dedicated database (the migrator tool refuses to
    write into a non-empty destination by default - see "Create and verify a target" above).
 2. Confirm `app_users` is populated (or your identity-provider integration is wired up) before enabling any
    `created_by_user_id`/`generated_by_user_id` columns to matter - they're nullable, so the schema itself doesn't
@@ -750,10 +750,20 @@ now-dead schema:
   the Phase 1 audit to be referenced by zero C# code even before this retirement.
 - `custom_document_templates` - superseded by `document_templates`/`document_template_versions`.
 
-**Not dropped**: `discovery_template_items`, `discovery_base_versions`, `discovery_generations`. Their C# consumers
-are retired in this same step, but unlike the tables above, these three were never created by an explicit numbered
-migration - their SQL Server schema is generated at cutover time by introspecting the live SQLite schema. Removing
-them from `CasePlannerRepository.SchemaSql` is what stops them from being introspected into a fresh cutover; there
-is nothing to drop here since no SQL Server instance has been stood up yet to run this migration against. If you
-cut over before applying this retirement, those three tables will still be created and can be dropped manually
-once the application no longer references them.
+**Not dropped here**: `discovery_template_items`, `discovery_base_versions`. Their C# consumers are retired in this
+same step, but unlike the tables above, these were never created by an explicit numbered migration - their SQL
+Server schema is generated at cutover time by introspecting the live SQLite schema. Removing them from
+`CasePlannerRepository.SchemaSql` is what stops them from being introspected into a fresh cutover; there is nothing
+to drop here since no SQL Server instance has been stood up yet to run this migration against. If you cut over
+before applying this retirement, those tables will still be created and can be dropped manually once the
+application no longer references them. (`discovery_generations` was in this same category originally but is
+retired explicitly in migration 026 below, once its data was confirmed empty everywhere.)
+
+### Discovery generations retirement (migration 026)
+
+Run `026_retire_discovery_generations.sql` after migration 025. `discovery_generations` stored raw rendered-text
+snapshots from the old Discovery Content bulk editor (migration 025's retirement) - confirmed zero rows in the
+local SQLite database, and nothing writes to it going forward (unlike `document_exports`, which stays live for
+Case Summary/Review). `CasePlannerRepository.InitializeAsync` drops the SQLite copy directly (`DROP TABLE IF
+EXISTS`) rather than waiting for a fresh database; this migration does the equivalent on SQL Server in case a
+cutover already introspected the table before this migration runs.

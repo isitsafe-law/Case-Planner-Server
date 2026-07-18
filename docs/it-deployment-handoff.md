@@ -16,8 +16,11 @@ resources only and must not be copied into production configuration.
 - An approved central document share or mounted filesystem with backup, retention, malware scanning, capacity
   monitoring, and access auditing. Grant the application service identity create/read/write access; do not grant
   end users direct share access unless separately required and approved.
-- The same central root stores immutable custom-template source files under `templates/custom`. Template
-  retirement in the application does not physically purge these files.
+- The same central root stores the unified document platform's template source files under
+  `templates/documents/platform` - every built-in and uploaded template's versioned `.docx` source, referenced by
+  `document_template_versions.storage_path`. Template retirement in the application does not physically purge
+  these files. (The older `templates/documents/custom` subtree from the retired standalone Custom Templates
+  screen is no longer written to; see "Unified document platform" below.)
 
 ## Configuration inputs
 
@@ -79,21 +82,38 @@ existing pilot-write flag for controlled migration testing.
 
 The normal case workspace, operational dashboards and queues, migrated case and child-record stores, and risk
 ledger/history/offers now have configuration-selected SQLite and SQL Server implementations. Issue-tag
-assignments, discovery snapshot persistence, generated-document metadata/content/QA, and basic summary/review
-generation are provider-selected as well. Runtime SQL activation is still blocked until risk narrative,
-template-heavy discovery/document previews, custom DOCX generation, imports, and administrative operations no
-longer require the SQLite repository. Deadline/checklist refresh, candidate review, and selected template
+assignments, generated-document metadata/content/QA, and basic summary/review generation are provider-selected
+as well. Runtime SQL activation is still blocked until risk narrative, imports, and administrative operations
+no longer require the SQLite repository. Deadline/checklist refresh, candidate review, and selected template
 generation are now provider-selected and reconcile across all 58 development cases. IT must validate that
 failed SQL metadata writes do not leave files behind and that the central share supports simultaneous
 application-server access.
 
 Operational checklist/deadline template catalogs now reconcile and have concurrency-protected SQL pilot
-writes. Discovery base documents and issue-tag content now also have immutable SQL version history with
-serialized version allocation. Custom document-template metadata and central source-file storage now have a
-gated SQL pilot as well. IT must validate share permissions, backup/restore, retention, malware scanning, and
-capacity behavior for both generated documents and the `templates/custom` subtree. Imports, destructive
-database-management operations and the final provider selection remain separate
+writes. Imports, destructive database-management operations, and the final provider selection remain separate
 release gates.
+
+### Unified document platform
+
+Build-plan steps 1-7 (see the audit-and-rebuild-plan artifact and `docs/sql-server-migration.md` migrations
+023-026) replaced three previously-separate systems - the fixed 5 built-in document kinds, the standalone
+Custom Templates upload screen, and the Discovery Content bulk-text editor - with one platform: templates,
+versions, section/loop content, runtime inputs, and generation history are all DB-backed
+(`document_templates`, `document_template_versions`, `document_template_sections`,
+`document_section_overlaps`, `document_runtime_inputs`, `document_generations`) and merged natively into
+uploaded `.docx` files with no third-party templating dependency. The old `custom_document_templates`,
+`discovery_template_items`, `discovery_base_versions`, and `discovery_generations` tables and every C# code
+path reading or writing them are retired; the tag-linking schema added for a feature that was never built
+(migration 021) is dropped too (migration 025).
+
+**This is currently SQLite-only.** `IDocumentPlatformService`'s SQL Server implementation is a deliberate
+`NotSupportedException` stub - not an oversight. There has been no SQL Server sandbox available to develop or
+verify a real ADO.NET implementation against, and shipping one unverified risks exactly the kind of
+silently-wrong behavior this platform rebuild exists to avoid. Building and reconciling it is a distinct,
+still-open release gate: once IT provides sandbox access, the implementation should follow the same
+provider-selected pattern (and reconciliation-service pattern) used for every other table in this list, and
+its central document-storage validation applies to `templates/documents/platform` the same way it does to
+generated documents.
 
 Organization defaults now have a concurrency-protected SQL singleton initialized from the cutover data.
 Before production pilot access, business owners should verify the attorney identity, bar number, phone,

@@ -36,6 +36,11 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         await ExecuteAsync(connection, SchemaSql);
         await ExecuteAsync(connection, DocumentPlatformSchemaSql);
+        // Build-plan step 7 follow-up: discovery_generations' only producer (the old Discovery
+        // Content bulk editor) was fully retired, confirmed with zero real rows anywhere, and
+        // nothing writes to it going forward - drop it from existing databases too rather than
+        // just omitting it from SchemaSql, which would only stop it appearing in *new* ones.
+        await ExecuteAsync(connection, "DROP TABLE IF EXISTS discovery_generations;");
         await EnsureSchemaUpgradesAsync(connection);
         await EnsureIssueTagCatalogAsync(connection);
         await EnsureDocumentPlatformSeedAsync(connection);
@@ -6623,15 +6628,6 @@ public sealed partial class CasePlannerRepository
             created_at TEXT NOT NULL,
             created_by TEXT,
             UNIQUE(stable_key, version)
-        );
-        CREATE TABLE IF NOT EXISTS discovery_generations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_id INTEGER NOT NULL,
-            rendered_text TEXT NOT NULL,
-            template_versions_json TEXT NOT NULL,
-            issue_tags_json TEXT NOT NULL,
-            generated_at TEXT NOT NULL,
-            generated_by TEXT
         );
         CREATE TABLE IF NOT EXISTS valuation_positions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

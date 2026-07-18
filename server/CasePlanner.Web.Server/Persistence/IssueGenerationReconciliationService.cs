@@ -10,8 +10,8 @@ public sealed record IssueGenerationReconciliation(
 // Compares case<->issue-tag assignments between SQLite and SQL Server ahead of cutover. Used to
 // compare rendered discovery-generation snapshots too, but that table's C# consumers were retired
 // in build-plan step 7 (the unified document platform's document_generations table is the audit
-// trail now) - see 025_retire_legacy_document_pipeline.sql for why discovery_generations itself
-// wasn't dropped alongside this.
+// trail now), and the table itself was later dropped entirely once confirmed empty everywhere -
+// see 026_retire_discovery_generations.sql.
 public sealed class IssueGenerationReconciliationService(
     SqliteCaseCatalogReader sqliteCases,
     SqliteIssueTagStore sqliteTags,

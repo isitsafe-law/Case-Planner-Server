@@ -774,13 +774,6 @@ public sealed class DiscoveryTemplateValidationResult
     public List<string> Issues { get; set; } = [];
 }
 
-public sealed class SaveDiscoveryGenerationRequest
-{
-    public string RenderedText { get; set; } = "";
-    public List<string> IssueTags { get; set; } = [];
-    public List<string> TemplateVersions { get; set; } = [];
-}
-
 public sealed class ClearDefermentRequest
 {
     public string? Reason { get; set; }

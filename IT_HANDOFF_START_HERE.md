@@ -9,7 +9,8 @@ production use. It contains no production credentials and no development SQLite 
 - SQL Server migration scripts under sql/
 - Production configuration checklist under config/
 - IT deployment, Entra, and SQL migration documentation under docs/
-- Approved built-in document templates and import samples
+- The unified document platform's built-in `.docx` templates (Interrogatories, Requests for
+  Admission, Judgment, Settlement Justification) and import samples
 
 ## Local smoke test
 
@@ -28,4 +29,6 @@ Before any SQL Server or Entra test:
    .reference-library.json metadata there.
 
 The current release gates are diagnostics/provider status, IT-owned SQL backup/restore/recovery procedures,
-Entra authorization testing, Discovery worksheet import, and final provider activation.
+Entra authorization testing, Discovery worksheet import, the unified document platform's SQL Server
+implementation (currently a deliberate not-yet-built stub - see "Unified document platform" in
+docs/it-deployment-handoff.md), and final provider activation.

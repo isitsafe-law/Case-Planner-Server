@@ -18,8 +18,8 @@ still required. See [SQL Server migration foundation](docs/sql-server-migration.
 - `client`: React frontend
 - `data`: local SQLite database
 - `backups`: automatic backups before writes
-- `exports`: generated TXT outputs
-- `templates`: reserved for future local document generation expansion
+- `exports`: generated DOCX outputs
+- `templates`: unified document platform template source files (`templates/documents/platform`)
 - `logs`: local diagnostics and startup logs
 - `import_samples`: harmless import examples
 
@@ -43,7 +43,7 @@ still required. See [SQL Server migration foundation](docs/sql-server-migration.
 - Case Overview emphasizes deposit amount, date of taking, service timing, next action, and workload summary
 - local CSV import
 - sample CSV import template for local testing
-- TXT case summary and case review memo generation
+- DOCX case summary and case review memo generation
 - local diagnostics and health endpoints
 - write safety and backup-before-write
 - friendly duplicate issue-tag validation
@@ -72,10 +72,13 @@ The first-machine handoff sequence is documented in `docs/it-first-machine-check
 The extracted local test package includes `verify-local.ps1` for a repeatable health/catalog/DOCX smoke check.
 The SQL Server/Entra cutover settings are provided separately in
 `server/CasePlanner.Web.Server/appsettings.SqlServer.example.json`; the normal example remains SQLite-first.
-The document-builder pipeline and renderer contract are documented in `docs/document-pipeline.md`.
-Case-level document generation now uses `/api/document-catalog`, `/api/discovery-sets`, and
-`/api/document-catalog/rescan`; the Documents tab can search templates, select default discovery sets,
-include/exclude tagged items, and add case-specific discovery lines without editing shared templates.
+The unified document platform (templates, versions, section/loop content, runtime inputs, and generation
+history, all DB-backed) is documented in `docs/it-deployment-handoff.md` and `docs/sql-server-migration.md`
+(migrations 023-026). Case-level document generation now uses `/api/document-platform/templates`,
+`GET /api/cases/{id}/document-platform/templates/{key}/checklist`, and
+`POST /api/cases/{id}/document-platform/templates/{key}/generate`; the Documents tab shows a section
+checklist pre-checked from the case's issue tags, freely togglable, with overlap warnings, and merges
+templates natively into `.docx` files with no third-party templating dependency.
 
 Validation note: when NuGet is unavailable, `scripts/phase1-smoke.ps1 -WebOnly` validates the server
 build/publish path only. A previously built server test assembly can be run directly with `dotnet vstest`,
@@ -98,14 +101,11 @@ Production document-storage dependency:
   If `RootPath` is blank, development falls back to the local `exports` folder.
 - The share must have agency-approved backup, retention, malware scanning, capacity monitoring, and access
   auditing. SQL Server stores document metadata and the file path; document bytes are not stored in SQL Server.
-- Custom document-template source files also use this root, beneath `templates/custom/{base-key}`. The
-  application service identity therefore needs the same create/read permissions for template versions.
-  Retiring a template does not remove its source file; IT retention and backup policy applies to templates
-  as well as generated case documents.
-- The five approved built-in text templates in `templates/documents` are application deployment assets, not
-  database rows. Every application server must receive the same reviewed, read-only copy. Managed discovery
-  base versions and issue-tag blocks are stored in SQL Server and composed with those deployed assets. Include
-  the deployed template folder/version in release evidence and configuration management.
+- The unified document platform's template source files also use this root, beneath
+  `templates/documents/platform`, with every version referenced by
+  `document_template_versions.storage_path`. The application service identity therefore needs the same
+  create/read permissions for template versions. Retiring a template does not remove its source file; IT
+  retention and backup policy applies to templates as well as generated case documents.
 
 Client:
 
@@ -216,21 +216,20 @@ a provider-neutral workflow-generation service. SQL generation reads the same ca
 template catalogs, and duplicate rules, then writes through the concurrency- and audit-aware SQL work-item
 stores. Candidate sets, duplicate flags, and calculated dates reconcile for all 58 development cases.
 
-Discovery base documents and issue-tag discovery blocks now use append-only SQL Server version stores.
-Version numbers are allocated under SQL Server application locks, preventing two users from receiving the
-same next version. Each version records the authenticated creator and an audit event; base-document saves
-atomically make the new version active while retaining all earlier content. The current 10 latest discovery
-blocks reconcile exactly between SQLite and SQL Server.
-
 Issue-tag catalog reads and per-case assignments now use a provider-neutral store. SQL assignments add
 authenticated audit events, use `rowversion`, soft-delete on removal, reject duplicates, and preserve the
-existing behavior that applies or retires issue-triggered checklist tasks. Discovery-generation snapshots
-also use a provider-neutral store and record both the immutable SQL snapshot and its activity/audit event.
+existing behavior that applies or retires issue-triggered checklist tasks.
 
-Custom `.txt`, `.md`, and `.docx` templates now have a SQL Server metadata pilot backed by the configured
-central filesystem. SQL stores immutable versions, active-version state, extracted merge fields, uploader,
-concurrency tokens, and retirement metadata. Files are stored beneath the central document root rather than
-inside a particular application-server installation.
+The old per-kind text templates, the standalone Custom Templates upload screen, and the Discovery Content
+bulk-text editor (discovery base documents, issue-tag discovery blocks, and discovery-generation snapshots)
+are retired, along with every SQLite and SQL Server code path that read or wrote them (migrations 025-026;
+see `docs/sql-server-migration.md`). They're replaced by one unified document platform: templates, versions,
+section/loop content, runtime inputs, and generation history are all DB-backed
+(`document_templates`, `document_template_versions`, `document_template_sections`,
+`document_section_overlaps`, `document_runtime_inputs`, `document_generations`) and merged natively into
+uploaded `.docx` files with no third-party templating dependency. This platform is currently SQLite-only;
+its SQL Server implementation (`IDocumentPlatformService`) is a deliberate not-yet-built stub pending SQL
+Server sandbox access — see `docs/it-deployment-handoff.md`.
 
 Organization-wide document defaults now also have a SQL Server singleton record. Attorney/contact/address
 and leadership values retain the same document-token behavior while adding `rowversion` conflict detection,
@@ -293,11 +292,10 @@ Use these endpoints from a restricted migration environment:
 SQL Server pilot imports are disabled by default and must never be enabled for ordinary users while SQLite is
 the active runtime. `Database:ActiveProvider=SqlServer` remains intentionally rejected at startup. The
 migrated case, child-record, operational-query, risk, and document-composition interfaces now select their
-implementation from that setting. Standard document/discovery previews, risk narratives, custom-template
-previews, and custom DOCX generation have SQL Server implementations; custom DOCX bytes use central document
-storage while SQL Server records their metadata. Template/settings administration, import, and database
-maintenance were the next cutover surfaces; discovery, custom-document, organization-default, checklist, and
-deadline template administration are now provider-selected with SQL concurrency tokens. Case quick actions
+implementation from that setting. Risk narratives have a SQL Server implementation. Template/settings
+administration, import, and database maintenance were the next cutover surfaces; organization-default,
+checklist, and deadline template administration are now provider-selected with SQL concurrency tokens.
+Case quick actions
 (next action, waiting, deferment, holder, priority, trial track, and short note) are also provider-selected and
 require the case concurrency token in SQL Server. Discovery posture, pipeline handoffs, and activity history
 are now provider-selected with SQL concurrency tokens and authenticated actor attribution. The canonical

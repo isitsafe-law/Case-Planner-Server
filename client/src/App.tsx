@@ -7319,8 +7319,8 @@ function App() {
 
           {settingsSection === 'about' && (
             <Panel title="About / IT Notes">
-              <p>TXT exports do not require Word templates. Fill-in-the-blank court documents (Interrogatories, Requests for Admission, Judgment, Settlement Justification) are generated as editable plain text from templates under the local <code>templates/documents</code> folder — no Word automation is used. CSV and Excel (.xlsx/.xlsm) import are both supported. All data stays local.</p>
-              <p>SQLite is the local prototype database. The backend is being kept database-portable where practical so a future IT-supported deployment could move to SQL Server or PostgreSQL if this becomes a shared Legal Division system.</p>
+              <p>Court documents (Interrogatories, Requests for Admission, Judgment, Settlement Justification) are generated from real <code>.docx</code> templates under <code>templates/documents/platform</code> through a native C# merge engine — section and loop content and merge fields are resolved directly against the OpenXml document tree, with no third-party templating library and no external Word automation. CSV and Excel (.xlsx/.xlsm) import are both supported. All data stays local.</p>
+              <p>SQLite is the active runtime database. SQL Server support is already built as a parallel, provider-selected implementation — including migration scripts, a dedicated database migrator, and reconciliation services — for an eventual IT-supported shared deployment; SQL Server activation remains intentionally disabled until reconciliation, identity, and authorization work is complete.</p>
             </Panel>
           )}
             </section>

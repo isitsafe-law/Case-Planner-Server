@@ -18,13 +18,15 @@ try {
   }
   if ($null -eq $health -or $health.status -ne 'ok') { throw 'The packaged server did not report a healthy status.' }
 
-  $catalogResponse = Invoke-WebRequest "$url/api/document-catalog" -UseBasicParsing -TimeoutSec 5
+  $catalogResponse = Invoke-WebRequest "$url/api/document-platform/templates" -UseBasicParsing -TimeoutSec 5
   $catalog = $catalogResponse.Content | ConvertFrom-Json
   $catalogCount = if ($catalog -is [array]) { $catalog.Length } elseif ($null -eq $catalog) { 0 } else { 1 }
-  if ($catalogCount -eq 0) { throw 'The document catalog is empty.' }
+  if ($catalogCount -eq 0) { throw 'The document platform template catalog is empty.' }
 
-  $docxPath = Join-Path $env:TEMP "case-planner-smoke-$Port.docx"
-  Invoke-WebRequest "$url/api/cases/1/generate-document-docx/interrogatories" -Method Post -UseBasicParsing -ContentType 'application/json' -Body (@{ manualInputs = @{}; outputFileName = 'Smoke Output.docx' } | ConvertTo-Json) -OutFile $docxPath -TimeoutSec 30
+  $generateBody = @{ selectedSectionKeys = @(); runtimeInputValues = @{} } | ConvertTo-Json
+  $generation = Invoke-RestMethod "$url/api/cases/1/document-platform/templates/interrogatories_platform/generate" -Method Post -ContentType 'application/json' -Body $generateBody -TimeoutSec 30
+  $docxPath = $generation.outputPath
+  if (-not (Test-Path -LiteralPath $docxPath)) { throw "Generated document not found: $docxPath" }
   $signature = (Get-Content -LiteralPath $docxPath -Encoding Byte -TotalCount 2) -join ','
   if ($signature -ne '80,75') { throw 'The generated file is not a DOCX/ZIP package.' }
   $utilitySignatures = @{}

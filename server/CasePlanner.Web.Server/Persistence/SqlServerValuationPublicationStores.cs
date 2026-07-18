@@ -1,0 +1,61 @@
+using CasePlanner.Data;
+using CasePlanner.Web.Server.Models;
+using Microsoft.Data.SqlClient;
+
+namespace CasePlanner.Web.Server.Persistence;
+
+public sealed class SqlServerValuationPositionStore(IDatabaseConnectionFactory connections,IHttpContextAccessor accessor)
+    :SqlServerLitigationStoreBase(connections,accessor),IValuationPositionStore
+{
+    public string Provider=>"SqlServer";
+    public async Task<List<ValuationPositionRecord>> GetAsync(long? caseId,CancellationToken token=default)
+    {
+        var result=new List<ValuationPositionRecord>();await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var command=connection.CreateCommand();command.CommandText="SELECT id,case_id,side,appraiser_name,appraised_value,value_date,methodology,notes,updated_at,row_version FROM dbo.valuation_positions WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId) ORDER BY side";command.Parameters.Add(new SqlParameter("@caseId",(object?)caseId??DBNull.Value));await using var reader=await command.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))result.Add(new(){Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),Side=Text(reader,2)??"ASHC",AppraiserName=Text(reader,3),AppraisedValue=reader.IsDBNull(4)?null:Convert.ToDecimal(reader.GetValue(4)),ValueDate=Date(Text(reader,5)),Methodology=Text(reader,6),Notes=Text(reader,7),UpdatedAt=Text(reader,8),RowVersion=Convert.ToBase64String((byte[])reader.GetValue(9))});return result;
+    }
+    public async Task<ValuationPositionRecord> SaveAsync(ValuationPositionRecord model,CancellationToken token=default)
+    {
+        var isNew=model.Id==0;await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var transaction=await connection.BeginTransactionAsync(token);model.CaseId=await ResolveCaseIdAsync(connection,transaction,"valuation_positions",model.Id,model.CaseId,token);var now=DateTime.UtcNow.ToString("O");await using var command=connection.CreateCommand();command.Transaction=transaction;
+        if(isNew)command.CommandText="INSERT INTO dbo.valuation_positions(case_id,side,appraiser_name,appraised_value,value_date,methodology,notes,created_at,updated_at) OUTPUT INSERTED.id,INSERTED.row_version VALUES(@caseId,@side,@appraiser,@value,@date,@methodology,@notes,@now,@now)";
+        else{command.CommandText="UPDATE dbo.valuation_positions SET appraiser_name=@appraiser,appraised_value=@value,value_date=@date,methodology=@methodology,notes=@notes,updated_at=@now OUTPUT INSERTED.id,INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0";command.Parameters.Add(new SqlParameter("@id",model.Id));command.Parameters.Add(new SqlParameter("@version",ExpectedVersion(model.RowVersion,"valuation position",model.Id)));}
+        command.Parameters.Add(new SqlParameter("@caseId",model.CaseId));command.Parameters.Add(new SqlParameter("@side",model.Side??"ASHC"));command.Parameters.Add(new SqlParameter("@appraiser",Db(model.AppraiserName)));command.Parameters.Add(new SqlParameter("@value",(object?)model.AppraisedValue??DBNull.Value));command.Parameters.Add(new SqlParameter("@date",Db(Date(model.ValueDate))));command.Parameters.Add(new SqlParameter("@methodology",Db(model.Methodology)));command.Parameters.Add(new SqlParameter("@notes",Db(model.Notes)));command.Parameters.Add(new SqlParameter("@now",now));
+        try{await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new WorkItemConcurrencyException("Valuation position",model.Id);model.Id=reader.GetInt64(0);model.RowVersion=Convert.ToBase64String((byte[])reader.GetValue(1));}
+        catch(SqlException ex)when(isNew&&(ex.Number==2601||ex.Number==2627)){throw new InvalidOperationException($"A {model.Side} valuation position already exists. Reload it before editing.");}
+        model.UpdatedAt=now;await AuditAsync(connection,transaction,model.CaseId,isNew?"ValuationPositionCreated":"ValuationPositionUpdated","ValuationPosition",model.Id,token);await transaction.CommitAsync(token);return model;
+    }
+}
+
+public sealed class SqlServerComparableSaleStore(IDatabaseConnectionFactory connections,IHttpContextAccessor accessor)
+    :SqlServerLitigationStoreBase(connections,accessor),IComparableSaleStore
+{
+    public string Provider=>"SqlServer";
+    public async Task<List<ComparableSaleRecord>> GetAsync(long? caseId,CancellationToken token=default)
+    {
+        var result=new List<ComparableSaleRecord>();await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var command=connection.CreateCommand();command.CommandText="SELECT id,case_id,side,sale_description,sale_price,sale_date,size_acres,adjustment_notes,notes,row_version FROM dbo.comparable_sales WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId) ORDER BY side,COALESCE(sale_date,'9999-12-31')";command.Parameters.Add(new SqlParameter("@caseId",(object?)caseId??DBNull.Value));await using var reader=await command.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))result.Add(new(){Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),Side=Text(reader,2)??"ASHC",SaleDescription=Text(reader,3),SalePrice=reader.IsDBNull(4)?null:Convert.ToDecimal(reader.GetValue(4)),SaleDate=Date(Text(reader,5)),SizeAcres=reader.IsDBNull(6)?null:Convert.ToDecimal(reader.GetValue(6)),AdjustmentNotes=Text(reader,7),Notes=Text(reader,8),RowVersion=Convert.ToBase64String((byte[])reader.GetValue(9))});return result;
+    }
+    public async Task<ComparableSaleRecord> SaveAsync(ComparableSaleRecord model,CancellationToken token=default)
+    {
+        var isNew=model.Id==0;await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var transaction=await connection.BeginTransactionAsync(token);model.CaseId=await ResolveCaseIdAsync(connection,transaction,"comparable_sales",model.Id,model.CaseId,token);var now=DateTime.UtcNow.ToString("O");await using var command=connection.CreateCommand();command.Transaction=transaction;
+        if(isNew)command.CommandText="INSERT INTO dbo.comparable_sales(case_id,side,sale_description,sale_price,sale_date,size_acres,adjustment_notes,notes,created_at,updated_at) OUTPUT INSERTED.id,INSERTED.row_version VALUES(@caseId,@side,@description,@price,@date,@acres,@adjustment,@notes,@now,@now)";
+        else{command.CommandText="UPDATE dbo.comparable_sales SET side=@side,sale_description=@description,sale_price=@price,sale_date=@date,size_acres=@acres,adjustment_notes=@adjustment,notes=@notes,updated_at=@now OUTPUT INSERTED.id,INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0";command.Parameters.Add(new SqlParameter("@id",model.Id));command.Parameters.Add(new SqlParameter("@version",ExpectedVersion(model.RowVersion,"comparable sale",model.Id)));}
+        command.Parameters.Add(new SqlParameter("@caseId",model.CaseId));command.Parameters.Add(new SqlParameter("@side",model.Side??"ASHC"));command.Parameters.Add(new SqlParameter("@description",Db(model.SaleDescription)));command.Parameters.Add(new SqlParameter("@price",(object?)model.SalePrice??DBNull.Value));command.Parameters.Add(new SqlParameter("@date",Db(Date(model.SaleDate))));command.Parameters.Add(new SqlParameter("@acres",(object?)model.SizeAcres??DBNull.Value));command.Parameters.Add(new SqlParameter("@adjustment",Db(model.AdjustmentNotes)));command.Parameters.Add(new SqlParameter("@notes",Db(model.Notes)));command.Parameters.Add(new SqlParameter("@now",now));await using(var reader=await command.ExecuteReaderAsync(token)){if(!await reader.ReadAsync(token))throw new WorkItemConcurrencyException("Comparable sale",model.Id);model.Id=reader.GetInt64(0);model.RowVersion=Convert.ToBase64String((byte[])reader.GetValue(1));}await AuditAsync(connection,transaction,model.CaseId,isNew?"ComparableSaleCreated":"ComparableSaleUpdated","ComparableSale",model.Id,token);await transaction.CommitAsync(token);return model;
+    }
+    public Task DeleteAsync(long id,string? rowVersion=null,CancellationToken token=default)=>SoftDeleteAsync("comparable_sales","Comparable sale","ComparableSale",id,rowVersion,token);
+}
+
+public sealed class SqlServerPublicationEntryStore(IDatabaseConnectionFactory connections,IHttpContextAccessor accessor)
+    :SqlServerLitigationStoreBase(connections,accessor),IPublicationEntryStore
+{
+    public string Provider=>"SqlServer";
+    public async Task<List<PublicationEntryRecord>> GetAsync(long? caseId,CancellationToken token=default)
+    {
+        var result=new List<PublicationEntryRecord>();await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var command=connection.CreateCommand();command.CommandText="SELECT id,case_id,publication_number,publication_date,newspaper,proof_filed,proof_filed_date,service_resolved,notes,row_version FROM dbo.publication_dates WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId) ORDER BY COALESCE(publication_date,'9999-12-31')";command.Parameters.Add(new SqlParameter("@caseId",(object?)caseId??DBNull.Value));await using var reader=await command.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))result.Add(new(){Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),PublicationNumber=Text(reader,2)??"",PublicationDate=Date(Text(reader,3)),Newspaper=Text(reader,4),ProofFiled=Bool(reader,5),ProofFiledDate=Date(Text(reader,6)),ServiceResolved=Bool(reader,7),Notes=Text(reader,8),RowVersion=Convert.ToBase64String((byte[])reader.GetValue(9))});return result;
+    }
+    public async Task<PublicationEntryRecord> SaveAsync(PublicationEntryRecord model,CancellationToken token=default)
+    {
+        var isNew=model.Id==0;await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);await using var transaction=await connection.BeginTransactionAsync(token);model.CaseId=await ResolveCaseIdAsync(connection,transaction,"publication_dates",model.Id,model.CaseId,token);var now=DateTime.UtcNow.ToString("O");await using var command=connection.CreateCommand();command.Transaction=transaction;
+        if(isNew)command.CommandText="INSERT INTO dbo.publication_dates(case_id,publication_number,publication_date,newspaper,proof_filed,proof_filed_date,service_resolved,notes,created_at,updated_at) OUTPUT INSERTED.id,INSERTED.row_version VALUES(@caseId,@number,@date,@newspaper,@proof,@proofDate,@resolved,@notes,@now,@now)";
+        else{command.CommandText="UPDATE dbo.publication_dates SET publication_number=@number,publication_date=@date,newspaper=@newspaper,proof_filed=@proof,proof_filed_date=@proofDate,service_resolved=@resolved,notes=@notes,updated_at=@now OUTPUT INSERTED.id,INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0";command.Parameters.Add(new SqlParameter("@id",model.Id));command.Parameters.Add(new SqlParameter("@version",ExpectedVersion(model.RowVersion,"publication entry",model.Id)));}
+        command.Parameters.Add(new SqlParameter("@caseId",model.CaseId));command.Parameters.Add(new SqlParameter("@number",model.PublicationNumber??""));command.Parameters.Add(new SqlParameter("@date",Db(Date(model.PublicationDate))));command.Parameters.Add(new SqlParameter("@newspaper",Db(model.Newspaper)));command.Parameters.Add(new SqlParameter("@proof",model.ProofFiled?1L:0L));command.Parameters.Add(new SqlParameter("@proofDate",Db(Date(model.ProofFiledDate))));command.Parameters.Add(new SqlParameter("@resolved",model.ServiceResolved?1L:0L));command.Parameters.Add(new SqlParameter("@notes",Db(model.Notes)));command.Parameters.Add(new SqlParameter("@now",now));await using(var reader=await command.ExecuteReaderAsync(token)){if(!await reader.ReadAsync(token))throw new WorkItemConcurrencyException("Publication entry",model.Id);model.Id=reader.GetInt64(0);model.RowVersion=Convert.ToBase64String((byte[])reader.GetValue(1));}await AuditAsync(connection,transaction,model.CaseId,isNew?"PublicationEntryCreated":"PublicationEntryUpdated","PublicationEntry",model.Id,token);await transaction.CommitAsync(token);return model;
+    }
+    public Task DeleteAsync(long id,string? rowVersion=null,CancellationToken token=default)=>SoftDeleteAsync("publication_dates","Publication entry","PublicationEntry",id,rowVersion,token);
+}

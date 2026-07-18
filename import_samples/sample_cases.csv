@@ -1,0 +1,2 @@
+Case Number,Case Name,Job Number,Tract,County,Status,Filing Date,Date of Taking,Trial Date,Next Action,Next Action Due,Deposit Amount,Owner,Landowner,Notes
+DEMO-CSV-0004,Imported Demo CSV Case,DEMO-JOB-4,DEMO-TRACT-4,Demo County,Active,2026-07-01,,2026-10-01,Review imported case,2026-07-15,"$1,250.00",Demo Owner,Demo Landowner,CSV import sample

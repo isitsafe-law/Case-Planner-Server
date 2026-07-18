@@ -1,0 +1,34 @@
+# Local case data (contains real property-owner PII) - never commit
+data/
+backups/
+exports/
+logs/
+
+# Real prior-case litigation content (actual names/figures) - never commit
+templates/reference/*.txt
+
+# Build artifacts
+release/
+temp/local-test-build/
+client/node_modules/
+client/dist/
+client/dist-ssr/
+server/**/bin/
+server/**/obj/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.user
+
+# npm/yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+server/CasePlanner.Web.Server/runlogs/
+
+# Local Claude Code tooling state (not project source)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

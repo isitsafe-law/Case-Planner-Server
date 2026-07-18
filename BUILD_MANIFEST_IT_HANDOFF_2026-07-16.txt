@@ -1,0 +1,16 @@
+Case Planner IT Review Build
+Build date: 2026-07-16
+Target: win-x64, self-contained, single-file ASP.NET Core server
+
+Validation:
+- Server tests: 118/118 passed
+- Client tests: 24/24 passed
+- Server Release publish completed successfully
+- Client production build completed successfully
+- Local SQLite health smoke test completed
+- Reference Library add/edit/remove smoke test completed
+
+Important:
+- No development database is included.
+- SQL Server runtime activation remains guarded.
+- This package is for IT/security/database review, not production approval.

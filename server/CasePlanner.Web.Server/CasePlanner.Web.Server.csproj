@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- Release publishes (the packaged test builds) launch without a console window.
+       Debug stays a normal console app so `dotnet run` keeps showing live output during development. -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.1" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="4.13.1" />
+    <ProjectReference Include="..\CasePlanner.Data\CasePlanner.Data.csproj" />
+  </ItemGroup>
+
+</Project>

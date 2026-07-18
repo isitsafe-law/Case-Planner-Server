@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/server/">
+    <Project Path="server/CasePlanner.Data/CasePlanner.Data.csproj" />
+    <Project Path="server/CasePlanner.DatabaseMigrator/CasePlanner.DatabaseMigrator.csproj" />
+    <Project Path="server/CasePlanner.Web.Server.Tests/CasePlanner.Web.Server.Tests.csproj" />
+    <Project Path="server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj" />
+  </Folder>
+</Solution>

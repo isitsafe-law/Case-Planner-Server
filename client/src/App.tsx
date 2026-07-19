@@ -26,6 +26,7 @@ import { FilterBar, FilterChip, FilterSep, FilterSummary } from './ui/FilterBar'
 import { Btn } from './ui/Btn'
 import { MetricTile } from './ui/MetricTile'
 import { Drawer } from './ui/Drawer'
+import { CommandPalette, ShortcutHelpDialog, type CommandGroup } from './ui/CommandPalette'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -1548,6 +1549,10 @@ function App() {
   const [triageWizardOpen, setTriageWizardOpen] = useState(false)
   const [searchSuggestions, setSearchSuggestions] = useState<CaseRecord[]>([])
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [paletteCaseQuery, setPaletteCaseQuery] = useState('')
+  const [paletteCaseResults, setPaletteCaseResults] = useState<CaseRecord[]>([])
   const [dashboardFiltersOpen, setDashboardFiltersOpen] = useState(false)
   const [dashboardPanelTab, setDashboardPanelTab] = useState<'discovery' | 'momentum' | 'pipeline' | 'trial' | 'projects' | 'docket'>(() => {
     const saved = window.localStorage.getItem('case-insight-tab')
@@ -1633,6 +1638,49 @@ function App() {
     }, 250)
     return () => window.clearTimeout(timer)
   }, [topbarSearch])
+
+  // Case search for the command palette: same debounced /api/cases lookup as the topbar type-ahead
+  // above, but kept in its own state so the palette never disturbs the app-bar's own dropdown.
+  useEffect(() => {
+    const query = paletteCaseQuery.trim()
+    if (query.length < 2) {
+      setPaletteCaseResults([])
+      return
+    }
+    const timer = window.setTimeout(() => {
+      api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(query)}&includeClosed=true`)
+        .then((matches) => setPaletteCaseResults(matches.slice(0, 8)))
+        .catch(() => setPaletteCaseResults([]))
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [paletteCaseQuery])
+
+  // Global shortcuts: Ctrl/Cmd+K opens the command palette from anywhere (even mid-typing - opening
+  // it over a busy form or the TriageWizard is fine, that's simplest-correct here); "?" opens the
+  // shortcut-help overlay, but only when the user isn't typing into a field. Escape is deliberately
+  // NOT handled here - each overlay closes itself locally so only the topmost layer reacts.
+  useEffect(() => {
+    function handleGlobalKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandPaletteOpen((current) => !current)
+        return
+      }
+      // Real US-layout keyboards report Shift+/ as key '?'; check the raw Shift+/ combo too so
+      // this still works on layouts/browsers that report the un-shifted key literally.
+      if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+        const target = event.target as HTMLElement | null
+        const tag = target?.tagName
+        const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target?.isContentEditable)
+        if (!isTyping) {
+          event.preventDefault()
+          setShortcutHelpOpen(true)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [])
 
   // Case List search: live-filters as you type instead of requiring the old "Apply Filters"
   // button. Debounced 300ms into the same server call the other filter controls use immediately;
@@ -1925,6 +1973,16 @@ function App() {
   function openSettingsSection(section: SettingsSectionKey) {
     setSettingsSection(section)
     setPage('settings')
+  }
+
+  // Same setter the Appearance select uses; flips the *resolved* appearance (so from 'system' it
+  // still does something sensible) rather than cycling all three ThemeMode values.
+  function toggleDarkMode() {
+    setTheme((current) => {
+      const systemPrefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+      const resolved = current === 'system' ? (systemPrefersDark ? 'dark' : 'light') : current
+      return resolved === 'dark' ? 'light' : 'dark'
+    })
   }
 
   function setModalFeedback(summary: string, fieldErrors: FieldErrors = {}) {
@@ -6695,6 +6753,56 @@ function App() {
     )
   }
 
+  // Content for the command palette (design-system/MASTER.md §8 #13). Reuses existing handlers
+  // only - no new side-effecting logic lives here, just wiring.
+  const caseWorkspaceOpen = page === 'cases' && casesView === 'workspace' && Boolean(selectedCaseId)
+  const commandPaletteGroups: CommandGroup[] = [
+    {
+      label: 'Navigation',
+      items: [
+        ...navItems.map((item) => ({
+          id: `nav-${item.key}`,
+          label: `Go to ${item.label}`,
+          action: () => {
+            setPage(item.key)
+            if (item.key === 'cases') goToCaseList()
+          },
+        })),
+        { id: 'nav-shortcuts', label: 'Keyboard shortcuts', hint: 'View all shortcuts', action: () => setShortcutHelpOpen(true) },
+      ],
+    },
+    {
+      label: 'Actions',
+      items: [
+        { id: 'action-add-case', label: 'Add case', action: startNewCase },
+        ...(caseWorkspaceOpen
+          ? [
+              { id: 'action-add-deadline', label: 'Add deadline', action: () => { setCaseTab('work'); startDeadlineModal() } },
+              { id: 'action-add-task', label: 'Add task', action: () => { setCaseTab('work'); startChecklistModal() } },
+              { id: 'action-add-event', label: 'Add event', action: () => { setCaseTab('work'); startNewHearing() } },
+              { id: 'action-add-note', label: 'Add note', action: () => { startNewCaseNote(); setCaseTab('notes') } },
+              { id: 'action-edit-case', label: 'Edit case record', action: startEditCase },
+              { id: 'action-generate-document', label: 'Generate a document', action: () => setCaseTab('documents') },
+            ]
+          : []),
+        { id: 'action-toggle-theme', label: 'Toggle dark mode', action: toggleDarkMode },
+        { id: 'action-open-import', label: 'Open settings: Import', action: () => openSettingsSection('import') },
+      ],
+    },
+    {
+      label: 'Cases',
+      items: paletteCaseResults.map((match) => {
+        const name = match.caseName || match.caseNumber || `Case ${match.id}`
+        const details = [match.caseNumber, match.jobNumber].filter(Boolean).join(' · ')
+        return {
+          id: `case-${match.id}`,
+          label: details ? `${name} — ${details}` : name,
+          action: () => openCase(match.id, 'overview'),
+        }
+      }),
+    },
+  ]
+
   return (
     <div className="app-shell">
       <header className="appbar">
@@ -6730,8 +6838,9 @@ function App() {
             </div>
           )}
         </form>
-        {/* TODO(step 7): wire the command palette here; for now this focuses the global search. */}
-        <button type="button" className="kbd" aria-label="Open command palette" onClick={() => globalSearchInputRef.current?.focus()}>Ctrl K</button>
+        <button type="button" className="kbd-hit" aria-label="Open command palette" onClick={() => setCommandPaletteOpen(true)}>
+          <span className="kbd">Ctrl K</span>
+        </button>
       </header>
 
       <nav className="navtabs" aria-label="Primary">
@@ -7683,6 +7792,14 @@ function App() {
           onClose={() => setTriageWizardOpen(false)}
         />
       )}
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        groups={commandPaletteGroups}
+        onQuery={setPaletteCaseQuery}
+      />
+      {shortcutHelpOpen && <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />}
 
       {page === 'cases' && (casesView === 'list' ? renderCaseListPage() : renderCaseWorkspace())}
 

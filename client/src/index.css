@@ -307,6 +307,19 @@ label span {
   border-color: rgba(255, 255, 255, 0.45);
 }
 
+/* The chip's own visual size stays ~22px tall (unchanged look); the button wrapping it grows the
+   hit area to the 36px accessibility floor via padding rather than resizing the chip itself. */
+.appbar .kbd-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
 .appbar .kbd {
   font-family: var(--font-data);
   font-size: 11px;
@@ -320,7 +333,7 @@ label span {
   white-space: nowrap;
 }
 
-.appbar .kbd:hover {
+.appbar .kbd-hit:hover .kbd {
   opacity: 1;
   border-color: rgba(255, 255, 255, 0.5);
 }
@@ -1293,6 +1306,154 @@ code {
   padding: 0.9rem 1.25rem;
   border-top: 1px solid var(--border);
   background: var(--surface);
+}
+
+/* Command palette (design-system/MASTER.md \8.13) - centered overlay: Ctrl+K actions, navigation,
+   and case search, plus the "?" shortcut-help dialog which reuses this same shell. Sits above the
+   Drawer's z-index (1000) since opening it over an open drawer is expected behavior. */
+.ui-command-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 15vh;
+  background: var(--overlay);
+}
+
+.ui-command-palette {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 2rem));
+  max-height: 70vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: ui-command-palette-in 160ms ease-out;
+}
+
+@keyframes ui-command-palette-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-command-palette {
+    animation: none;
+  }
+}
+
+.ui-command-input {
+  flex: none;
+  width: 100%;
+  height: 44px;
+  padding: 0 1rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ui-command-input:focus {
+  outline: none;
+}
+
+.ui-command-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.4rem 0;
+}
+
+.ui-command-group {
+  padding: 0.2rem 0;
+}
+
+.ui-command-group-label {
+  padding: 0.3rem 1rem;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.ui-command-option {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.ui-command-option-label {
+  flex: 1 1 auto;
+}
+
+.ui-command-option-label mark {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  border-radius: 2px;
+}
+
+.ui-command-option-hint,
+.ui-command-option-shortcut {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ui-command-option.active,
+.ui-command-option:hover {
+  background: var(--surface-subtle);
+}
+
+.ui-command-empty {
+  padding: 1.2rem 1rem;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.ui-shortcut-dialog {
+  padding: 1rem 1.25rem 1.25rem;
+  gap: 0.75rem;
+}
+
+.ui-shortcut-dialog:focus {
+  outline: none;
+}
+
+.ui-shortcut-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ui-shortcut-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.ui-shortcut-list kbd {
+  font-family: var(--font-data);
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-ctl);
+  background: var(--surface-muted);
+}
+
+.ui-shortcut-list span {
+  color: var(--text-muted);
 }
 
 /* Sectioned case editor (SectionedForm, design-system/MASTER.md \8.12) - lives inside the drawer body. */

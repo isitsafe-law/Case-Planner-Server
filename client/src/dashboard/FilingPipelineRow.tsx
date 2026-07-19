@@ -1,4 +1,5 @@
 import type { PreFilingTractRow } from './types'
+import { formatDate } from '../ui/format'
 
 export function FilingPipelineRow({
   row,
@@ -26,10 +27,10 @@ export function FilingPipelineRow({
       <td>{row.projectName ?? row.jobNumber ?? '-'}</td>
       <td>{row.county ?? '-'}</td>
       <td>{row.currentHolder ?? <span className="pill pill-danger">Missing</span>}</td>
-      <td>{row.dateSentToCurrentHolder ?? 'Not set'}</td>
-      <td>{row.nextReviewDate ?? '-'}</td>
+      <td>{formatDate(row.dateSentToCurrentHolder)}</td>
+      <td>{formatDate(row.nextReviewDate)}</td>
       <td>{row.currentIssue ?? row.flagReason ?? '-'}</td>
-      <td>{row.lastUpdated ? row.lastUpdated.slice(0, 10) : 'Not set'}</td>
+      <td>{formatDate(row.lastUpdated)}</td>
       <td>
         <div className="button-row compact-actions row-actions">
           <button className="primary" onClick={() => onOpenCase(row.caseId)}>Open Case</button>

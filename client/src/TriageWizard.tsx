@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ModalShell } from './App'
+import { formatDate } from './ui/format'
 
 // Fields the triage wizard confirms/backfills - all assignable to Partial<CaseRecord>.
 export type TriageWizardPatch = {
@@ -197,9 +198,9 @@ export function TriageWizard({
             <p className="helper-text">Activating starts live tracking - deadline and alert generation begin from these confirmed facts.</p>
             <ul className="plain-list">
               <li className="list-row"><span>Case</span><strong>{draft.caseName}</strong></li>
-              <li className="list-row"><span>Workflow status</span><strong>{draft.caseStatus || 'Not set'}</strong></li>
-              <li className="list-row"><span>Filing date</span><strong>{draft.filingDate || 'Not set'}</strong></li>
-              {atOrPastService && <li className="list-row"><span>Service</span><strong>{draft.servicePerfected ? `Perfected${draft.servicePerfectedDate ? ` (${draft.servicePerfectedDate})` : ''}` : 'Not perfected'}</strong></li>}
+              <li className="list-row"><span>Workflow status</span><strong>{draft.caseStatus || '—'}</strong></li>
+              <li className="list-row"><span>Filing date</span><strong>{formatDate(draft.filingDate)}</strong></li>
+              {atOrPastService && <li className="list-row"><span>Service</span><strong>{draft.servicePerfected ? `Perfected${draft.servicePerfectedDate ? ` (${formatDate(draft.servicePerfectedDate)})` : ''}` : 'Not perfected'}</strong></li>}
             </ul>
           </>
         )}

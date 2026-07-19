@@ -27,6 +27,8 @@ import { Btn } from './ui/Btn'
 import { MetricTile } from './ui/MetricTile'
 import { Drawer } from './ui/Drawer'
 import { CommandPalette, ShortcutHelpDialog, type CommandGroup } from './ui/CommandPalette'
+import { ConfirmDialog, type ConfirmOptions } from './ui/ConfirmDialog'
+import { formatDate, formatDateTime } from './ui/format'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -1124,21 +1126,11 @@ function emptyPublication(caseId = 0): PublicationRecord {
   }
 }
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
-
-function displayDate(value?: string | null): string {
-  if (!value) return '—'
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return value
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  if (month < 1 || month > 12 || day < 1 || day > 31) return value
-  return `${MONTH_NAMES[month - 1]} ${day}, ${year}`
-}
+// displayDate/displayDateTime are thin aliases over the canonical formatters in ui/format.ts -
+// there is exactly one implementation, shared with dashboard/* and other components that can't
+// import App.tsx's private helpers.
+const displayDate = formatDate
+const displayDateTime = formatDateTime
 
 function matchesUrgency(dateValue: string | null | undefined, urgency: string): boolean {
   if (urgency === 'All Open') return true
@@ -1160,22 +1152,6 @@ function DateOnlyFromString(value: string): number | null {
   const match = value.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!match) return null
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000
-}
-
-const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Chicago',
-  month: 'long',
-  day: 'numeric',
-  year: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-})
-
-function displayDateTime(value?: string | null): string {
-  if (!value) return '—'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return `${dateTimeFormatter.format(parsed)} CT`
 }
 
 function formatFileSize(bytes: number): string {
@@ -1551,6 +1527,26 @@ function App() {
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmOptions | null>(null)
+  const confirmResolverRef = useRef<((value: boolean) => void) | null>(null)
+
+  // ConfirmAction (design-system/MASTER.md \8.9) - promise-based drop-in replacement for the
+  // native browser confirm(). Callers `await confirmAction({...})` and get true/false exactly
+  // like the native return value, so existing `if (!(await confirmAction(...))) return` flows
+  // preserve their original control flow.
+  function confirmAction(options: ConfirmOptions): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmResolverRef.current = resolve
+      setConfirmRequest(options)
+    })
+  }
+
+  function resolveConfirm(result: boolean) {
+    const resolve = confirmResolverRef.current
+    confirmResolverRef.current = null
+    setConfirmRequest(null)
+    resolve?.(result)
+  }
   const [paletteCaseQuery, setPaletteCaseQuery] = useState('')
   const [paletteCaseResults, setPaletteCaseResults] = useState<CaseRecord[]>([])
   const [dashboardFiltersOpen, setDashboardFiltersOpen] = useState(false)
@@ -2181,7 +2177,7 @@ function App() {
   }
 
   async function deleteReferenceDocument(key: string) {
-    if (!window.confirm('Remove this reference document?')) return
+    if (!(await confirmAction({ title: 'Remove reference document?', message: 'This document will no longer be available in the reference library.', confirmLabel: 'Remove', danger: true }))) return
     try {
       await api('/api/reference-library/' + encodeURIComponent(key), { method: 'DELETE' })
       setReferenceLibrary((items) => items.filter((item) => item.key !== key))
@@ -2589,7 +2585,7 @@ function App() {
   }
 
   async function deleteChecklistItem(item: ChecklistItem) {
-    if (!window.confirm(`Delete task "${item.task}"?`)) return
+    if (!(await confirmAction({ title: 'Delete task?', message: `"${item.task}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/checklist/${item.id}`, { method: 'DELETE' })
@@ -2601,7 +2597,7 @@ function App() {
   }
 
   async function deleteDeadline(item: DeadlineItem) {
-    if (!window.confirm(`Delete deadline "${item.title}"?`)) return
+    if (!(await confirmAction({ title: 'Delete deadline?', message: `"${item.title}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/deadlines/${item.id}`, { method: 'DELETE' })
@@ -2624,7 +2620,7 @@ function App() {
       await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(serializeCaseDraft({ ...record, caseStatus: workflowStatus })) })
       await api(`/api/cases/${record.id}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'CaseActivated', notes: 'Triage completed; case activated' }) })
       setTriageWizardOpen(false)
-      if (window.confirm('Generate checklist and deadline templates for this case now?')) {
+      if (await confirmAction({ title: 'Generate templates?', message: 'Generate checklist and deadline templates for this case now?', confirmLabel: 'Generate' })) {
         await addFromTemplates(record.id)
       } else {
         await refreshAll(record.id)
@@ -2693,7 +2689,7 @@ function App() {
     try {
       const workspace = await api<WorkspaceResponse>(`/api/cases/${caseId}`)
       const record = workspace.case
-      if (!window.confirm(`Advance ${record.caseName} from Pipeline to Filed / Service Pending?`)) return
+      if (!(await confirmAction({ title: 'Advance case?', message: `Advance ${record.caseName} from Pipeline to Filed / Service Pending?`, confirmLabel: 'Advance' }))) return
       const filingDate = window.prompt('Filing date (YYYY-MM-DD)', record.filingDate || new Date().toISOString().slice(0, 10))?.trim()
       if (!filingDate || !/^\d{4}-\d{2}-\d{2}$/.test(filingDate)) { setErrorMessage('A valid filing date is required to leave Pipeline.'); return }
       const saved = await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(serializeCaseDraft({ ...record, filingDate, caseStatus: 'Filed / Service Pending' })) })
@@ -2733,7 +2729,7 @@ function App() {
   async function changeStatus(newStatus: string) {
     const record = workspace?.case
     if (!record?.id || newStatus === (record.status || 'Active')) return
-    if (newStatus === 'Closed' && !window.confirm('Mark this case Closed? It will drop off the main dashboard.')) return
+    if (newStatus === 'Closed' && !(await confirmAction({ title: 'Mark case Closed?', message: 'It will drop off the main dashboard.', confirmLabel: 'Mark Closed', danger: true }))) return
     try {
       setErrorMessage('')
       let closedDate = record.closedDate
@@ -2741,7 +2737,7 @@ function App() {
         closedDate = window.prompt('Date Closed (YYYY-MM-DD). Leave blank to keep it unset.', new Date().toISOString().slice(0, 10))?.trim() || null
         if (closedDate && !/^\d{4}-\d{2}-\d{2}$/.test(closedDate)) { setErrorMessage('Date Closed must use YYYY-MM-DD.'); return }
       }
-      if (newStatus !== 'Closed' && record.closedDate && window.confirm('Clear the active Date Closed value while reopening this case? The prior value remains in audit history.')) closedDate = null
+      if (newStatus !== 'Closed' && record.closedDate && await confirmAction({ title: 'Clear Date Closed?', message: 'The prior value remains in audit history.', confirmLabel: 'Clear date', cancelLabel: 'Keep date' })) closedDate = null
       await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify({ ...record, status: newStatus, closedDate }) })
       await refreshAll(record.id)
       setMessage(newStatus === 'Closed' ? 'Case marked Closed.' : 'Case reopened.')
@@ -2903,7 +2899,7 @@ function App() {
       return
     }
 
-    if (action === 'delete' && !window.confirm(`Delete ${selectedItems.length} selected deadline${selectedItems.length === 1 ? '' : 's'}?`)) return
+    if (action === 'delete' && !(await confirmAction({ title: 'Delete deadlines?', message: `${selectedItems.length} selected deadline${selectedItems.length === 1 ? '' : 's'} will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
 
     try {
       setErrorMessage('')
@@ -2948,7 +2944,7 @@ function App() {
       return
     }
 
-    if (action === 'delete' && !window.confirm(`Delete ${selectedItems.length} selected task${selectedItems.length === 1 ? '' : 's'}?`)) return
+    if (action === 'delete' && !(await confirmAction({ title: 'Delete tasks?', message: `${selectedItems.length} selected task${selectedItems.length === 1 ? '' : 's'} will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
 
     try {
       setErrorMessage('')
@@ -3064,7 +3060,7 @@ function App() {
   async function deleteComparableSale(id: number) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
-    if (!window.confirm('Delete this comparable sale?')) return
+    if (!(await confirmAction({ title: 'Delete comparable sale?', message: 'This comparable sale will be permanently removed.', confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/comparable-sales/${id}`, { method: 'DELETE' })
@@ -3110,7 +3106,7 @@ function App() {
   async function deleteWitness(id: number) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
-    if (!window.confirm('Delete this witness?')) return
+    if (!(await confirmAction({ title: 'Delete witness?', message: 'This witness will be permanently removed.', confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/witnesses/${id}`, { method: 'DELETE' })
@@ -3156,7 +3152,7 @@ function App() {
   async function deleteExhibit(id: number) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
-    if (!window.confirm('Delete this exhibit?')) return
+    if (!(await confirmAction({ title: 'Delete exhibit?', message: 'This exhibit will be permanently removed.', confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/exhibits/${id}`, { method: 'DELETE' })
@@ -3202,7 +3198,7 @@ function App() {
   async function deleteTrialMotion(id: number) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
-    if (!window.confirm('Delete this trial motion?')) return
+    if (!(await confirmAction({ title: 'Delete trial motion?', message: 'This trial motion will be permanently removed.', confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/trial-motions/${id}`, { method: 'DELETE' })
@@ -3683,7 +3679,7 @@ function App() {
   async function deleteCaseNote(note: CaseNote) {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    if (!window.confirm(`Delete note "${note.title}"?`)) return
+    if (!(await confirmAction({ title: 'Delete note?', message: `"${note.title}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/case-notes/${note.id}`, { method: 'DELETE' })
@@ -3733,7 +3729,7 @@ function App() {
   async function deleteHearing(hearing: Hearing) {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    if (!window.confirm(`Delete event "${hearing.title}"?`)) return
+    if (!(await confirmAction({ title: 'Delete event?', message: `"${hearing.title}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/hearings/${hearing.id}`, { method: 'DELETE' })
@@ -3778,7 +3774,7 @@ function App() {
   }
 
   async function deleteChecklistTemplate(template: ChecklistTemplate) {
-    if (!window.confirm(`Delete template "${template.name}" and its ${template.items.length} item(s)? This cannot be undone.`)) return
+    if (!(await confirmAction({ title: 'Delete template?', message: `"${template.name}" and its ${template.items.length} item(s) will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       const version = template.rowVersion ? `?rowVersion=${encodeURIComponent(template.rowVersion)}` : ''
@@ -3822,7 +3818,7 @@ function App() {
   }
 
   async function deleteTemplateItem(item: ChecklistTemplateItem) {
-    if (!window.confirm(`Delete task "${item.task}"?`)) return
+    if (!(await confirmAction({ title: 'Delete task?', message: `"${item.task}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       const version = item.rowVersion ? `?rowVersion=${encodeURIComponent(item.rowVersion)}` : ''
@@ -3848,7 +3844,7 @@ function App() {
   }
 
   async function restoreFromBackup(backup: BackupInfo) {
-    if (!window.confirm(`Restore the database to the backup from ${displayDateTime(backup.createdAt)}? Your current data will be saved as a new backup first, then replaced. Any case you have open will close.`)) return
+    if (!(await confirmAction({ title: 'Restore database?', message: `Restore the database to the backup from ${displayDateTime(backup.createdAt)}? Your current data will be saved as a new backup first, then replaced. Any case you have open will close.`, confirmLabel: 'Restore', danger: true }))) return
     const confirmation = window.prompt('Type RESTORE to confirm.')
     if (confirmation !== 'RESTORE') {
       setMessage('Restore canceled.')
@@ -3883,7 +3879,7 @@ function App() {
   async function deleteSelectedCase() {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    if (!window.confirm(`Delete case "${selectedCase.caseName}"? This permanently removes the case and its related work items.`)) return
+    if (!(await confirmAction({ title: 'Delete case?', message: `"${selectedCase.caseName}" and its related work items will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     const confirmation = window.prompt(`Type DELETE to permanently remove ${selectedCase.caseNumber || selectedCase.caseName}.`)
     if (confirmation !== 'DELETE') {
       setMessage('Case deletion canceled.')
@@ -3902,7 +3898,7 @@ function App() {
 
   async function deleteSampleData() {
     if (!diagnostics?.sampleDataExists) { setMessage('No recognized sample data is present.'); return }
-    if (!window.confirm('Delete the recognized fictional sample case and its related records? Your real cases will not be touched.')) return
+    if (!(await confirmAction({ title: 'Delete sample data?', message: 'The recognized fictional sample case and its related records will be permanently removed. Your real cases will not be touched.', confirmLabel: 'Delete', danger: true }))) return
     try {
       const result = await api<{ deleted: number }>('/api/data-management/sample-data/delete', { method: 'POST' })
       await refreshAll(null)
@@ -3913,7 +3909,7 @@ function App() {
   async function resetEntireDatabase() {
     const confirmation = window.prompt('This permanently replaces the database after creating a verified backup. Type RESET CASE PLANNER to continue.')
     if (confirmation !== 'RESET CASE PLANNER') { setMessage('Database reset canceled.'); return }
-    const scope = window.confirm('Also delete generated exports? Choose OK for database + generated content, or Cancel for database only.') ? 'database-and-generated-content' : 'database'
+    const scope = (await confirmAction({ title: 'Also delete generated exports?', message: 'Choose "Delete exports too" for database + generated content, or "Database only" to keep generated exports.', confirmLabel: 'Delete exports too', cancelLabel: 'Database only', danger: true })) ? 'database-and-generated-content' : 'database'
     try {
       await api('/api/data-management/reset', { method: 'POST', body: JSON.stringify({ scope, confirmation }) })
       setSelectedCaseId(null); setWorkspace(null); setPage('dashboard')
@@ -3992,7 +3988,7 @@ function App() {
   async function deleteRiskAnalysisHistory(entry: RiskAnalysisHistoryRecord) {
     if (!selectedCaseId) return
     const scenario = entry.keyScenarioLabel ? `${entry.keyScenarioLabel}${entry.keyScenarioValue != null ? ` — ${displayCurrency(entry.keyScenarioValue)}` : ''}` : 'no populated key scenario'
-    if (!window.confirm(`Delete the risk analysis from ${displayDate(entry.analysisDate)} (${scenario})? This action will remove the saved analysis and cannot be undone.`)) return
+    if (!(await confirmAction({ title: 'Delete risk analysis?', message: `The risk analysis from ${displayDate(entry.analysisDate)} (${scenario}) will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       await api(`/api/cases/${selectedCaseId}/risk-analysis/history/${entry.id}`, { method: 'DELETE' })
       await api(`/api/cases/${selectedCaseId}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'RiskAnalysisDeleted', notes: `Saved risk analysis deleted (${displayDate(entry.analysisDate)}).` }) })
@@ -4012,7 +4008,7 @@ function App() {
   async function resetRiskAnalysis() {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
-    if (!window.confirm("Reset this case's Risk Analysis ledger back to zero? This clears all saved values.")) return
+    if (!(await confirmAction({ title: 'Reset Risk Analysis?', message: "This clears all saved values in this case's Risk Analysis ledger.", confirmLabel: 'Reset', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/cases/${caseId}/risk-analysis`, { method: 'DELETE' })
@@ -4056,7 +4052,7 @@ function App() {
 
   async function deleteOfferLogEntry(entry: RiskAnalysisOfferLogEntry) {
     const caseId = selectedCaseId ?? caseDraft.id
-    if (!caseId || !window.confirm('Remove this old offer entry?')) return
+    if (!caseId || !(await confirmAction({ title: 'Remove offer entry?', message: 'This old offer entry will be permanently removed.', confirmLabel: 'Remove', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/risk-analysis-offers/${entry.id}`, { method: 'DELETE' })
@@ -4115,7 +4111,7 @@ function App() {
 
   async function deleteServiceLogEntry(entry: ServiceLogEntry) {
     const caseId = selectedCaseId ?? caseDraft.id
-    if (!caseId || !window.confirm(`Remove the service entry for "${entry.partyName}"?`)) return
+    if (!caseId || !(await confirmAction({ title: 'Remove service entry?', message: `The service entry for "${entry.partyName}" will be permanently removed.`, confirmLabel: 'Remove', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/service-log/${entry.id}`, { method: 'DELETE' })
@@ -4156,7 +4152,7 @@ function App() {
 
   async function deletePublicationEntry(entry: PublicationEntry) {
     const caseId = selectedCaseId ?? caseDraft.id
-    if (!caseId || !window.confirm('Remove this publication entry?')) return
+    if (!caseId || !(await confirmAction({ title: 'Remove publication entry?', message: 'This publication entry will be permanently removed.', confirmLabel: 'Remove', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/publication-service/${entry.id}`, { method: 'DELETE' })
@@ -4313,7 +4309,7 @@ function App() {
   }
 
   async function exitCasePlanner() {
-    if (shutdownBusy || !window.confirm('Exit Case Planner? Any request currently being saved or exported will be allowed to finish before the local server stops.')) return
+    if (shutdownBusy || !(await confirmAction({ title: 'Exit Case Planner?', message: 'Any request currently being saved or exported will be allowed to finish before the local server stops.', confirmLabel: 'Exit' }))) return
     setShutdownBusy(true)
     try {
       const { token } = await api<{ token: string }>('/api/app/shutdown-token')
@@ -4348,7 +4344,14 @@ function App() {
     if (hour < 18) return 'Good afternoon.'
     return 'Good evening.'
   }, [])
-  const dashboardDateLine = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), [])
+  // Weekday name comes from Intl directly (formatDate has no weekday concept); the date itself
+  // still routes through the one canonical formatter so this greeting never drifts from the
+  // rest of the app's date rendering.
+  const dashboardDateLine = useMemo(() => {
+    const now = new Date()
+    const weekday = now.toLocaleDateString(undefined, { weekday: 'long' })
+    return `${weekday}, ${formatDate(now.toISOString().slice(0, 10))}`
+  }, [])
   const dashboardCasesById = useMemo(() => {
     const map = new Map<number, CaseRecord>()
     for (const item of allCases) map.set(item.id, item)
@@ -7800,6 +7803,13 @@ function App() {
         onQuery={setPaletteCaseQuery}
       />
       {shortcutHelpOpen && <ShortcutHelpDialog onClose={() => setShortcutHelpOpen(false)} />}
+      {confirmRequest && (
+        <ConfirmDialog
+          options={confirmRequest}
+          onConfirm={() => resolveConfirm(true)}
+          onCancel={() => resolveConfirm(false)}
+        />
+      )}
 
       {page === 'cases' && (casesView === 'list' ? renderCaseListPage() : renderCaseWorkspace())}
 

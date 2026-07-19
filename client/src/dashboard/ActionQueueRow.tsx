@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ActionQueueItem } from './types'
 import { Btn } from '../ui/Btn'
+import { formatDate as displayDate } from '../ui/format'
 
 export type ActionQueueHandlers = {
   onOpenCase: (caseId: number) => void
@@ -15,19 +16,6 @@ export type ActionQueueHandlers = {
   onAddNote: (caseId: number, note: string) => Promise<void>
   onDefer: (caseId: number, reason: string, futureReviewDate: string) => Promise<void>
   onAssignHolder: (caseId: number, holder: string) => Promise<void>
-}
-
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
-function displayDate(value?: string | null): string {
-  if (!value) return '—'
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return value
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  if (month < 1 || month > 12 || day < 1 || day > 31) return value
-  return `${MONTH_NAMES[month - 1]} ${day}, ${year}`
 }
 
 const PRIORITY_STRIPE: Record<number, string> = { 1: 'p1', 2: 'p2', 3: 'p3', 4: 'p4' }

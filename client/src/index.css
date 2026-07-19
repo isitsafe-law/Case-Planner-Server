@@ -223,8 +223,7 @@ label span {
 }
 
 .panel,
-.stat-card,
-.hero-panel {
+.stat-card {
   box-shadow: none;
 }
 
@@ -240,10 +239,6 @@ label span {
   background: var(--appbar-bg);
   color: var(--appbar-text);
   border-radius: var(--r-panel) var(--r-panel) 0 0;
-}
-
-.hero-panel h2 {
-  margin: 0;
 }
 
 .brand-tick {
@@ -478,29 +473,16 @@ label span {
 .page,
 .workspace-sections,
 .workspace-panel-grid,
-.overview-grid,
 .stacked-panels,
 .readonly-grid,
 .diagnostics-grid,
-.form-grid,
-.filters-grid {
+.form-grid {
   display: grid;
   gap: 1rem;
 }
 
 .page {
   align-content: start;
-}
-
-.hero-panel {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.35rem 1.5rem;
-  background: var(--surface);
-  border-radius: var(--r-panel);
-  border: 1px solid var(--border);
 }
 
 /* Compact page title row (replaces the old hero panel on Settings). */
@@ -536,14 +518,6 @@ label span {
 
 .row-actions {
   gap: 0.5rem;
-}
-
-.toolbar-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
 }
 
 .bulk-action-bar {
@@ -586,17 +560,10 @@ label span {
   height: 16px;
 }
 
-.stats-row,
-.button-row,
-.workspace-header-cards,
-.badge-list {
+.button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 1rem;
-}
-
-.tight-row {
-  gap: 0.75rem;
 }
 
 .stat-card {
@@ -681,10 +648,6 @@ button.stat-card {
   padding: 0.95rem 1.1rem 1.1rem;
 }
 
-.filters-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .top-gap,
 .top-gap-small {
   margin-top: 1rem;
@@ -694,7 +657,6 @@ button.stat-card {
   margin-top: 0.7rem;
 }
 
-.toggle-card,
 .toggle-inline {
   display: flex;
   align-items: center;
@@ -706,71 +668,8 @@ button.stat-card {
   background: var(--surface-muted);
 }
 
-.toggle-card input,
 .toggle-inline input {
   width: auto;
-}
-
-.workspace-hero {
-  display: grid;
-}
-
-.workspace-header-cards {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.tab-strip {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.workspace-tabs {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-.settings-tabs {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.tab {
-  border-radius: var(--r-ctl);
-  background: var(--surface-subtle);
-  border-color: var(--border);
-}
-
-.tab.active {
-  background: var(--primary);
-  color: #fff;
-  border-color: var(--primary);
-}
-
-.overview-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.overview-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem 1rem;
-}
-
-.info-pair {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  background: var(--surface-muted);
-}
-
-.info-pair span {
-  color: var(--text-muted);
-  font-size: 0.88rem;
-}
-
-.info-pair strong {
-  font-size: 1rem;
 }
 
 .full-width {
@@ -856,11 +755,6 @@ button.stat-card {
   gap: 0.6rem;
 }
 
-.command-control-stack {
-  display: grid;
-  gap: 0.75rem;
-}
-
 .compact-stack {
   gap: 0.75rem;
 }
@@ -913,8 +807,7 @@ button.stat-card {
 }
 
 .command-list-row p,
-.record-section-header p,
-.dashboard-filter-note {
+.record-section-header p {
   margin: 0;
 }
 
@@ -937,17 +830,6 @@ button.stat-card {
   gap: 0.25rem;
 }
 
-.compact-readonly-grid {
-  gap: 0.75rem;
-}
-
-.compact-readonly-grid label {
-  padding: 0.7rem 0.8rem;
-  border-radius: var(--r-ctl);
-  background: rgba(255, 255, 255, 0.45);
-}
-
-.compact-readonly-grid input,
 .record-section textarea {
   background: var(--surface);
 }
@@ -1041,11 +923,6 @@ th {
   padding-bottom: 0.55rem;
 }
 
-.path-cell {
-  min-width: 280px;
-  word-break: break-word;
-}
-
 .summary-card {
   border-radius: var(--r-panel);
 }
@@ -1065,11 +942,6 @@ code {
   padding-left: 1rem;
 }
 
-.plain-stack {
-  display: grid;
-  gap: 0.4rem;
-}
-
 .list-row {
   display: flex;
   align-items: center;
@@ -1077,15 +949,6 @@ code {
   gap: 1rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--row-border);
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.45rem 0.7rem;
-  border-radius: 999px;
-  background: var(--primary-soft);
-  color: var(--primary);
 }
 
 .inline-message.warn,
@@ -1456,6 +1319,36 @@ code {
   color: var(--text-muted);
 }
 
+/* ConfirmDialog (design-system/MASTER.md \8.9) - reuses the command palette's overlay/panel shell
+   but as a small centered alertdialog with a title, message, and two actions. */
+.ui-confirm-dialog {
+  width: min(420px, calc(100vw - 2rem));
+  max-height: none;
+  padding: 1.1rem 1.25rem 1.25rem;
+  gap: 0.6rem;
+}
+
+.ui-confirm-title {
+  margin: 0;
+  font-size: var(--text-lg, 15px);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ui-confirm-message {
+  margin: 0;
+  font-size: var(--text-base, 13px);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.ui-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
 /* Sectioned case editor (SectionedForm, design-system/MASTER.md \8.12) - lives inside the drawer body. */
 .drawer-section-nav {
   position: sticky;
@@ -1604,8 +1497,7 @@ code {
 }
 
 .inline-edit-input,
-.inline-edit-select,
-.inline-action-select {
+.inline-edit-select {
   width: 100%;
   min-width: 0;
   padding: 0.32rem 0.45rem;
@@ -1622,23 +1514,13 @@ code {
   text-align: center;
 }
 
-.inline-action-select {
-  max-width: 130px;
-}
-
 .row-title-button {
   font-weight: 500;
   white-space: normal;
 }
 
 @media (max-width: 1200px) {
-  .filters-grid,
-  .overview-grid,
-  .overview-info-grid,
   .compact-info-grid,
-  .workspace-header-cards,
-  .workspace-tabs,
-  .settings-tabs,
   .workspace-panel-grid.two-col,
   .readonly-grid,
   .diagnostics-grid,
@@ -1653,14 +1535,7 @@ code {
     padding: 0.75rem;
   }
 
-  .hero-panel,
   .quick-actions-toolbar,
-  .workspace-header-cards,
-  .filters-grid,
-  .overview-grid,
-  .overview-info-grid,
-  .workspace-tabs,
-  .settings-tabs,
   .workspace-panel-grid.two-col,
   .readonly-grid,
   .diagnostics-grid,
@@ -1669,21 +1544,15 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .hero-panel,
   .bulk-action-bar,
   .quick-actions-toolbar,
   .list-row,
   .file-picker-row,
   .path-field-row,
-  .toolbar-row,
   .command-list-row,
   .modal-header {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .column-on-small {
-    align-items: flex-start;
   }
 
   /* The appbar keeps its single-row layout on small screens; let the search input shrink. */
@@ -1711,56 +1580,6 @@ code {
   color: var(--text-muted);
 }
 
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.badge-auto {
-  background: var(--primary-soft);
-  color: var(--primary-strong);
-  border: 1px solid var(--border-strong);
-}
-
-.badge-manual {
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-}
-
-/* Case card grid (UI/UX pass) */
-.case-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.75rem;
-}
-
-.discovery-card-grid {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
-.case-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  padding: 0.85rem 1rem;
-  box-shadow: none;
-  transition: border-color 120ms ease, transform 120ms ease;
-}
-
-.compact-case-card {
-  padding: 0.8rem 0.9rem;
-  gap: 0.5rem;
-}
-
 .case-card-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1770,42 +1589,6 @@ code {
 
 .compact-card-fields {
   gap: 0.35rem 0.6rem;
-}
-
-.case-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
-}
-
-.case-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.75rem;
-}
-
-.case-card-name {
-  font-weight: 600;
-  font-size: 1rem;
-  color: var(--text);
-}
-
-.case-card-meta {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  margin-top: 0.15rem;
-}
-
-.case-card-progress {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.progress-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.78rem;
-  color: var(--text-muted);
 }
 
 .progress-track {
@@ -1819,17 +1602,6 @@ code {
   height: 100%;
   background: var(--primary);
   border-radius: 999px;
-}
-
-.case-card-footer {
-  font-size: 0.85rem;
-}
-
-.compact-card-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
-  align-items: center;
 }
 
 .flag-text {
@@ -1859,11 +1631,6 @@ code {
 .pill-neutral {
   background: var(--surface-subtle);
   color: var(--text-muted-strong);
-}
-
-.inline-pill {
-  margin-left: 0.6rem;
-  vertical-align: middle;
 }
 
 .pill-primary {
@@ -2030,13 +1797,6 @@ code {
   padding: 0.75rem 1rem;
 }
 
-.deadline-history-label {
-  display: block;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 0.35rem;
-}
-
 /* Document generation preview + reference library (doc-gen feature) */
 .document-preview-textarea {
   min-height: 360px;
@@ -2049,7 +1809,7 @@ code {
   border: 1px solid var(--border);
 }
 
-/* Track pill-select + case card pill stack (M-D) */
+/* Track pill-select (M-D) */
 .pill-select {
   border: none;
   border-radius: 999px;
@@ -2058,13 +1818,6 @@ code {
   font-weight: 600;
   width: auto;
   cursor: pointer;
-}
-
-.case-card-pill-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
 }
 
 /* Filter chips + clickable table rows (M-Table) */
@@ -2098,18 +1851,6 @@ code {
 }
 
 /* Attorney Dashboard */
-
-.template-diff {
-  max-height: 16rem;
-  overflow: auto;
-  margin: .75rem 0;
-  padding: .75rem;
-  white-space: pre-wrap;
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-}
 
 .action-queue-filters {
   display: grid;
@@ -2246,36 +1987,6 @@ code {
   font-weight: 600;
 }
 
-.upcoming-decision-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.upcoming-decision-row {
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  padding: 0.75rem 0.9rem;
-}
-
-.upcoming-decision-case {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-weight: 600;
-  color: var(--primary);
-  cursor: pointer;
-  text-align: left;
-}
-
-.upcoming-decision-type {
-  margin: 0.25rem 0 0;
-}
-
 .project-watch-list {
   display: flex;
   flex-direction: column;
@@ -2380,29 +2091,6 @@ code {
   font: 600 1rem/1.5 system-ui, sans-serif;
 }
 
-.discovery-assembly-panel {
-  border: 1px solid var(--border, #d9dee8);
-  border-radius: var(--r-panel);
-  padding: 0.8rem;
-  background: var(--surface-muted, #f8fafc);
-}
-
-.discovery-assembly-list {
-  max-height: 16rem;
-  overflow: auto;
-  display: grid;
-  gap: 0.45rem;
-}
-
-.discovery-assembly-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.55rem;
-  padding: 0.45rem;
-  border-radius: var(--r-ctl);
-  background: var(--surface, #fff);
-}
-
 .document-utility-row {
   display: flex;
   align-items: center;
@@ -2418,52 +2106,6 @@ code {
 .compact-action-button {
   padding: 0.35rem 0.65rem;
   font-size: 0.86rem;
-}
-
-.document-category-tabs {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.document-category-tabs button {
-  border: 1px solid var(--border, #d9dee8);
-  background: var(--surface-muted, #f8fafc);
-  color: inherit;
-  border-radius: 999px;
-  padding: 0.38rem 0.72rem;
-  cursor: pointer;
-}
-
-.document-category-tabs button.active {
-  background: var(--accent, #2563eb);
-  border-color: var(--accent, #2563eb);
-  color: #fff;
-}
-
-.document-library-list {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.document-library-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 0.85rem;
-  border: 1px solid var(--border, #d9dee8);
-  border-radius: var(--r-panel);
-  background: var(--surface, #fff);
-}
-
-.document-library-item h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.document-library-item p {
-  margin: 0.2rem 0 0;
 }
 
 /* =========================================================================
@@ -3284,5 +2926,10 @@ button.ui-tile.ui-tile-on .ui-tile-label {
   .ui-btn,
   .ui-chip {
     transition: none;
+  }
+
+  .dashboard-skeleton-row {
+    animation: none;
+    background: var(--surface-muted);
   }
 }

@@ -1,6 +1,10 @@
+import { formatDate } from './ui/format'
+
 // Shared display for the manual-override pattern (original value / new value / reason /
 // timestamp, no silent overwrite) - used by both deadline date history and activity-entry
-// edit history so the two renderings never drift apart.
+// edit history so the two renderings never drift apart. Callers pre-format `previous`/`next`
+// (they may be composite strings, not bare dates) via formatDate/displayDate; only `createdAt`
+// is a raw timestamp this component formats itself.
 export type EditHistoryRow = {
   id: number
   previous: string
@@ -17,9 +21,9 @@ export function EditHistoryList({ rows, title }: { rows: EditHistoryRow[]; title
       <ul className="plain-list">
         {rows.map((row) => (
           <li key={row.id} className="flag-text muted">
-            {row.previous || 'Not set'} → {row.next || 'Not set'}
+            {row.previous || '—'} → {row.next || '—'}
             {row.reason ? ` — ${row.reason}` : ''}
-            {row.createdAt ? ` (${row.createdAt.slice(0, 10)})` : ''}
+            {row.createdAt ? ` (${formatDate(row.createdAt)})` : ''}
           </li>
         ))}
       </ul>

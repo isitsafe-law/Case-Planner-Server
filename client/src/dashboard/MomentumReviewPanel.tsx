@@ -1,5 +1,6 @@
 import type { MomentumReviewEntry } from './types'
 import { EmptyState } from './EmptyState'
+import { formatDate } from '../ui/format'
 
 const STATUS_TONE: Record<string, string> = {
   Moving: 'success',
@@ -30,11 +31,11 @@ export function MomentumReviewPanel({ entries, onOpenCase }: { entries: Momentum
         <tbody>
           {needsAttention.map((e) => (
             <tr key={e.caseId} className="clickable-row" onClick={() => onOpenCase(e.caseId)}>
-              <td>{e.caseName}{e.caseNumber ? ` (${e.caseNumber})` : ''}</td>
+              <td><button className="ui-case-link" onClick={(event) => { event.stopPropagation(); onOpenCase(e.caseId) }}>{e.caseName}{e.caseNumber ? ` (${e.caseNumber})` : ''}</button></td>
               <td><span className={`pill pill-${STATUS_TONE[e.momentumStatus] ?? 'neutral'}`}>{e.momentumStatus}</span></td>
               <td>{e.daysSinceMeaningfulActivity}</td>
               <td>{e.waitingOn ?? '-'}</td>
-              <td>{e.waitingFollowUpDate ?? '-'}</td>
+              <td>{formatDate(e.waitingFollowUpDate)}</td>
             </tr>
           ))}
         </tbody>

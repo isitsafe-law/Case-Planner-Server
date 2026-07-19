@@ -19,6 +19,12 @@ import { EmptyState } from './dashboard/EmptyState'
 import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
 import { ErrorState } from './dashboard/ErrorState'
 import { getApiAccessToken } from './auth'
+import { StatusChip, type StatusTone } from './ui/StatusChip'
+import { StatusSelect } from './ui/StatusSelect'
+import { TypeChip } from './ui/TypeChip'
+import { EmptyState as UiEmptyState } from './ui/EmptyState'
+import { FilterBar, FilterChip, FilterSep, FilterSummary } from './ui/FilterBar'
+import { Btn } from './ui/Btn'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -1221,6 +1227,44 @@ function isDeadlineDone(item: DeadlineItem): boolean {
 function isChecklistDone(item: ChecklistItem): boolean {
   return item.status === 'Done' || item.status === 'Complete' || item.status === 'N/A'
 }
+
+// ---- Work Queue (unified) helpers ----------------------------------------
+
+function isQueueDateOverdue(dateValue?: string | null): boolean {
+  return matchesUrgency(dateValue, 'Overdue')
+}
+
+function serviceWarningTone(warningLevel: string): StatusTone {
+  if (warningLevel === 'overdue' || warningLevel === 'missing') return 'danger'
+  if (warningLevel === 'urgent' || warningLevel === 'upcoming') return 'warn'
+  return 'neutral'
+}
+
+function discoveryStatusTone(status: string): StatusTone {
+  if (status === 'Complete') return 'ok'
+  if (status.includes('Follow-Up')) return 'danger'
+  if (status.includes('Waiting')) return 'warn'
+  return 'neutral'
+}
+
+function deadlineRowTone(item: DeadlineItem): StatusTone {
+  if (isDeadlineDone(item)) return 'ok'
+  if (isQueueDateOverdue(item.dueDate)) return 'danger'
+  return 'primary'
+}
+
+function checklistRowTone(item: ChecklistItem): StatusTone {
+  if (isChecklistDone(item)) return 'ok'
+  if (isQueueDateOverdue(item.dueDate)) return 'danger'
+  return 'primary'
+}
+
+type QueueRow =
+  | { kind: 'service'; key: string; item: ServiceQueueItem }
+  | { kind: 'deadline'; key: string; item: DeadlineItem }
+  | { kind: 'task'; key: string; item: ChecklistItem }
+  | { kind: 'discovery'; key: string; item: DiscoveryItem }
+  | { kind: 'event'; key: string; item: Hearing }
 
 function shouldShowRecordValue(value: string | number | boolean | null | undefined): boolean {
   if (typeof value === 'boolean') return true
@@ -2782,7 +2826,9 @@ function App() {
   }
 
   async function persistDiscovery(draft: DiscoveryItem, successMessage: string, closeAfterSave: boolean) {
-    const caseId = selectedCaseId ?? caseDraft.id
+    // Match persistDeadline/persistChecklist: prefer the draft's own caseId so this also works
+    // when called from a global context (e.g. the Work Queue) where no case is "selected".
+    const caseId = draft.caseId || selectedCaseId || caseDraft.id
     if (!caseId) return
     const payload = serializeDiscoveryDraft(draft, caseId)
     const validation = validateDiscoveryDraft(payload)
@@ -4360,6 +4406,467 @@ function App() {
           </table>
         </div>
 
+      </main>
+    )
+  }
+
+  function renderWorkQueuePage() {
+    const queueRowCaseName = (row: QueueRow): string =>
+      row.kind === 'service' ? (row.item.caseName || row.item.caseNumber) : (dashboardCasesById.get(row.item.caseId)?.caseName || `Case ${row.item.caseId}`)
+    const queueRowDue = (row: QueueRow): string | null | undefined => {
+      switch (row.kind) {
+        case 'service': return row.item.serviceDeadline120 || row.item.filingDate
+        case 'deadline': return row.item.dueDate
+        case 'task': return row.item.dueDate
+        case 'discovery': return row.item.followUpDate || row.item.dueDate
+        case 'event': return row.item.hearingDate
+      }
+    }
+    const renderCaseCell = (caseId: number, tab: CaseTabKey) => {
+      const record = dashboardCasesById.get(caseId)
+      return (
+        <td>
+          <button className="ui-case-link" onClick={() => openCase(caseId, tab)}>{record?.caseName || `Case ${caseId}`}</button>
+          {record?.caseNumber && <div className="ui-sub ui-data">{record.caseNumber}</div>}
+        </td>
+      )
+    }
+
+    const serviceRows: QueueRow[] = sortedServiceQueue.map((item) => ({ kind: 'service', key: `service-${item.caseId}`, item }))
+    const deadlineRows: QueueRow[] = sortedDeadlineQueue.map((item) => ({ kind: 'deadline', key: `deadline-${item.id}`, item }))
+    const taskRows: QueueRow[] = sortedChecklistQueue.map((item) => ({ kind: 'task', key: `task-${item.id}`, item }))
+    const discoveryRows: QueueRow[] = sortedDiscoveryQueue.map((item) => ({ kind: 'discovery', key: `discovery-${item.id}`, item }))
+    const eventRows: QueueRow[] = sortedHearingQueue.map((item) => ({ kind: 'event', key: `event-${item.id}`, item }))
+
+    const facetRows: QueueRow[] =
+      workQueueFilter === 'service' ? serviceRows
+      : workQueueFilter === 'deadlines' ? deadlineRows
+      : workQueueFilter === 'checklist' ? taskRows
+      : workQueueFilter === 'discovery' ? discoveryRows
+      : workQueueFilter === 'hearings' ? eventRows
+      : sortQueueItems([...serviceRows, ...deadlineRows, ...taskRows, ...discoveryRows, ...eventRows], workQueueSort, queueRowCaseName, queueRowDue)
+
+    const totalDeadlinesOpen = queueDeadlines.filter((item) => !isDeadlineDone(item)).length
+    const totalTasksOpen = queueChecklist.filter((item) => !isChecklistDone(item)).length
+    const allOpenItemsCount = queueService.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length + queueHearings.length
+
+    const totalForFacet =
+      workQueueFilter === 'service' ? filteredServiceQueue.length
+      : workQueueFilter === 'deadlines' ? totalDeadlinesOpen
+      : workQueueFilter === 'checklist' ? totalTasksOpen
+      : workQueueFilter === 'discovery' ? queueDiscovery.length
+      : workQueueFilter === 'hearings' ? queueHearings.length
+      : filteredServiceQueue.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length + queueHearings.length
+
+    const clearFilters = () => { setWorkQueueUrgency('All Open'); setWorkQueueFilter('all'); setWorkQueueSearch(''); setServiceConditionFilter('all') }
+
+    const typeFacets: { key: typeof workQueueFilter; label: string; count: number }[] = [
+      { key: 'all', label: 'All', count: sortedServiceQueue.length + sortedDeadlineQueue.length + sortedChecklistQueue.length + sortedDiscoveryQueue.length + sortedHearingQueue.length },
+      { key: 'service', label: 'Service', count: sortedServiceQueue.length },
+      { key: 'deadlines', label: 'Deadlines', count: sortedDeadlineQueue.length },
+      { key: 'checklist', label: 'Tasks', count: sortedChecklistQueue.length },
+      { key: 'discovery', label: 'Discovery', count: sortedDiscoveryQueue.length },
+      { key: 'hearings', label: 'Events', count: sortedHearingQueue.length },
+    ]
+    const serviceConditionChips: { key: typeof serviceConditionFilter; label: string }[] = [
+      { key: 'all', label: 'All conditions' },
+      { key: 'missingDeadline', label: 'Missing deadline' },
+      { key: 'notPerfected', label: 'Not perfected' },
+      { key: 'missingBasis', label: 'Missing basis date' },
+    ]
+
+    // ---- single-facet extra tables (bulk selection + facet-specific columns) ----
+
+    const deadlineAllSelected = sortedDeadlineQueue.length > 0 && sortedDeadlineQueue.every((item) => selectedDeadlineIds.includes(item.id))
+    const deadlineSelectedCount = sortedDeadlineQueue.filter((item) => selectedDeadlineIds.includes(item.id)).length
+    const renderDeadlinesFacetTable = () => (
+      <div className="ui-table-panel">
+        <div className="bulk-action-bar">
+          <div className="bulk-action-summary">
+            <label className="bulk-select-all">
+              <input type="checkbox" checked={deadlineAllSelected} onChange={(event) => setAllSelectedDeadlines(sortedDeadlineQueue, event.target.checked)} aria-label="Select all visible deadlines" />
+              <span>Select all visible</span>
+            </label>
+            <span className="helper-text">{deadlineSelectedCount} selected</span>
+          </div>
+          <div className="bulk-action-controls">
+            <button onClick={() => void applyBulkDeadlineAction('complete', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0}>Mark Done</button>
+            <button onClick={() => void applyBulkDeadlineAction('reopen', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0}>Reopen</button>
+            <input type="date" value={bulkDeadlineDueDate} onChange={(event) => setBulkDeadlineDueDate(event.target.value)} disabled={deadlineSelectedCount === 0} />
+            <button onClick={() => void applyBulkDeadlineAction('dueDate', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0 || !bulkDeadlineDueDate}>Apply Due Date</button>
+            <button onClick={() => setSelectedDeadlineIds([])} disabled={deadlineSelectedCount === 0}>Clear</button>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr>
+                <th className="selection-cell">Select</th>
+                <th style={{ width: 95 }}>Type</th>
+                <th>Item</th>
+                <th>Case</th>
+                <th style={{ width: 150 }}>Due</th>
+                <th style={{ width: 170 }}>Status</th>
+                <th style={{ width: 120 }}>Severity</th>
+                <th style={{ width: 170 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedDeadlineQueue.length === 0 ? (
+                <UiEmptyState colSpan={8} title="No deadlines match the current filters" hint="Try a different urgency, or clear all filters." action={<Btn size="sm" onClick={clearFilters}>Clear filters</Btn>} />
+              ) : sortedDeadlineQueue.map((item) => (
+                <tr key={item.id}>
+                  <td className="selection-cell">
+                    <input type="checkbox" checked={selectedDeadlineIds.includes(item.id)} onChange={() => toggleSelectedDeadline(item.id)} aria-label={`Select deadline ${item.title}`} />
+                  </td>
+                  <td><TypeChip kind="deadline" /></td>
+                  <td>
+                    {item.title}
+                    {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+                    <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
+                  </td>
+                  {renderCaseCell(item.caseId, 'deadlines')}
+                  <td>
+                    <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+                  </td>
+                  <td>
+                    <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
+                  </td>
+                  <td>
+                    <select className="inline-edit-select" value={item.severity || 'normal'} onChange={(event) => void persistDeadline({ ...item, severity: event.target.value }, 'Deadline severity updated.', false)}>
+                      {deadlineSeverities.map((level) => <option key={level} value={level}>{level}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <div className="ui-row-actions">
+                      {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
+                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'deadlines')}>Open case ▸</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+
+    const taskAllSelected = sortedChecklistQueue.length > 0 && sortedChecklistQueue.every((item) => selectedChecklistIds.includes(item.id))
+    const taskSelectedCount = sortedChecklistQueue.filter((item) => selectedChecklistIds.includes(item.id)).length
+    const renderTasksFacetTable = () => (
+      <div className="ui-table-panel">
+        <div className="bulk-action-bar">
+          <div className="bulk-action-summary">
+            <label className="bulk-select-all">
+              <input type="checkbox" checked={taskAllSelected} onChange={(event) => setAllSelectedChecklist(sortedChecklistQueue, event.target.checked)} aria-label="Select all visible tasks" />
+              <span>Select all visible</span>
+            </label>
+            <span className="helper-text">{taskSelectedCount} selected</span>
+          </div>
+          <div className="bulk-action-controls">
+            <button onClick={() => void applyBulkChecklistAction('complete', sortedChecklistQueue)} disabled={taskSelectedCount === 0}>Mark Done</button>
+            <button onClick={() => void applyBulkChecklistAction('reopen', sortedChecklistQueue)} disabled={taskSelectedCount === 0}>Reopen</button>
+            <button onClick={() => setBulkChecklistDueDateOpen((open) => !open)} disabled={taskSelectedCount === 0}>Change Due Date</button>
+            {bulkChecklistDueDateOpen && <span className="bulk-date-popover"><input type="date" value={bulkChecklistDueDate} onChange={(event) => setBulkChecklistDueDate(event.target.value)} autoFocus /><button onClick={() => { setBulkChecklistDueDateOpen(false); void applyBulkChecklistAction('dueDate', sortedChecklistQueue) }} disabled={!bulkChecklistDueDate}>Apply</button><button onClick={() => setBulkChecklistDueDateOpen(false)}>Cancel</button></span>}
+            <button onClick={() => setSelectedChecklistIds([])} disabled={taskSelectedCount === 0}>Clear</button>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr>
+                <th className="selection-cell">Select</th>
+                <th style={{ width: 95 }}>Type</th>
+                <th>Item</th>
+                <th>Case</th>
+                <th style={{ width: 150 }}>Due</th>
+                <th style={{ width: 170 }}>Status</th>
+                <th style={{ width: 170 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedChecklistQueue.length === 0 ? (
+                <UiEmptyState colSpan={7} title="No tasks match the current filters" hint="Try a different urgency, or clear all filters." action={<Btn size="sm" onClick={clearFilters}>Clear filters</Btn>} />
+              ) : sortedChecklistQueue.map((item) => (
+                <tr key={item.id}>
+                  <td className="selection-cell">
+                    <input type="checkbox" checked={selectedChecklistIds.includes(item.id)} onChange={() => toggleSelectedChecklist(item.id)} aria-label={`Select task ${item.task}`} />
+                  </td>
+                  <td><TypeChip kind="task" /></td>
+                  <td>
+                    {item.task}
+                    <div className="ui-sub">{item.phase || 'General'}</div>
+                    {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+                  </td>
+                  {renderCaseCell(item.caseId, 'checklist')}
+                  <td>
+                    <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+                  </td>
+                  <td>
+                    <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
+                  </td>
+                  <td>
+                    <div className="ui-row-actions">
+                      {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
+                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'checklist')}>Open case ▸</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+
+    const renderServiceFacetTable = () => (
+      <div className="ui-table-panel">
+        <div className="table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr>
+                <th style={{ width: 95 }}>Type</th>
+                <th>Item</th>
+                <th>Case</th>
+                <th style={{ width: 120 }}>Basis date</th>
+                <th style={{ width: 135 }}>Due</th>
+                <th style={{ width: 120 }}>Perfected</th>
+                <th style={{ width: 160 }}>Method</th>
+                <th style={{ width: 170 }}>Status</th>
+                <th style={{ width: 170 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedServiceQueue.length === 0 ? (
+                <UiEmptyState colSpan={9} title="No service items match the current filters" hint="Try a different urgency or service condition." action={<Btn size="sm" onClick={clearFilters}>Clear filters</Btn>} />
+              ) : sortedServiceQueue.map((item) => (
+                <tr key={`${item.caseId}-${item.caseNumber}`}>
+                  <td><TypeChip kind="service" /></td>
+                  <td>
+                    120-day service deadline
+                    {item.warningText && <div className="ui-sub">{item.warningText}</div>}
+                  </td>
+                  <td>
+                    <button className="ui-case-link" onClick={() => openCase(item.caseId, 'servicePublication')}>{item.caseName}</button>
+                    <div className="ui-sub ui-data">{item.caseNumber}</div>
+                  </td>
+                  <td className="ui-data">{displayDate(item.serviceDeadlineBasisDate || item.filingDate)}</td>
+                  <td className={`ui-data${isQueueDateOverdue(item.serviceDeadline120) && !item.servicePerfected ? ' ui-cell-danger' : ''}`}>{displayDate(item.serviceDeadline120)}</td>
+                  <td className="ui-data">{item.servicePerfected ? displayDate(item.servicePerfectedDate) : '—'}</td>
+                  <td>{item.serviceMethod || '—'}{item.serviceStatus ? ` · ${item.serviceStatus}` : ''}</td>
+                  <td>
+                    {item.servicePerfected ? (
+                      <StatusChip tone="ok">Perfected {displayDate(item.servicePerfectedDate)}</StatusChip>
+                    ) : (
+                      <StatusChip tone={serviceWarningTone(item.warningLevel)}>Not perfected</StatusChip>
+                    )}
+                  </td>
+                  <td>
+                    <div className="ui-row-actions">
+                      {!item.servicePerfected && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Mark perfected</Btn>}
+                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'servicePublication')}>Open case ▸</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+
+    // ---- unified table (facets: all / discovery / hearings, and the merged "all" view) ----
+
+    const renderUnifiedRow = (row: QueueRow) => {
+      switch (row.kind) {
+        case 'service': {
+          const item = row.item
+          return (
+            <tr key={row.key}>
+              <td><TypeChip kind="service" /></td>
+              <td>
+                120-day service deadline
+                {item.warningText && <div className="ui-sub">{item.warningText}</div>}
+              </td>
+              <td>
+                <button className="ui-case-link" onClick={() => openCase(item.caseId, 'servicePublication')}>{item.caseName}</button>
+                <div className="ui-sub ui-data">{item.caseNumber}</div>
+              </td>
+              <td className={`ui-data${isQueueDateOverdue(item.serviceDeadline120) && !item.servicePerfected ? ' ui-cell-danger' : ''}`}>{displayDate(item.serviceDeadline120)}</td>
+              <td>
+                {item.servicePerfected ? (
+                  <StatusChip tone="ok">Perfected {displayDate(item.servicePerfectedDate)}</StatusChip>
+                ) : (
+                  <StatusChip tone={serviceWarningTone(item.warningLevel)}>Not perfected</StatusChip>
+                )}
+              </td>
+              <td>
+                <div className="ui-row-actions">
+                  {!item.servicePerfected && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Mark perfected</Btn>}
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'servicePublication')}>Open case ▸</Btn>
+                </div>
+              </td>
+            </tr>
+          )
+        }
+        case 'deadline': {
+          const item = row.item
+          return (
+            <tr key={row.key}>
+              <td><TypeChip kind="deadline" /></td>
+              <td>
+                {item.title}
+                {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+                <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
+              </td>
+              {renderCaseCell(item.caseId, 'deadlines')}
+              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
+              <td>
+                <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
+              </td>
+              <td>
+                <div className="ui-row-actions">
+                  {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'deadlines')}>Open case ▸</Btn>
+                </div>
+              </td>
+            </tr>
+          )
+        }
+        case 'task': {
+          const item = row.item
+          return (
+            <tr key={row.key}>
+              <td><TypeChip kind="task" /></td>
+              <td>
+                {item.task}
+                <div className="ui-sub">{item.phase || 'General'}</div>
+                {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+              </td>
+              {renderCaseCell(item.caseId, 'checklist')}
+              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
+              <td>
+                <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
+              </td>
+              <td>
+                <div className="ui-row-actions">
+                  {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'checklist')}>Open case ▸</Btn>
+                </div>
+              </td>
+            </tr>
+          )
+        }
+        case 'discovery': {
+          const item = row.item
+          return (
+            <tr key={row.key}>
+              <td><TypeChip kind="discovery" /></td>
+              <td>
+                {item.requestTitle || `${item.direction} ${item.discoveryType}`}
+                <div className="ui-sub">{item.direction}{item.servedDate ? ` · served ${displayDate(item.servedDate)}` : ''}</div>
+              </td>
+              {renderCaseCell(item.caseId, 'discovery')}
+              <td className={`ui-data${isQueueDateOverdue(item.followUpDate || item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.followUpDate || item.dueDate)}</td>
+              <td>
+                <StatusSelect value={item.status} options={discoveryStatuses} tone={discoveryStatusTone(item.status)} ariaLabel={`Status for ${item.requestTitle || item.discoveryType}`} onChange={(value) => void persistDiscovery({ ...item, status: value }, 'Discovery status updated.', false)} />
+              </td>
+              <td>
+                <div className="ui-row-actions">
+                  <Btn size="sm" onClick={() => void recordDiscoveryResponse(item)}>Record response</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'discovery')}>Open case ▸</Btn>
+                </div>
+              </td>
+            </tr>
+          )
+        }
+        case 'event': {
+          const item = row.item
+          return (
+            <tr key={row.key}>
+              <td><TypeChip kind="event" /></td>
+              <td>
+                {item.title}
+                {item.location && <div className="ui-sub">{item.location}</div>}
+              </td>
+              {renderCaseCell(item.caseId, 'hearings')}
+              <td className="ui-data">{displayDate(item.hearingDate)}</td>
+              <td><StatusChip tone="neutral">Scheduled</StatusChip></td>
+              <td>
+                <div className="ui-row-actions">
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'hearings')}>Open case ▸</Btn>
+                </div>
+              </td>
+            </tr>
+          )
+        }
+      }
+    }
+
+    const renderUnifiedTable = () => (
+      <div className="ui-table-panel">
+        <div className="table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr>
+                <th style={{ width: 95 }}>Type</th>
+                <th>Item</th>
+                <th>Case</th>
+                <th style={{ width: 135 }}>Due</th>
+                <th style={{ width: 180 }}>Status</th>
+                <th style={{ width: 200 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {facetRows.length === 0 ? (
+                <UiEmptyState colSpan={6} title="No items match the current filters" hint="Try a different urgency or item type, or clear all filters." action={<Btn size="sm" onClick={clearFilters}>Clear filters</Btn>} />
+              ) : facetRows.map((row) => renderUnifiedRow(row))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+
+    return (
+      <main className="page">
+        <div className="queue-title-row">
+          <h2>Work Queue</h2>
+          <span className="muted">every open item across all cases · {allOpenItemsCount} item{allOpenItemsCount === 1 ? '' : 's'}</span>
+        </div>
+
+        <FilterBar>
+          {typeFacets.map((facet) => (
+            <FilterChip key={facet.key} active={workQueueFilter === facet.key} onClick={() => setWorkQueueFilter(facet.key)}>
+              {facet.label} · {facet.count}
+            </FilterChip>
+          ))}
+          <FilterSep />
+          <select aria-label="Urgency" value={workQueueUrgency} onChange={(event) => setWorkQueueUrgency(event.target.value)}>
+            {['All Open', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}
+          </select>
+          <select aria-label="Sort" value={workQueueSort} onChange={(event) => setWorkQueueSort(event.target.value as QueueSortMode)}>
+            <option value="dueAsc">Due date ↑</option>
+            <option value="dueDesc">Due date ↓</option>
+            <option value="caseAsc">Case A–Z</option>
+            <option value="caseDesc">Case Z–A</option>
+          </select>
+          <input type="search" value={workQueueSearch} onChange={(event) => setWorkQueueSearch(event.target.value)} placeholder="Case or item" aria-label="Search queue" />
+          <FilterSummary>{workQueueFilteredCount} of {totalForFacet} item{totalForFacet === 1 ? '' : 's'} match</FilterSummary>
+          {(workQueueFilter === 'all' || workQueueFilter === 'service') && (
+            <div className="ui-filterbar-row2">
+              {serviceConditionChips.map((chip) => (
+                <FilterChip key={chip.key} active={serviceConditionFilter === chip.key} onClick={() => setServiceConditionFilter(chip.key)}>
+                  {chip.label}
+                </FilterChip>
+              ))}
+            </div>
+          )}
+        </FilterBar>
+
+        {workQueueFilter === 'deadlines' ? renderDeadlinesFacetTable()
+          : workQueueFilter === 'checklist' ? renderTasksFacetTable()
+          : workQueueFilter === 'service' ? renderServiceFacetTable()
+          : renderUnifiedTable()}
       </main>
     )
   }
@@ -6892,159 +7399,7 @@ function App() {
         </main>
       )}
 
-      {page === 'queues' && (
-        <main className="page">
-          <section className="hero-panel">
-            <div>
-              <p className="eyebrow dark">Global Work Queues</p>
-              <h2>Work Queues</h2>
-              <p className="subtle-text">Review service reminders, deadlines, tasks, discovery items, and hearings across all cases, then drill into the correct selected-case tab.</p>
-            </div>
-          </section>
-
-          <div className="chip-row">
-            {([
-              { key: 'all', label: 'All' },
-              { key: 'service', label: 'Service' },
-              { key: 'deadlines', label: 'Deadlines' },
-              { key: 'checklist', label: 'Tasks' },
-              { key: 'discovery', label: 'Discovery' },
-              { key: 'hearings', label: 'Events' },
-            ] as { key: typeof workQueueFilter; label: string }[]).map((option) => (
-              <button key={option.key} className={workQueueFilter === option.key ? 'chip active' : 'chip'} onClick={() => setWorkQueueFilter(option.key)}>
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {(workQueueFilter === 'all' || workQueueFilter === 'service') && <div className="chip-row compact-service-conditions">
-            <span className="flag-text muted">Service:</span>
-            {([{ key: 'all', label: 'All conditions' }, { key: 'missingDeadline', label: 'Missing deadline' }, { key: 'notPerfected', label: 'Not perfected' }, { key: 'missingBasis', label: 'Missing basis date' }] as const).map((option) => <button key={option.key} className={serviceConditionFilter === option.key ? 'chip active' : 'chip'} onClick={() => setServiceConditionFilter(option.key)}>{option.label}</button>)}
-          </div>}
-
-          <div className="work-queue-filter-bar">
-            <label><span>Search</span><input value={workQueueSearch} onChange={(event) => setWorkQueueSearch(event.target.value)} placeholder="Case or item" /></label>
-            <label><span>Urgency</span><select value={workQueueUrgency} onChange={(event) => setWorkQueueUrgency(event.target.value)}>{['All Open', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}</select></label>
-            <label><span>Sort</span><select value={workQueueSort} onChange={(event) => setWorkQueueSort(event.target.value as QueueSortMode)}><option value="dueAsc">Due date ↑</option><option value="dueDesc">Due date ↓</option><option value="caseAsc">Case A–Z</option><option value="caseDesc">Case Z–A</option></select></label>
-            {workQueueUrgency !== 'All Open' && <span className="active-filter-summary">✓ Filtered by {workQueueFilter === 'all' ? 'All categories' : workQueueFilter} · {workQueueUrgency} · {workQueueFilteredCount} item{workQueueFilteredCount === 1 ? '' : 's'}</span>}
-            {workQueueUrgency !== 'All Open' && <button onClick={() => setWorkQueueUrgency('All Open')}>Clear urgency filter</button>}
-          </div>
-
-          <div className="workspace-panel-grid">
-            {(workQueueFilter === 'all' || workQueueFilter === 'service') && (
-              <Panel title="Service">
-                <div className="table-wrap top-gap-small">{sortedServiceQueue.length === 0 ? <div className="compact-empty-state"><p>No service items match the current filters.</p><span className="flag-text muted">Try a different urgency or service condition.</span></div> : <table>
-                    <thead>
-                      <tr>
-                        <th>Case</th>
-                        <th>Job / Tract</th>
-                        <th>County</th>
-                        <th>Basis Date</th>
-                        <th>120-Day Deadline</th>
-                        <th>Timing</th>
-                        <th>Perfected</th>
-                        <th>Method / Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedServiceQueue.map((item) => (
-                        <tr key={`${item.caseId}-${item.caseNumber}`}>
-                          <td>{item.caseName} ({item.caseNumber})</td>
-                          <td>{item.jobNumber || 'Not set'} / {item.tract || 'Not set'}</td>
-                          <td>{item.county || 'Not set'}</td>
-                          <td>{displayDate(item.serviceDeadlineBasisDate || item.filingDate)}</td>
-                          <td>{displayDate(item.serviceDeadline120)}</td>
-                          <td>{item.warningText}</td>
-                          <td>{item.servicePerfected ? `Yes | ${displayDate(item.servicePerfectedDate)}` : 'No'}</td>
-                          <td>{item.serviceMethod || 'Not set'} | {item.serviceStatus || 'Not set'}</td>
-                          <td>
-                            <div className="button-row compact-actions row-actions">
-                              {!item.servicePerfected && <button onClick={() => void markGlobalServicePerfected(item.caseId)}>Mark Perfected</button>}
-                              <button onClick={() => openCase(item.caseId, 'details')}>Open Case</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>}
-                </div>
-              </Panel>
-            )}
-
-            {(workQueueFilter === 'all' || workQueueFilter === 'deadlines') && (
-              <Panel title="Global Deadlines">
-                {renderDeadlineTable(sortedDeadlineQueue, false, true)}
-              </Panel>
-            )}
-
-            {(workQueueFilter === 'all' || workQueueFilter === 'checklist') && (
-              <Panel title="Global Tasks">
-                {renderChecklistTable(sortedChecklistQueue, false, sortedChecklistQueue, true, true)}
-              </Panel>
-            )}
-
-            {(workQueueFilter === 'all' || workQueueFilter === 'discovery') && (
-              <Panel title="Global Discovery">
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Due</th>
-                        <th>Case</th>
-                        <th>Direction</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedDiscoveryQueue.length === 0 ? <tr><td colSpan={6}>No discovery items match the current filters.</td></tr> : sortedDiscoveryQueue.map((item) => (
-                        <tr key={item.id}>
-                          <td>{displayDate(item.followUpDate || item.dueDate)}</td>
-                          <td>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</td>
-                          <td>{item.direction}</td>
-                          <td>{item.discoveryType}</td>
-                          <td>{item.status}</td>
-                          <td><div className="button-row compact-actions row-actions"><button onClick={() => void recordDiscoveryResponse(item)}>Record Response</button><button onClick={() => openCase(item.caseId, 'discovery')}>Open Case</button></div></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
-            )}
-
-            {(workQueueFilter === 'all' || workQueueFilter === 'hearings') && (
-              <Panel title="Global Hearings">
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Case</th>
-                        <th>Title</th>
-                        <th>Location</th>
-                        <th>Open</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedHearingQueue.length === 0 ? <tr><td colSpan={5}>No hearings match the current filters.</td></tr> : sortedHearingQueue.map((item) => (
-                        <tr key={item.id}>
-                          <td>{displayDate(item.hearingDate)}</td>
-                          <td>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</td>
-                          <td>{item.title}</td>
-                          <td>{item.location || 'Not set'}</td>
-                          <td><button onClick={() => openCase(item.caseId, 'hearings')}>Open Case</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Panel>
-            )}
-          </div>
-        </main>
-      )}
+      {page === 'queues' && renderWorkQueuePage()}
 
       {page === 'settings' && (
         <main className="page">

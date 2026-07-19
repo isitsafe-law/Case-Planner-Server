@@ -66,6 +66,7 @@ public sealed partial class CasePlannerRepository
 
         await BackfillServicePerfectedForAdvancedStagesAsync(connection);
         await CleanupOrphanedComputedDeadlinesAsync(connection);
+        await CleanupRetired31DayServiceReminderAsync(connection);
         await ApplyDeadlineClosureRulesRetroactivelyAsync(connection);
     }
 
@@ -264,6 +265,96 @@ public sealed partial class CasePlannerRepository
         if (ids.Count > 0)
         {
             await LogAsync($"Data-quality cleanup: deleted {ids.Count} orphaned duplicate auto-generated deadline row(s) left over from a prior template reseed.");
+        }
+    }
+
+    // One-time cleanup: the "Service - 31 Day Status Reminder" deadline template and its matching
+    // "Service status reminder: 31 days after filing" checklist task were retired - the reminder
+    // fired on essentially every open case (flagging ~80% of the dashboard's attention list) and
+    // added nothing the 60/90/120-day service milestones don't already cover. DeadlineTemplateVersion
+    // and ChecklistTemplateVersion bumps stop new rows from being generated, but existing open rows
+    // on already-generated cases need a one-time sweep. Completed rows are left alone so the
+    // historical record (what was done and when) isn't erased.
+    private async Task CleanupRetired31DayServiceReminderAsync(SqliteConnection connection)
+    {
+        const string flagKey = "retired_31_day_reminder_cleanup";
+        if (await GetAppSettingAsync(connection, flagKey) is not null)
+        {
+            return;
+        }
+
+        const string deadlineTitle = "Service status reminder (31 days after filing)";
+        const string checklistTask = "Service status reminder: 31 days after filing";
+
+        var deadlineIds = new List<long>();
+        var deadlineCmd = connection.CreateCommand();
+        deadlineCmd.CommandText = """
+            SELECT id FROM deadlines
+            WHERE source_kind = 'DeadlineTemplate'
+              AND title = @title
+              AND status NOT IN ('Done', 'Complete')
+            """;
+        deadlineCmd.Parameters.AddWithValue("@title", deadlineTitle);
+        await using (var reader = await deadlineCmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                deadlineIds.Add(reader.GetInt64(0));
+            }
+        }
+
+        var checklistIds = new List<long>();
+        var checklistCmd = connection.CreateCommand();
+        checklistCmd.CommandText = """
+            SELECT id FROM checklist_items
+            WHERE source_kind = 'StageTemplate'
+              AND task = @task
+              AND status NOT IN ('Done', 'Complete', 'N/A')
+            """;
+        checklistCmd.Parameters.AddWithValue("@task", checklistTask);
+        await using (var reader = await checklistCmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                checklistIds.Add(reader.GetInt64(0));
+            }
+        }
+
+        await using var tx = connection.BeginTransaction();
+        foreach (var id in deadlineIds)
+        {
+            // Clear history rows first, matching how deadlines are removed elsewhere (e.g. case
+            // deletion) so no deadline_history row is left pointing at a deadline_id that no
+            // longer exists.
+            var deleteHistory = connection.CreateCommand();
+            deleteHistory.Transaction = tx;
+            deleteHistory.CommandText = "DELETE FROM deadline_history WHERE deadline_id = @id";
+            deleteHistory.Parameters.AddWithValue("@id", id);
+            await deleteHistory.ExecuteNonQueryAsync();
+
+            var deleteDeadline = connection.CreateCommand();
+            deleteDeadline.Transaction = tx;
+            deleteDeadline.CommandText = "DELETE FROM deadlines WHERE id = @id";
+            deleteDeadline.Parameters.AddWithValue("@id", id);
+            await deleteDeadline.ExecuteNonQueryAsync();
+        }
+
+        foreach (var id in checklistIds)
+        {
+            var deleteChecklist = connection.CreateCommand();
+            deleteChecklist.Transaction = tx;
+            deleteChecklist.CommandText = "DELETE FROM checklist_items WHERE id = @id";
+            deleteChecklist.Parameters.AddWithValue("@id", id);
+            await deleteChecklist.ExecuteNonQueryAsync();
+        }
+
+        await SetAppSettingAsync(connection, tx, flagKey,
+            $"Deleted {deadlineIds.Count} open 31-day service reminder deadline(s) and {checklistIds.Count} open matching checklist task(s) at {DateTime.Now:G}");
+        await tx.CommitAsync();
+
+        if (deadlineIds.Count > 0 || checklistIds.Count > 0)
+        {
+            await LogAsync($"Data-quality cleanup: retired the 31-day service status reminder - deleted {deadlineIds.Count} open deadline row(s) and {checklistIds.Count} open checklist task row(s). Completed rows were left in place.");
         }
     }
 
@@ -5113,7 +5204,6 @@ public sealed partial class CasePlannerRepository
         new("Service - Core", "Stage", "Filed / Service Pending", null, "Any",
         [
             "Service deadline: 120 days from filing — calendar this date (reminder at 60 days)",
-            "Service status reminder: 31 days after filing",
             "Email appraiser (cc appraisal section division head) to update appraisal as of date of taking",
             "Place warning order in paper",
             "If registered-mail service is returned: request Sheriff service",
@@ -5314,7 +5404,7 @@ public sealed partial class CasePlannerRepository
     // Bump this when TemplateSeeds content changes materially so existing installs re-seed.
     // Safe because template rows only carry static task text; the per-case checklist_items
     // rows generated from them are separate and are never deleted by a re-seed.
-    private const string ChecklistTemplateVersion = "7";
+    private const string ChecklistTemplateVersion = "8";
 
     private async Task<bool> SeedChecklistTemplatesAsync(SqliteConnection connection)
     {
@@ -5419,12 +5509,10 @@ public sealed partial class CasePlannerRepository
     // reminder), "urgent" (materially more pressing), "critical" (hard deadline).
     private sealed record DeadlineTemplateSeed(string Name, string TriggerField, int OffsetDays, string Title, string Severity, string Track);
 
-    private const string DeadlineTemplateVersion = "3";
+    private const string DeadlineTemplateVersion = "4";
 
     private static readonly DeadlineTemplateSeed[] DeadlineTemplateSeeds =
     [
-        new("Service - 31 Day Status Reminder", "filing_date", 31,
-            "Service status reminder (31 days after filing)", "soft", "Any"),
         new("Service - 60 Day Check-In", "filing_date", 60,
             "Service status check-in — evaluate whether a Motion for Extension of Time to Serve will be needed before day 120", "soft", "Any"),
         new("Service - 90 Day Watch Alert", "filing_date", 90,
@@ -5636,7 +5724,7 @@ public sealed partial class CasePlannerRepository
                     INSERT INTO deadlines (case_id, title, due_date, status, notes, source_type, is_manual, severity, created_at, updated_at,
                         source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by)
                     VALUES (@case_id, @title, @due_date, 'Open', NULL, @source_type, 0, @severity, @now, @now,
-                        'DeadlineTemplate', @template_id, 3, @stage, @now, @generated_by);
+                        'DeadlineTemplate', @template_id, @source_template_version, @stage, @now, @generated_by);
                     SELECT last_insert_rowid();
                     """;
                 insert.Parameters.AddWithValue("@case_id", caseId);
@@ -5647,6 +5735,7 @@ public sealed partial class CasePlannerRepository
                 insert.Parameters.AddWithValue("@stage", caseStage);
                 insert.Parameters.AddWithValue("@severity", template.Severity);
                 insert.Parameters.AddWithValue("@now", now);
+                insert.Parameters.AddWithValue("@source_template_version", int.Parse(DeadlineTemplateVersion));
                 insert.Parameters.AddWithValue("@generated_by",_actor.AuditLabel);
                 existingId = Convert.ToInt64(await insert.ExecuteScalarAsync());
                 existingStatus = "Open";

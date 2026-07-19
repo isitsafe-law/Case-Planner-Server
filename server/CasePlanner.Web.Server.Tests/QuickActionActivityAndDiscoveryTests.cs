@@ -211,7 +211,7 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
         {
             Assert.Equal("DeadlineTemplate", x.SourceKind);
             Assert.False(string.IsNullOrWhiteSpace(x.SourceTemplateId));
-            Assert.Equal(3, x.SourceTemplateVersion);
+            Assert.Equal(4, x.SourceTemplateVersion);
             Assert.NotNull(x.GeneratedAt);
         });
     }

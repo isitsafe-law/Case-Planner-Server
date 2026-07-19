@@ -1902,21 +1902,62 @@ code {
   font-size: 0.85rem;
 }
 
-.report-builder-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-  gap: 1rem;
-}
-
 .report-column-picker {
   display: grid;
   gap: 0.45rem;
 }
 
+/* Reports page: 300px filter/column rail + 1fr metrics/preview column (design-system §8.6). */
+.rep-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.rep-rail > .panel {
+  margin-bottom: 12px;
+}
+
+.rep-fields {
+  display: grid;
+  gap: 10px;
+}
+
 @media (max-width: 900px) {
-  .report-builder-grid {
+  .rep-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Open-case age distribution: direct-labeled horizontal bars, no legend. */
+.bars {
+  display: grid;
+  grid-template-columns: 90px 1fr 34px;
+  gap: 4px 8px;
+  align-items: center;
+  font-size: var(--text-sm, 12px);
+}
+
+.bars .bar {
+  height: 14px;
+  background: var(--primary-soft);
+  border-radius: 2px;
+  position: relative;
+}
+
+.bars .bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  background: var(--primary);
+  border-radius: 2px;
+}
+
+.bars .val {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .action-queue-item-meta {
@@ -2405,6 +2446,13 @@ select.ui-status-select {
   font-size: var(--text-xl, 18px);
 }
 
+.ui-title-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .ui-filterbar {
   display: flex;
   flex-wrap: wrap;
@@ -2480,6 +2528,24 @@ select.ui-status-select {
   background: var(--primary-soft);
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.ui-chip-count {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.ui-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm, 12px);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ui-toggle input {
+  width: auto;
 }
 
 .ui-empty {
@@ -2671,6 +2737,14 @@ table.ui-table {
   font-size: 18px;
   font-weight: 500;
   line-height: 1;
+}
+
+.ui-tile-unit {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm, 12px);
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 4px;
 }
 
 button.ui-tile:hover {

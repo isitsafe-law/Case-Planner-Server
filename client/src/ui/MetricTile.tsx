@@ -1,8 +1,11 @@
+import type { ReactNode } from 'react'
+
 export type MetricTileTone = 'danger' | 'warn' | 'default'
 
 // Canonical metric-tile primitive (design-system §8.5): static display tile, or a toggleable
 // filter facet when `onClick` is supplied. Replaces the old metric-tile / dashboard-summary-card /
-// docket-metric trio with one component.
+// docket-metric trio with one component. `value` accepts a ReactNode so callers can append a
+// muted unit suffix (e.g. "411 <span>days</span>") without a second component variant.
 export function MetricTile({
   label,
   value,
@@ -11,7 +14,7 @@ export function MetricTile({
   tone = 'default',
 }: {
   label: string
-  value: number | string
+  value: ReactNode
   active?: boolean
   onClick?: () => void
   tone?: MetricTileTone

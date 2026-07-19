@@ -824,6 +824,19 @@ const reportColumnOptions = [
 ] as const
 type ReportColumnKey = typeof reportColumnOptions[number]['key']
 
+// Columns that hold numbers/dates/case numbers get the mono data face + tabular figures in the
+// Preview table; free-text columns (name, status, holder, next action...) stay in the UI font.
+const reportDataColumnKeys = new Set<ReportColumnKey>(['caseNumber', 'jobNumber', 'tract', 'nextReviewDate', 'trialDate', 'dateOpened', 'closedDate', 'caseAgeDays'])
+
+const reportAgeBandDefs = [
+  { key: 'under90', label: '< 90 days' },
+  { key: 'days90to179', label: '90–179' },
+  { key: 'days180to364', label: '180–364' },
+  { key: 'year1to2', label: '1–2 years' },
+  { key: 'year2to3', label: '2–3 years' },
+  { key: 'over3', label: '> 3 years' },
+] as const
+
 function lifecycleDays(opened?: string | null, closed?: string | null): number | null {
   if (!opened) return null
   const start = new Date(`${opened}T00:00:00`)
@@ -1227,7 +1240,8 @@ function sortCases(list: CaseRecord[], column: CaseSortColumn, direction: 'asc' 
   })
 }
 
-function attentionPillTone(status?: string): string {
+// Case attentionStatus -> StatusChip tone for the reskinned Case List status column.
+function attentionChipTone(status?: string): StatusTone {
   switch (status) {
     case 'urgent': return 'danger'
     case 'attention': return 'warn'
@@ -1235,7 +1249,7 @@ function attentionPillTone(status?: string): string {
     case 'stalled': return 'primary'
     case 'closed': return 'neutral'
     case 'triage': return 'primary'
-    default: return 'success'
+    default: return 'ok'
   }
 }
 
@@ -1619,6 +1633,22 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [topbarSearch])
 
+  // Case List search: live-filters as you type instead of requiring the old "Apply Filters"
+  // button. Debounced 300ms into the same server call the other filter controls use immediately;
+  // Enter on the search input (see its onKeyDown) bypasses the debounce and submits right away.
+  // Skips the mount run since loadInitial() already fetched the starting list.
+  const caseSearchMounted = useRef(false)
+  useEffect(() => {
+    if (!caseSearchMounted.current) {
+      caseSearchMounted.current = true
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void loadCasesWithOverride({ search: caseSearch })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [caseSearch])
+
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
     const applyTheme = () => {
@@ -1810,16 +1840,6 @@ function App() {
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
-    }
-  }
-
-  async function loadCases() {
-    try {
-      setErrorMessage('')
-      const caseList = await api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`)
-      setCases(caseList)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to load cases.')
     }
   }
 
@@ -4194,6 +4214,15 @@ function App() {
     return { open: open.length, closed: closed.length, averageDuration: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : null, medianDuration, shortestDuration: ordered[0] ?? null, longestDuration: ordered.at(-1) ?? null, averageAge: ages.length ? Math.round(ages.reduce((sum, value) => sum + value, 0) / ages.length) : null, missingDates: closed.length - durations.length, ageBands }
   }, [reportRows])
 
+  // Presentation data for the Open-case age .bars chart: bar width proportional to the largest
+  // band, plus a summary string for the chart's aria-label (it has no legend of its own).
+  const reportAgeBandBars = useMemo(() => {
+    const maxCount = Math.max(1, ...reportAgeBandDefs.map((band) => reportMetrics.ageBands[band.key]))
+    const bands = reportAgeBandDefs.map((band) => ({ ...band, count: reportMetrics.ageBands[band.key], widthPct: (reportMetrics.ageBands[band.key] / maxCount) * 100 }))
+    const ariaLabel = `Open case age distribution: ${bands.map((band) => `${band.label}: ${band.count} case${band.count === 1 ? '' : 's'}`).join(', ')}`
+    return { bands, ariaLabel }
+  }, [reportMetrics])
+
   function exportReportCsv() {
     const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
     const escape = (value: string) => `"${value.replaceAll('"', '""')}"`
@@ -4380,111 +4409,125 @@ function App() {
   }, [allCases, docketMetricFilter])
 
   function renderCaseListPage() {
+    const triageCount = allCases.filter((c) => c.status === 'Triage').length
+    const today = new Date().toISOString().slice(0, 10)
+    const columns = ([
+      { key: 'caseName', label: 'Case' },
+      { key: 'jobNumber', label: 'Job' },
+      { key: 'tract', label: 'Tract' },
+      { key: 'county', label: 'County' },
+      { key: 'nextDeadlineDate', label: 'Next Deadline' },
+      { key: 'attentionStatus', label: 'Status' },
+      ...(caseListShowLifecycle ? [{ key: 'dateOpened', label: 'Date Opened' }, { key: 'closedDate', label: 'Date Closed' }] : []),
+    ] as { key: CaseSortColumn; label: string }[])
+    const rows = caseSortColumn ? sortCases(cases, caseSortColumn, caseSortDirection) : cases
+
     return (
       <main className="page">
-        <section className="hero-panel">
-          <div>
-            <p className="eyebrow dark">Case Management</p>
-            <h2>Cases</h2>
-            <p className="subtle-text">Browse active matters, filter the list, and open a case workspace with deadlines, checklist, discovery, documents, service details, and issue tags in one place.</p>
+        <div className="queue-title-row">
+          <h2>Cases</h2>
+          <div className="ui-title-actions">
+            <Btn onClick={() => openSettingsSection('import')}>Import cases</Btn>
+            <Btn variant="primary" onClick={startNewCase}>Add case</Btn>
           </div>
-          <div className="button-row compact-actions">
-            <button className="primary" onClick={startNewCase}>Add Case</button>
-            <button onClick={() => openSettingsSection('import')}>Import Cases</button>
-          </div>
-        </section>
+        </div>
 
-        {allCases.some((c) => c.status === 'Triage') && caseStatusFilter !== 'Triage' && (
+        {triageCount > 0 && caseStatusFilter !== 'Triage' && (
           <div className="inline-message warn">
-            {allCases.filter((c) => c.status === 'Triage').length} imported case{allCases.filter((c) => c.status === 'Triage').length === 1 ? '' : 's'} awaiting triage — no alerts are generated until intake is completed.
+            {triageCount} imported case{triageCount === 1 ? '' : 's'} awaiting triage — no alerts are generated until intake is completed.
             <button style={{ marginLeft: '0.75rem' }} onClick={() => goToTriageQueue()}>Review</button>
           </div>
         )}
 
-        <Panel title="Case Filters">
-          <div className="chip-row">
-            <button className={caseStatusFilter === '' ? 'chip active' : 'chip'} onClick={() => { setCaseStatusFilter(''); void loadCasesWithOverride({ caseStatus: '' }) }}>All statuses</button>
-            {consolidatedCaseStatuses.map((status) => (
-              <button key={status} className={caseStatusFilter === status ? 'chip active' : 'chip'} onClick={() => { setCaseStatusFilter(status); void loadCasesWithOverride({ caseStatus: status }) }}>
-                {status}
-              </button>
+        <FilterBar>
+          <input
+            type="search"
+            value={caseSearch}
+            onChange={(event) => setCaseSearch(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void loadCasesWithOverride({ search: caseSearch }) } }}
+            placeholder="Name, number, job, or tract — filters as you type"
+            aria-label="Search cases"
+          />
+          <FilterSep />
+          <FilterChip active={caseStatusFilter === ''} onClick={() => { setCaseStatusFilter(''); void loadCasesWithOverride({ caseStatus: '' }) }}>
+            All statuses
+          </FilterChip>
+          {consolidatedCaseStatuses.map((status) => (
+            <FilterChip key={status} active={caseStatusFilter === status} onClick={() => { setCaseStatusFilter(status); void loadCasesWithOverride({ caseStatus: status }) }}>
+              {status}
+              {status === 'Triage' && triageCount > 0 && <b className="ui-chip-count">{triageCount}</b>}
+            </FilterChip>
+          ))}
+          <FilterSep />
+          <select aria-label="County" value={countyFilter} onChange={(event) => { setCountyFilter(event.target.value); void loadCasesWithOverride({ county: event.target.value }) }}>
+            <option value="">All counties</option>
+            {countyOptions(countyFilter).map((county) => (
+              <option key={county} value={county}>{county}</option>
             ))}
-          </div>
-          <div className="filters-grid top-gap-small">
-            <label>
-              <span>Search</span>
-              <input value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Case name, number, job, or tract" />
-            </label>
-            <label>
-              <span>County</span>
-              <select value={countyFilter} onChange={(event) => { setCountyFilter(event.target.value); void loadCasesWithOverride({ county: event.target.value }) }}>
-                <option value="">Select county</option>
-                {countyOptions(countyFilter).map((county) => (
-                  <option key={county} value={county}>{county}</option>
-                ))}
-              </select>
-            </label>
-            <label className="toggle-card">
-              <span>Include Closed</span>
-              <input type="checkbox" checked={includeClosed} onChange={(event) => { setIncludeClosed(event.target.checked); void loadCasesWithOverride({ includeClosed: event.target.checked }) }} />
-            </label>
-          </div>
-          <div className="button-row compact-actions top-gap">
-            <button onClick={() => void loadCases()}>Apply Filters</button>
-            <button onClick={() => { setCaseSearch(''); setStatusFilter(''); setCaseStatusFilter(''); setCountyFilter(''); setIncludeClosed(false); void loadInitial() }}>Clear Filters</button>
-          </div>
-          <label className="toggle-inline top-gap-small"><span>Show lifecycle dates</span><input type="checkbox" checked={caseListShowLifecycle} onChange={(event) => setCaseListShowLifecycle(event.target.checked)} /></label>
-          <p className="helper-text top-gap-small">Case Status, County, and Include Closed apply immediately. Search needs Apply Filters. Legacy stage and track values remain available inside each case for historical context.</p>
-        </Panel>
+          </select>
+          <label className="ui-toggle">
+            <input type="checkbox" checked={includeClosed} onChange={(event) => { setIncludeClosed(event.target.checked); void loadCasesWithOverride({ includeClosed: event.target.checked }) }} />
+            Include closed
+          </label>
+          <label className="ui-toggle">
+            <input type="checkbox" checked={caseListShowLifecycle} onChange={(event) => setCaseListShowLifecycle(event.target.checked)} />
+            Show lifecycle dates
+          </label>
+          <Btn size="sm" variant="ghost" onClick={() => { setCaseSearch(''); setStatusFilter(''); setCaseStatusFilter(''); setCountyFilter(''); setIncludeClosed(false); void loadInitial() }}>
+            Clear
+          </Btn>
+          <FilterSummary>{cases.length} case{cases.length === 1 ? '' : 's'}</FilterSummary>
+        </FilterBar>
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                {([
-                  { key: 'caseName', label: 'Case' },
-                  { key: 'jobNumber', label: 'Job' },
-                  { key: 'tract', label: 'Tract' },
-                  { key: 'county', label: 'County' },
-                  { key: 'nextDeadlineDate', label: 'Next Deadline' },
-                  { key: 'attentionStatus', label: 'Status' },
-                  ...(caseListShowLifecycle ? [{ key: 'dateOpened', label: 'Date Opened' }, { key: 'closedDate', label: 'Date Closed' }] : []),
-                ] as { key: CaseSortColumn; label: string }[]).map((column) => (
-                  <th key={column.key} className="sortable-header" onClick={() => toggleCaseSort(column.key)}>
-                    {column.label}
-                    {caseSortColumn === column.key && <span className="sort-indicator">{caseSortDirection === 'asc' ? ' ▲' : ' ▼'}</span>}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {cases.length === 0 ? (
-                <tr><td colSpan={caseListShowLifecycle ? 8 : 6}>No cases match the current filters.</td></tr>
-              ) : (caseSortColumn ? sortCases(cases, caseSortColumn, caseSortDirection) : cases).map((item) => (
-                <tr key={item.id} className="clickable-row" onClick={() => openCase(item.id, 'overview')}>
-                  <td>
-                    <button className="link-button" onClick={(event) => { event.stopPropagation(); openCase(item.id, 'overview') }}>{item.caseName}</button>
-                    <div className="flag-text muted">{item.caseNumber}</div>
-                  </td>
-                  <td>{item.jobNumber || 'Not set'}</td>
-                  <td>{item.tract || 'Not set'}</td>
-                  <td>{item.county || 'Not set'}</td>
-                  <td>
-                    {item.nextDeadlineDate ? (
-                      <>
-                        <div>{displayDate(item.nextDeadlineDate)}</div>
-                        <div className="flag-text muted">{item.nextDeadlineTitle}</div>
-                      </>
-                    ) : 'None'}
-                  </td>
-                  <td><span className={`pill pill-${attentionPillTone(item.attentionStatus)}`}>{attentionLabels[item.attentionStatus || 'onTrack']}</span></td>
-                  {caseListShowLifecycle && <><td>{displayDate(item.dateOpened)}</td><td>{displayDate(item.closedDate)}</td></>}
+        <div className="ui-table-panel">
+          <div className="table-wrap">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  {columns.map((column) => (
+                    <th
+                      key={column.key}
+                      className="sortable-header"
+                      onClick={() => toggleCaseSort(column.key)}
+                      aria-sort={caseSortColumn === column.key ? (caseSortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
+                    >
+                      {column.label}
+                      {caseSortColumn === column.key && <span className="sort-indicator">{caseSortDirection === 'asc' ? ' ▲' : ' ▼'}</span>}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <UiEmptyState colSpan={columns.length} title="No cases match the current filters" />
+                ) : rows.map((item) => (
+                  <tr key={item.id} className="clickable-row" onClick={() => openCase(item.id, 'overview')}>
+                    <td>
+                      <button className="ui-case-link" onClick={(event) => { event.stopPropagation(); openCase(item.id, 'overview') }}>{item.caseName}</button>
+                      <div className="ui-sub ui-data">{item.caseNumber}</div>
+                    </td>
+                    <td className="ui-data">{item.jobNumber || <span className="ui-cell-faint">—</span>}</td>
+                    <td className="ui-data">{item.tract || <span className="ui-cell-faint">—</span>}</td>
+                    <td>{item.county || <span className="ui-cell-faint">—</span>}</td>
+                    <td>
+                      {item.nextDeadlineDate ? (
+                        <>
+                          <div className={`ui-data${item.nextDeadlineDate <= today ? ' ui-cell-danger' : ''}`}>{displayDate(item.nextDeadlineDate)}</div>
+                          <div className="ui-sub">{item.nextDeadlineTitle}</div>
+                        </>
+                      ) : <span className="ui-cell-faint">—</span>}
+                    </td>
+                    <td><StatusChip tone={attentionChipTone(item.attentionStatus)}>{attentionLabels[item.attentionStatus || 'onTrack']}</StatusChip></td>
+                    {caseListShowLifecycle && <>
+                      <td className="ui-data">{item.dateOpened ? displayDate(item.dateOpened) : <span className="ui-cell-faint">—</span>}</td>
+                      <td className="ui-data">{item.closedDate ? displayDate(item.closedDate) : <span className="ui-cell-faint">—</span>}</td>
+                    </>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-
       </main>
     )
   }
@@ -7643,43 +7686,93 @@ function App() {
 
       {page === 'reports' && (
         <main className="page">
-          <section className="hero-panel">
-            <div><p className="eyebrow dark">Reports</p><h2>Open Case Reports</h2><p className="subtle-text">Build a read-only case list from the same consolidated status data used throughout the application.</p></div>
-            <div className="button-row compact-actions"><button onClick={exportReportCsv}>Export CSV</button><button className="primary" onClick={() => void exportReportExcel()}>Export Excel</button></div>
-          </section>
-          <div className="report-builder-grid">
-            <CollapsiblePanel title="Filters">
-              <div className="form-grid">
-                <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>
-                <label><span>County</span><select value={reportCountyFilter} onChange={(event) => setReportCountyFilter(event.target.value)}><option value="">All counties</option>{arkansasCounties.map((county) => <option key={county}>{county}</option>)}</select></label>
-                <label><span>Search cases</span><input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Name, number, job, tract..." /></label>
-                <label><span>Date preset</span><select value={reportPreset} onChange={(event) => applyReportPreset(event.target.value)}><option value="">Custom range</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="6m">Last 6 months</option><option value="12m">Last 12 months</option><option value="thisYear">This calendar year</option><option value="previousYear">Previous calendar year</option></select></label>
-                {reportPreset === '' && <>
-                  <label><span>Date opened from</span><input type="date" value={reportOpenedFrom} onChange={(event) => setReportOpenedFrom(event.target.value)} /></label>
-                  <label><span>Date opened to</span><input type="date" value={reportOpenedTo} onChange={(event) => setReportOpenedTo(event.target.value)} /></label>
-                </>}
-              </div>
-              <div className="button-row compact-actions top-gap-small"><button onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset Filters</button><span className="helper-text">Date boundaries are inclusive; presets populate the range automatically.</span></div>
-            </CollapsiblePanel>
-            <CollapsiblePanel title="Columns and layout">
-              <div className="report-column-picker">{reportColumnOptions.map((option) => <label className="toggle-inline" key={option.key}><span>{option.label}</span><input type="checkbox" checked={reportColumns.includes(option.key)} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /></label>)}</div>
-              <div className="form-grid top-gap-small"><label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label><label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label></div>
-            </CollapsiblePanel>
-          </div>
-          <CollapsiblePanel title="Case duration & age" defaultOpen={false}>
-            <div className="metric-tile-row">
-              <div className="metric-tile"><span>Avg. closed duration</span><strong>{reportMetrics.averageDuration == null ? '—' : `${reportMetrics.averageDuration} days`}</strong></div>
-              <div className="metric-tile"><span>Avg. open age</span><strong>{reportMetrics.averageAge == null ? '—' : `${reportMetrics.averageAge} days`}</strong></div>
-              <div className="metric-tile"><span>Median closed duration</span><strong>{reportMetrics.medianDuration == null ? '—' : `${reportMetrics.medianDuration} days`}</strong></div>
-              <div className="metric-tile"><span>Shortest closed duration</span><strong>{reportMetrics.shortestDuration == null ? '—' : `${reportMetrics.shortestDuration} days`}</strong></div>
-              <div className="metric-tile"><span>Longest closed duration</span><strong>{reportMetrics.longestDuration == null ? '—' : `${reportMetrics.longestDuration} days`}</strong></div>
+          <div className="queue-title-row">
+            <h2>Reports</h2>
+            <div className="ui-title-actions">
+              <Btn onClick={exportReportCsv}>Export CSV</Btn>
+              <Btn variant="primary" onClick={() => void exportReportExcel()}>Export Excel</Btn>
             </div>
-            {reportMetrics.closed > 0 && <p className="helper-text top-gap-small">Duration metrics use {reportMetrics.closed - reportMetrics.missingDates} of {reportMetrics.closed} closed cases. Cases missing Date Opened or Date Closed are excluded.</p>}
-            {reportMetrics.open > 0 && <p className="helper-text">Open-case age bands: &lt;90 days {reportMetrics.ageBands.under90} · 90–179 {reportMetrics.ageBands.days90to179} · 180–364 {reportMetrics.ageBands.days180to364} · 1–2 years {reportMetrics.ageBands.year1to2} · 2–3 years {reportMetrics.ageBands.year2to3} · &gt;3 years {reportMetrics.ageBands.over3}.</p>}
-          </CollapsiblePanel>
-          <Panel title="Preview" headerAction={<span className="pill pill-neutral">{reportRows.length} matching case{reportRows.length === 1 ? '' : 's'}</span>}>
-            {reportColumns.length === 0 ? <p>Select at least one column to preview the report.</p> : reportRows.length === 0 ? <p>No cases match the current filters.</p> : <div className="table-wrap"><table className="compact-table"><thead><tr>{reportColumns.map((column) => <th key={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</th>)}<th>Open</th></tr></thead><tbody>{reportRows.map((record) => <tr key={record.id}>{reportColumns.map((column) => <td key={column}>{reportCellValue(record, column) || '—'}</td>)}<td><button onClick={() => openCase(record.id, 'overview')}>Open Case</button></td></tr>)}</tbody></table></div>}
-          </Panel>
+          </div>
+
+          <div className="rep-grid">
+            <div className="rep-rail">
+              <Panel title="Filters">
+                <div className="rep-fields">
+                  <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>
+                  <label><span>County</span><select value={reportCountyFilter} onChange={(event) => setReportCountyFilter(event.target.value)}><option value="">All counties</option>{arkansasCounties.map((county) => <option key={county}>{county}</option>)}</select></label>
+                  <label><span>Search cases</span><input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Name, number, job, tract..." /></label>
+                  <label><span>Date preset</span><select value={reportPreset} onChange={(event) => applyReportPreset(event.target.value)}><option value="">Custom range</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="6m">Last 6 months</option><option value="12m">Last 12 months</option><option value="thisYear">This calendar year</option><option value="previousYear">Previous calendar year</option></select></label>
+                  {reportPreset === '' && <>
+                    <label><span>Date opened from</span><input type="date" value={reportOpenedFrom} onChange={(event) => setReportOpenedFrom(event.target.value)} /></label>
+                    <label><span>Date opened to</span><input type="date" value={reportOpenedTo} onChange={(event) => setReportOpenedTo(event.target.value)} /></label>
+                  </>}
+                </div>
+                <div className="button-row compact-actions top-gap-small">
+                  <Btn size="sm" variant="ghost" onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset filters</Btn>
+                </div>
+                <p className="helper-text top-gap-small">Date boundaries are inclusive; presets populate the range automatically.</p>
+              </Panel>
+              <CollapsiblePanel title={`Columns · ${reportColumns.length} of ${reportColumnOptions.length}`}>
+                <div className="report-column-picker">{reportColumnOptions.map((option) => <label className="toggle-inline" key={option.key}><span>{option.label}</span><input type="checkbox" checked={reportColumns.includes(option.key)} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /></label>)}</div>
+                <div className="rep-fields top-gap-small">
+                  <label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label>
+                  <label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+                </div>
+              </CollapsiblePanel>
+            </div>
+
+            <div>
+              <div className="ui-tiles" style={{ marginBottom: '12px' }}>
+                <MetricTile label="Avg closed duration" value={reportMetrics.averageDuration == null ? '—' : <>{reportMetrics.averageDuration}<span className="ui-tile-unit">days</span></>} />
+                <MetricTile label="Median closed" value={reportMetrics.medianDuration == null ? '—' : <>{reportMetrics.medianDuration}<span className="ui-tile-unit">days</span></>} />
+                <MetricTile label="Avg open age" value={reportMetrics.averageAge == null ? '—' : <>{reportMetrics.averageAge}<span className="ui-tile-unit">days</span></>} />
+                <MetricTile label="Shortest" value={reportMetrics.shortestDuration == null ? '—' : <>{reportMetrics.shortestDuration}<span className="ui-tile-unit">days</span></>} />
+                <MetricTile label="Longest" value={reportMetrics.longestDuration == null ? '—' : <>{reportMetrics.longestDuration}<span className="ui-tile-unit">days</span></>} />
+              </div>
+              {reportMetrics.closed > 0 && <p className="helper-text" style={{ marginBottom: '12px' }}>Duration metrics use {reportMetrics.closed - reportMetrics.missingDates} of {reportMetrics.closed} closed cases. Cases missing Date Opened or Date Closed are excluded.</p>}
+
+              {reportMetrics.open > 0 && (
+                <Panel title="Open-case age" headerAction={<span className="pill pill-neutral">{reportMetrics.open} open case{reportMetrics.open === 1 ? '' : 's'}</span>} className="top-gap-small">
+                  <div className="bars" role="img" aria-label={reportAgeBandBars.ariaLabel}>
+                    {reportAgeBandBars.bands.map((band) => (
+                      <Fragment key={band.key}>
+                        <span>{band.label}</span>
+                        <span className="bar"><i style={{ width: `${band.widthPct}%` }} /></span>
+                        <span className="val">{band.count}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                </Panel>
+              )}
+
+              <Panel title="Preview" className="top-gap-small" headerAction={<span className="pill pill-neutral">{reportRows.length} matching case{reportRows.length === 1 ? '' : 's'}</span>}>
+                {reportColumns.length === 0 ? (
+                  <UiEmptyState title="Select at least one column to preview the report" />
+                ) : (
+                  <div className="table-wrap">
+                    <table className="ui-table">
+                      <thead>
+                        <tr>
+                          {reportColumns.map((column) => <th key={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</th>)}
+                          <th style={{ width: 110 }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportRows.length === 0 ? (
+                          <UiEmptyState colSpan={reportColumns.length + 1} title="No cases match the current filters" />
+                        ) : reportRows.map((record) => (
+                          <tr key={record.id}>
+                            {reportColumns.map((column) => <td key={column} className={reportDataColumnKeys.has(column) ? 'ui-data' : undefined}>{reportCellValue(record, column) || <span className="ui-cell-faint">—</span>}</td>)}
+                            <td><Btn size="sm" onClick={() => openCase(record.id, 'overview')}>Open Case</Btn></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Panel>
+            </div>
+          </div>
         </main>
       )}
 

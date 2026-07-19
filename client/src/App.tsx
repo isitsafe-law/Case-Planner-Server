@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from 'react'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
@@ -29,7 +29,7 @@ import { MetricTile } from './ui/MetricTile'
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
-type CaseTabKey = 'overview' | 'details' | 'deadlines' | 'checklist' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'hearings' | 'servicePublication'
+type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
 type ThemeMode = 'light' | 'dark' | 'system'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
@@ -608,6 +608,31 @@ type UpcomingWorkItem = {
   tab: CaseTabKey
 }
 
+// The upcoming-work API still emits the pre-consolidation tab keys ('deadlines', 'checklist',
+// 'hearings', 'details'); fold them onto the 8-tab workspace. Service items land on the
+// Service & Publication tab (their factual record); everything else merged into Work.
+function normalizeUpcomingWorkTab(tab: string, type: UpcomingWorkType): CaseTabKey {
+  switch (tab) {
+    case 'deadlines':
+    case 'checklist':
+    case 'hearings':
+      return 'work'
+    case 'details':
+      return type === 'service' ? 'servicePublication' : 'overview'
+    case 'overview':
+    case 'work':
+    case 'discovery':
+    case 'documents':
+    case 'riskAnalysis':
+    case 'trialNotebook':
+    case 'notes':
+    case 'servicePublication':
+      return tab
+    default:
+      return 'overview'
+  }
+}
+
 type ReferenceDocument = {
   key: string
   title: string
@@ -816,18 +841,29 @@ function reportCellValue(record: CaseRecord, column: ReportColumnKey): string {
 }
 
 const caseTabs: { key: CaseTabKey; label: string }[] = [
-  { key: 'overview', label: 'Status' },
-  { key: 'servicePublication', label: 'Service & Publication' },
-  { key: 'hearings', label: 'Events' },
-  { key: 'deadlines', label: 'Deadlines' },
-  { key: 'checklist', label: 'Tasks' },
+  { key: 'overview', label: 'Overview' },
+  { key: 'work', label: 'Work' },
   { key: 'discovery', label: 'Discovery' },
-  { key: 'trialNotebook', label: 'Trial Notebook' },
-  { key: 'notes', label: 'Case Notes' },
-  { key: 'documents', label: 'Documents' },
+  { key: 'servicePublication', label: 'Service & Publication' },
   { key: 'riskAnalysis', label: 'Valuation & Risk' },
-  { key: 'details', label: 'Case Record' },
+  { key: 'trialNotebook', label: 'Trial' },
+  { key: 'documents', label: 'Documents' },
+  { key: 'notes', label: 'Notes' },
 ]
+
+// caseStatus -> StatusChip tone for the workspace header chip. Falls back to neutral for
+// statuses that don't map cleanly onto ok/warn/danger/primary semantics (Pipeline, Triage, and
+// anything not yet in consolidatedCaseStatuses).
+function caseStatusTone(status?: string | null): StatusTone {
+  switch (status) {
+    case 'Filed / Service Pending': return 'warn'
+    case 'Settlement Pending': return 'warn'
+    case 'Active Litigation': return 'primary'
+    case 'Trial Preparation': return 'ok'
+    case 'Resolved / Closed': return 'ok'
+    default: return 'neutral'
+  }
+}
 
 const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'appearance', label: 'Appearance' },
@@ -994,15 +1030,6 @@ function emptyDeadline(caseId = 0): DeadlineItem {
 }
 
 const deadlineSeverities = ['normal', 'soft', 'urgent', 'critical']
-
-function severityPillTone(severity?: string): string {
-  switch (severity) {
-    case 'critical': return 'danger'
-    case 'urgent': return 'warn'
-    case 'soft': return 'primary'
-    default: return 'neutral'
-  }
-}
 
 function emptyChecklist(caseId = 0): ChecklistItem {
   return { id: 0, caseId, phase: 'General', task: '', dueDate: '', status: 'Not Started', notes: '', sourceType: 'Manual', isManual: true }
@@ -1375,8 +1402,13 @@ function App() {
   const [defermentDateDraft, setDefermentDateDraft] = useState('')
   const [casesView, setCasesView] = useState<CasesViewKey>('list')
   const [caseTab, setCaseTab] = useState<CaseTabKey>('overview')
-  const [deadlineViewFilter, setDeadlineViewFilter] = useState<'open' | 'done'>('open')
-  const [checklistViewFilter, setChecklistViewFilter] = useState<'open' | 'done'>('open')
+  // Work tab facet (replaces the old deadlineViewFilter/checklistViewFilter pair): 'open' shows
+  // open deadlines + open tasks + all events; 'deadlines'/'tasks' narrow to the open items of that
+  // type; 'events' shows all events (no done-ness); 'done' shows done deadlines + done tasks.
+  const [workFacet, setWorkFacet] = useState<'open' | 'deadlines' | 'tasks' | 'events' | 'done'>('open')
+  const [workFromTemplateOpen, setWorkFromTemplateOpen] = useState(false)
+  const [caseMenuOpen, setCaseMenuOpen] = useState(false)
+  const caseMenuRef = useRef<HTMLDivElement | null>(null)
   const [selectedDeadlineIds, setSelectedDeadlineIds] = useState<number[]>([])
   const [selectedChecklistIds, setSelectedChecklistIds] = useState<number[]>([])
   const [bulkDeadlineDueDate, setBulkDeadlineDueDate] = useState('')
@@ -1701,6 +1733,22 @@ function App() {
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
   }, [activeModal, modalDirty])
+
+  useEffect(() => {
+    if (!caseMenuOpen) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setCaseMenuOpen(false)
+    }
+    function handleOutsideClick(event: MouseEvent) {
+      if (caseMenuRef.current && !caseMenuRef.current.contains(event.target as Node)) setCaseMenuOpen(false)
+    }
+    window.addEventListener('keydown', handleEscape)
+    window.addEventListener('mousedown', handleOutsideClick)
+    return () => {
+      window.removeEventListener('keydown', handleEscape)
+      window.removeEventListener('mousedown', handleOutsideClick)
+    }
+  }, [caseMenuOpen])
 
   async function loadInitial() {
     try {
@@ -2715,8 +2763,12 @@ function App() {
     setSelectedChecklistIds((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]))
   }
 
+  // Scoped merge/subtract (matches setPhaseSelectedChecklist below) rather than an overwrite, so
+  // this can be used both for a "select all visible" control over a full list AND for a per-group
+  // select-all in the Work tab without clobbering selections made in other groups.
   function setAllSelectedDeadlines(items: DeadlineItem[], checked: boolean) {
-    setSelectedDeadlineIds(checked ? items.map((item) => item.id) : [])
+    const ids = items.map((item) => item.id)
+    setSelectedDeadlineIds((current) => (checked ? Array.from(new Set([...current, ...ids])) : current.filter((id) => !ids.includes(id))))
   }
 
   function setAllSelectedChecklist(items: ChecklistItem[], checked: boolean) {
@@ -4239,11 +4291,11 @@ function App() {
       return true
     }
     const items: UpcomingWorkItem[] = []
-    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId, 'task')) items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate: item.dueDate, source: item, tab: 'checklist' })
-    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId, 'deadline')) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'deadlines' })
+    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId, 'task')) items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate: item.dueDate, source: item, tab: 'work' })
+    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId, 'deadline')) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'work' })
     for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId, 'discovery')) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
-    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId, 'service')) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'details' })
-    for (const item of queueHearings) if (eligible(item.caseId, 'hearing')) items.push({ key: `hearing-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'hearing', dueDate: item.hearingDate, source: item, tab: 'hearings' })
+    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId, 'service')) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'servicePublication' })
+    for (const item of queueHearings) if (eligible(item.caseId, 'hearing')) items.push({ key: `hearing-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'hearing', dueDate: item.hearingDate, source: item, tab: 'work' })
     return items.sort((a, b) => {
       const dueA = a.dueDate || '9999-12-31'
       const dueB = b.dueDate || '9999-12-31'
@@ -4258,7 +4310,7 @@ function App() {
     // window is narrowed client-side (see dashboardDueThisWeekItems below) after loading.
     const params = new URLSearchParams({ type: 'all', urgency: 'All Open', limit: '200' })
     void api<Array<Omit<UpcomingWorkItem, 'source'>>>(`/api/dashboard/upcoming-work?${params.toString()}`)
-      .then((items) => { if (!cancelled) { setServerUpcomingWorkItems(items); setServerUpcomingWorkLoaded(true) } })
+      .then((items) => { if (!cancelled) { setServerUpcomingWorkItems(items.map((item) => ({ ...item, tab: normalizeUpcomingWorkTab(item.tab, item.type) }))); setServerUpcomingWorkLoaded(true) } })
       .catch(() => { if (!cancelled) setServerUpcomingWorkLoaded(false) })
     return () => { cancelled = true }
   }, [])
@@ -4525,7 +4577,7 @@ function App() {
                     {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
                     <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
                   </td>
-                  {renderCaseCell(item.caseId, 'deadlines')}
+                  {renderCaseCell(item.caseId, 'work')}
                   <td>
                     <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
                   </td>
@@ -4540,7 +4592,7 @@ function App() {
                   <td>
                     <div className="ui-row-actions">
                       {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
-                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'deadlines')}>Open case ▸</Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                     </div>
                   </td>
                 </tr>
@@ -4598,7 +4650,7 @@ function App() {
                     <div className="ui-sub">{item.phase || 'General'}</div>
                     {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
                   </td>
-                  {renderCaseCell(item.caseId, 'checklist')}
+                  {renderCaseCell(item.caseId, 'work')}
                   <td>
                     <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
                   </td>
@@ -4608,7 +4660,7 @@ function App() {
                   <td>
                     <div className="ui-row-actions">
                       {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
-                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'checklist')}>Open case ▸</Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                     </div>
                   </td>
                 </tr>
@@ -4719,7 +4771,7 @@ function App() {
                 {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
                 <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
               </td>
-              {renderCaseCell(item.caseId, 'deadlines')}
+              {renderCaseCell(item.caseId, 'work')}
               <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
               <td>
                 <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
@@ -4727,7 +4779,7 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'deadlines')}>Open case ▸</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -4743,7 +4795,7 @@ function App() {
                 <div className="ui-sub">{item.phase || 'General'}</div>
                 {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
               </td>
-              {renderCaseCell(item.caseId, 'checklist')}
+              {renderCaseCell(item.caseId, 'work')}
               <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
               <td>
                 <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
@@ -4751,7 +4803,7 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'checklist')}>Open case ▸</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -4789,12 +4841,12 @@ function App() {
                 {item.title}
                 {item.location && <div className="ui-sub">{item.location}</div>}
               </td>
-              {renderCaseCell(item.caseId, 'hearings')}
+              {renderCaseCell(item.caseId, 'work')}
               <td className="ui-data">{displayDate(item.hearingDate)}</td>
               <td><StatusChip tone="neutral">Scheduled</StatusChip></td>
               <td>
                 <div className="ui-row-actions">
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'hearings')}>Open case ▸</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -4905,28 +4957,42 @@ function App() {
       { label: 'Discovery Completed?', value: selectedCase.discoveryCompleted || '', important: Boolean(selectedCase.discoveryCompleted) },
       { label: 'Updated Appraisal?', value: selectedCase.updatedAppraisal || '', important: Boolean(selectedCase.updatedAppraisal) },
     ]
+    // Definition-list display normalization: legacy formatters emit 'Not set' / '—' for missing
+    // values; the kv list renders them all as a muted em dash per the design language.
+    const recordValueDisplay = (value: string) => (!value || value === 'Not set' || value === '—' ? '—' : value)
+    const recordValueEmpty = (value: string) => recordValueDisplay(value) === '—'
 
     return (
       <main className="page">
         <div className="button-row compact-actions">
-          <button onClick={goToCaseList}>Back to Cases</button>
-          {!isNewCase && <button onClick={startEditCase}>Edit Case</button>}
+          <Btn variant="ghost" size="sm" onClick={goToCaseList}>◂ Cases</Btn>
         </div>
 
         <section className="workspace-header-compact">
           <div className="workspace-header-top">
             <div>
               <h2>{selectedCase.caseName || 'New Case'}</h2>
-              <p className="subtle-text">
+              <p className="subtle-text ui-data">
                 {selectedCase.caseNumber || 'No case number yet'} &middot; Job {selectedCase.jobNumber || 'not set'} &middot; Tract {selectedCase.tract || 'not set'} &middot; {selectedCase.county || 'County not set'}
               </p>
             </div>
             <div className="workspace-header-pills">
-              <span className="pill pill-primary">{selectedCase.caseStatus || 'Pipeline'}</span>
+              <StatusChip tone={caseStatusTone(selectedCase.caseStatus)}>{selectedCase.caseStatus || 'Pipeline'}</StatusChip>
               {/* Active/Closed is an overall case state, not a peer of Stage/Track - only shown
                   here (quietly) when Closed; the actual toggle lives on the Status tab. */}
-              {selectedCase.status === 'Closed' && <span className="pill pill-neutral">Closed</span>}
-              {selectedCase.statusMappingReview && <span className="pill pill-warn">Status mapping review</span>}
+              {selectedCase.status === 'Closed' && <StatusChip tone="neutral">Closed</StatusChip>}
+              {selectedCase.statusMappingReview && <StatusChip tone="warn">Status mapping review</StatusChip>}
+              {!isNewCase && <Btn onClick={startEditCase}>Edit Case</Btn>}
+              {!isNewCase && (
+                <div className="case-menu" ref={caseMenuRef}>
+                  <Btn variant="ghost" size="sm" className="ui-btn-icon" aria-label="Case menu" aria-haspopup="true" aria-expanded={caseMenuOpen} onClick={() => setCaseMenuOpen((open) => !open)}>⋯</Btn>
+                  {caseMenuOpen && (
+                    <div className="case-menu-popover" role="menu">
+                      <button type="button" role="menuitem" className="case-menu-item case-menu-item-danger" onClick={() => { setCaseMenuOpen(false); void deleteSelectedCase() }}>Delete case…</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {workspace && workspace.caseIssueTags.length > 0 && (
@@ -4942,26 +5008,12 @@ function App() {
               <button className="primary" style={{ marginLeft: '0.75rem' }} onClick={() => setTriageWizardOpen(true)}>Start Triage</button>
             </div>
           )}
-          <div className="metric-tile-row">
-            {selectedCase.filingDate && (
-              <div className="metric-tile">
-                <span>Filing Date</span>
-                <strong>{displayDate(selectedCase.filingDate)}</strong>
-              </div>
-            )}
-            {selectedCase.dateOfTaking && (
-              <div className="metric-tile">
-                <span>Date of Taking</span>
-                <strong>{displayDate(selectedCase.dateOfTaking)}</strong>
-              </div>
-            )}
-            {selectedCase.trialDate && (
-              <div className="metric-tile">
-                <span>Trial / hearing</span>
-                <strong>{displayDate(selectedCase.trialDate)}</strong>
-              </div>
-            )}
-            {(selectedCase.caseStatus || 'Pipeline') !== 'Pipeline' || selectedCase.depositAmount != null ? <div className="metric-tile"><span>Deposit</span><strong>{displayCurrency(selectedCase.depositAmount)}</strong></div> : null}
+          <div className="ui-tiles keydates-row">
+            {selectedCase.filingDate && <MetricTile label="Filing date" value={displayDate(selectedCase.filingDate)} />}
+            {selectedCase.dateOfTaking && <MetricTile label="Date of taking" value={displayDate(selectedCase.dateOfTaking)} />}
+            {selectedCase.trialDate && <MetricTile label="Trial / hearing" value={displayDate(selectedCase.trialDate)} tone="warn" />}
+            {((selectedCase.caseStatus || 'Pipeline') !== 'Pipeline' || selectedCase.depositAmount != null) && <MetricTile label="Deposit" value={displayCurrency(selectedCase.depositAmount)} />}
+            {selectedCase.serviceRequired && !selectedCase.servicePerfected && selectedCase.serviceDeadline120 && <MetricTile label="Service deadline" value={displayDate(selectedCase.serviceDeadline120)} tone="danger" />}
           </div>
         </section>
 
@@ -5026,14 +5078,14 @@ function App() {
             )}
 
             <div className="command-summary-strip">
-              <button className="summary-pill clickable" onClick={() => setCaseTab('deadlines')}><span>Open deadlines</span><strong>{String(workspace?.deadlines.filter((item) => !isDeadlineDone(item)).length ?? 0)}</strong></button>
-              <button className="summary-pill clickable" onClick={() => setCaseTab('checklist')}><span>Open tasks</span><strong>{String(openChecklistCount)}</strong></button>
+              <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Open deadlines</span><strong>{String(workspace?.deadlines.filter((item) => !isDeadlineDone(item)).length ?? 0)}</strong></button>
+              <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Open tasks</span><strong>{String(openChecklistCount)}</strong></button>
               <button className="summary-pill clickable" onClick={() => setCaseTab('discovery')}><span>{discoveryPosture?.isComplete ? 'Discovery Complete' : 'Discovery follow-up'}</span><strong>{discoveryPosture?.isComplete ? '✓' : String(openDiscoveryCount)}</strong></button>
-              <button className="summary-pill clickable" onClick={() => setCaseTab('hearings')}><span>Next hearing</span><strong>{displayDate(selectedCase.trialDate)}</strong></button>
+              <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next hearing</span><strong>{displayDate(selectedCase.trialDate)}</strong></button>
             </div>
 
             <div className="workspace-panel-grid two-col">
-              <Panel title="Next Deadlines" headerAction={<button className="link-button" onClick={() => setCaseTab('deadlines')}>View All</button>}>
+              <Panel title="Next Deadlines" headerAction={<button className="link-button" onClick={() => setCaseTab('work')}>View All</button>}>
                 {commandDeadlines.length === 0 ? <p>No open deadlines right now.</p> : (
                   <div className="command-list">
                     {commandDeadlines.map((item) => (
@@ -5054,7 +5106,7 @@ function App() {
                 )}
               </Panel>
 
-              <Panel title="Next Tasks" headerAction={<button className="link-button" onClick={() => setCaseTab('checklist')}>View All</button>}>
+              <Panel title="Next Tasks" headerAction={<button className="link-button" onClick={() => setCaseTab('work')}>View All</button>}>
                 {commandChecklist.length === 0 ? <p>No open tasks right now.</p> : (
                   <div className="command-list">
                     {commandChecklist.map((item) => (
@@ -5160,6 +5212,71 @@ function App() {
                 )}
               </Panel>
             </div>
+
+            <CollapsiblePanel title="Case record" defaultOpen={false}>
+              <div className="button-row compact-actions">
+                <Btn onClick={startEditCase}>Edit case record</Btn>
+                <Btn onClick={() => setShowAllCaseRecordFields((current) => !current)}>{showAllCaseRecordFields ? 'Hide empty fields' : 'Show all fields'}</Btn>
+              </div>
+              <div className="record-section-stack top-gap">
+                <div className="record-section">
+                  <div className="record-section-header">
+                    <h4>Core Case</h4>
+                    <p>Identity and calendar fields not already shown in the case header.</p>
+                  </div>
+                  <div className="kv record-kv">
+                    {coreRecordFields.filter((field) => showAllCaseRecordFields || field.always || field.important || shouldShowRecordValue(field.value)).map((field) => (
+                      <Fragment key={field.label}>
+                        <span className="record-kv-label">{field.label}</span>
+                        <span className={`v${recordValueEmpty(field.value) ? ' record-kv-empty' : ''}`}>{recordValueDisplay(field.value)}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="record-section">
+                  <div className="record-section-header">
+                    <h4>People</h4>
+                    <p>Attorney, opposing counsel, and appraisal contacts.</p>
+                  </div>
+                  <div className="kv record-kv">
+                    {peopleRecordFields.filter((field) => showAllCaseRecordFields || field.important || shouldShowRecordValue(field.value)).map((field) => (
+                      <Fragment key={field.label}>
+                        <span className="record-kv-label">{field.label}</span>
+                        <span className={`v${recordValueEmpty(field.value) ? ' record-kv-empty' : ''}`}>{recordValueDisplay(field.value)}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="record-section">
+                  <div className="record-section-header">
+                    <h4>Financial / Property</h4>
+                    <p>Deposit, acreage, tax, and valuation-related reference data.</p>
+                  </div>
+                  <div className="kv record-kv">
+                    {financialRecordFields.filter((field) => showAllCaseRecordFields || field.important || shouldShowRecordValue(field.value)).map((field) => (
+                      <Fragment key={field.label}>
+                        <span className="record-kv-label">{field.label}</span>
+                        <span className={`v${recordValueEmpty(field.value) ? ' record-kv-empty' : ''}`}>{recordValueDisplay(field.value)}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                  {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.valuationNotes)) && (
+                    <div className="record-kv-notes">
+                      <span className="record-kv-label">Valuation Notes</span>
+                      <p className="preformatted-note">{selectedCase.valuationNotes || 'No valuation notes yet.'}</p>
+                    </div>
+                  )}
+                  {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.settlementNotes)) && (
+                    <div className="record-kv-notes">
+                      <span className="record-kv-label">Settlement Notes</span>
+                      <p className="preformatted-note">{selectedCase.settlementNotes || 'No settlement notes yet.'}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CollapsiblePanel>
           </div>
         )}
 
@@ -5284,91 +5401,7 @@ function App() {
           </div>
         )}
 
-        {caseTab === 'hearings' && (
-          <div className="workspace-sections">
-            <Panel title="Trial / Hearing Date">
-              <p className="helper-text">This date shows at the top of the case and stays visible across every tab.</p>
-              <div className="compact-info-grid top-gap-small">
-                <label>
-                  <span>Trial / Hearing Date</span>
-                  <input
-                    type="date"
-                    value={selectedCase.trialDate || ''}
-                    onChange={(event) => void persistCasePatch({ trialDate: event.target.value }, 'Trial / hearing date updated.')}
-                  />
-                </label>
-              </div>
-            </Panel>
-
-            <Panel title="Events" headerAction={<button className="primary" onClick={startNewHearing}>Add Event</button>}>
-              <p className="helper-text">A dated record of what's happened in the case - hearings, depositions, and anything else worth logging.</p>
-              {workspace && workspace.hearings.length > 0 ? (
-                <div className="stacked-panels compact-stack top-gap-small">
-                  {workspace.hearings.map((hearing) => (
-                    <article key={hearing.id} className="summary-card note-card">
-                      <div className="button-row split-row">
-                        <div>
-                          <span className="pill pill-neutral inline-pill">{hearing.eventType || 'Hearing'}</span>
-                          <strong>{hearing.title}</strong>
-                        </div>
-                        <div className="button-row compact-actions row-actions">
-                          <button onClick={() => startEditHearing(hearing)}>Edit</button>
-                          <button onClick={() => void deleteHearing(hearing)}>Delete</button>
-                        </div>
-                      </div>
-                      <p className="helper-text">{displayDate(hearing.hearingDate)}{hearing.location ? ` | ${hearing.location}` : ''}</p>
-                      {hearing.description && <p className="preformatted-note top-gap-small">{hearing.description}</p>}
-                    </article>
-                  ))}
-                </div>
-              ) : <p className="top-gap-small">No events logged yet. Use this tab as a quick reference alongside your calendaring system.</p>}
-            </Panel>
-          </div>
-        )}
-
-        {caseTab === 'deadlines' && (
-          <div className="workspace-sections">
-            <Panel title="Selected-Case Deadlines">
-              <p className="helper-text">Court-imposed dates and legally significant deadlines for this case.</p>
-              <div className="toolbar-row top-gap-small">
-                <button className="primary" onClick={() => startDeadlineModal()}>Add Deadline</button>
-                <button onClick={() => void openWorkTemplatePicker('Deadline')}>Add Deadline from Template</button>
-                <div className="chip-row">
-                <button className={deadlineViewFilter === 'open' ? 'chip active' : 'chip'} onClick={() => { setDeadlineViewFilter('open'); setSelectedDeadlineIds([]); setBulkDeadlineDueDate('') }}>
-                  Open ({workspace?.deadlines.filter((item) => !isDeadlineDone(item)).length ?? 0})
-                </button>
-                <button className={deadlineViewFilter === 'done' ? 'chip active' : 'chip'} onClick={() => { setDeadlineViewFilter('done'); setSelectedDeadlineIds([]); setBulkDeadlineDueDate('') }}>
-                  Done ({workspace?.deadlines.filter((item) => isDeadlineDone(item)).length ?? 0})
-                </button>
-                </div>
-              </div>
-              {workspace ? renderDeadlineTable(workspace.deadlines.filter((item) => (deadlineViewFilter === 'done') === isDeadlineDone(item)), false) : <p>Save the case first to manage deadlines.</p>}
-              <p className="helper-text top-gap-small">Due date, status, and severity can be updated right here. Completed items keep their completion timestamp and stay out of the default view.</p>
-            </Panel>
-          </div>
-        )}
-
-        {caseTab === 'checklist' && (
-          <div className="workspace-sections">
-            <Panel title="Selected-Case Tasks">
-              <p className="helper-text">Internal action items and to-dos to keep the case moving — not court-ordered deadlines.</p>
-              <div className="toolbar-row top-gap-small">
-                <button className="primary" onClick={() => startChecklistModal()}>Add Task</button>
-                <button onClick={() => void openWorkTemplatePicker('Task')}>Add Task from Template</button>
-                <div className="chip-row">
-                <button className={checklistViewFilter === 'open' ? 'chip active' : 'chip'} onClick={() => { setChecklistViewFilter('open'); setSelectedChecklistIds([]); setBulkChecklistDueDate('') }}>
-                  Open ({workspace?.checklistItems.filter((item) => !isChecklistDone(item)).length ?? 0})
-                </button>
-                <button className={checklistViewFilter === 'done' ? 'chip active' : 'chip'} onClick={() => { setChecklistViewFilter('done'); setSelectedChecklistIds([]); setBulkChecklistDueDate('') }}>
-                  Done ({workspace?.checklistItems.filter((item) => isChecklistDone(item)).length ?? 0})
-                </button>
-                </div>
-              </div>
-              {workspace ? renderChecklistTable(workspace.checklistItems.filter((item) => (checklistViewFilter === 'done') === isChecklistDone(item)), false, workspace.checklistItems) : <p>Save the case first to manage tasks.</p>}
-              <p className="helper-text top-gap-small">Phase, due date, and status can be changed inline here. Completed and N/A items move to the Done view so the main list stays cleaner.</p>
-            </Panel>
-          </div>
-        )}
+        {caseTab === 'work' && renderWorkTab()}
 
         {caseTab === 'discovery' && (
           <div className="workspace-sections">
@@ -5993,185 +6026,328 @@ function App() {
           </div>
         )}
 
-        {caseTab === 'details' && (
-          <div className="workspace-panel-grid two-col">
-            <Panel title="Case Record">
-              <div className="button-row compact-actions top-gap-small">
-                <button className="primary" onClick={startEditCase}>Edit Case Record</button>
-                <button onClick={() => setShowAllCaseRecordFields((current) => !current)}>{showAllCaseRecordFields ? 'Hide Empty Fields' : 'Show All Fields'}</button>
-              </div>
-              <div className="record-section-stack top-gap">
-                <div className="record-section">
-                  <div className="record-section-header">
-                    <h4>Core Case</h4>
-                    <p>Identity and calendar fields not already shown in the case header.</p>
-                  </div>
-                  <div className="readonly-grid compact-readonly-grid">
-                    {coreRecordFields.filter((field) => showAllCaseRecordFields || field.always || field.important || shouldShowRecordValue(field.value)).map((field) => (
-                      <label key={field.label}><span>{field.label}</span><input readOnly value={field.value || 'Not set'} /></label>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="record-section">
-                  <div className="record-section-header">
-                    <h4>People</h4>
-                    <p>Attorney, opposing counsel, and appraisal contacts.</p>
-                  </div>
-                  <div className="readonly-grid compact-readonly-grid">
-                    {peopleRecordFields.filter((field) => showAllCaseRecordFields || field.important || shouldShowRecordValue(field.value)).map((field) => (
-                      <label key={field.label}><span>{field.label}</span><input readOnly value={field.value || 'Not set'} /></label>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="record-section">
-                  <div className="record-section-header">
-                    <h4>Financial / Property</h4>
-                    <p>Deposit, acreage, tax, and valuation-related reference data.</p>
-                  </div>
-                  <div className="readonly-grid compact-readonly-grid">
-                    {financialRecordFields.filter((field) => showAllCaseRecordFields || field.important || shouldShowRecordValue(field.value)).map((field) => (
-                      <label key={field.label}><span>{field.label}</span><input readOnly value={field.value || 'Not set'} /></label>
-                    ))}
-                  </div>
-                  {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.valuationNotes)) && <label className="full-span top-gap-small"><span>Valuation Notes</span><textarea readOnly value={selectedCase.valuationNotes || 'No valuation notes yet.'} /></label>}
-                  {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.settlementNotes)) && <label className="full-span top-gap-small"><span>Settlement Notes</span><textarea readOnly value={selectedCase.settlementNotes || 'No settlement notes yet.'} /></label>}
-                </div>
-              </div>
-            </Panel>
-
-            <div className="stacked-panels">
-
-              <Panel title="Danger Zone">
-                <p className="helper-text">Delete is permanent and removes the case, deadlines, tasks, discovery, notes, documents log, and related records.</p>
-                <div className="button-row compact-actions top-gap-small">
-                  <button onClick={() => void deleteSelectedCase()}>Delete Case</button>
-                </div>
-              </Panel>
-            </div>
-          </div>
-        )}
       </main>
     )
   }
 
-  function renderDeadlineTable(items: DeadlineItem[], compact: boolean, showCase = false) {
-    const allSelected = items.length > 0 && items.every((item) => selectedDeadlineIds.includes(item.id))
-    const selectedCount = items.filter((item) => selectedDeadlineIds.includes(item.id)).length
+  // Unified Work tab (redesign Step 4a): one table replaces the old Deadlines, Tasks, and Events
+  // tabs. Rows merge workspace.deadlines + checklistItems + hearings, grouped under phase headers
+  // with progress bars; the facet chips replace the old per-tab open/done chip pairs.
+  function renderWorkTab() {
+    if (!workspace) {
+      return (
+        <div className="workspace-sections">
+          <Panel title="Work">
+            <p>Save the case first to manage deadlines, tasks, and events.</p>
+          </Panel>
+        </div>
+      )
+    }
+
+    const deadlines = workspace.deadlines
+    const tasks = workspace.checklistItems
+    const events = workspace.hearings
+    const openDeadlines = deadlines.filter((item) => !isDeadlineDone(item))
+    const doneDeadlines = deadlines.filter(isDeadlineDone)
+    const openTasks = tasks.filter((item) => !isChecklistDone(item))
+    const doneTasks = tasks.filter(isChecklistDone)
+
+    // Facet → visible rows. Open = open deadlines + open tasks + ALL events (events have no
+    // done-ness); Deadlines/Tasks narrow to that type's open items; Done = done deadlines + tasks.
+    const visibleDeadlines = workFacet === 'open' || workFacet === 'deadlines' ? openDeadlines : workFacet === 'done' ? doneDeadlines : []
+    const visibleTasks = workFacet === 'open' || workFacet === 'tasks' ? openTasks : workFacet === 'done' ? doneTasks : []
+    const visibleEvents = workFacet === 'open' || workFacet === 'events' ? events : []
+
+    const facets: { key: typeof workFacet; label: string; count: number }[] = [
+      { key: 'open', label: 'Open', count: openDeadlines.length + openTasks.length + events.length },
+      { key: 'deadlines', label: 'Deadlines', count: openDeadlines.length },
+      { key: 'tasks', label: 'Tasks', count: openTasks.length },
+      { key: 'events', label: 'Events', count: events.length },
+      { key: 'done', label: 'Done', count: doneDeadlines.length + doneTasks.length },
+    ]
+    const switchFacet = (facet: typeof workFacet) => {
+      setWorkFacet(facet)
+      setSelectedDeadlineIds([])
+      setSelectedChecklistIds([])
+      setBulkDeadlineDueDate('')
+      setBulkChecklistDueDate('')
+      setBulkChecklistDueDateOpen(false)
+    }
+
+    // ---- grouping ----
+    const deadlineGroupKey = (item: DeadlineItem) => item.sourceStage || 'Court & Service Deadlines'
+    const taskGroupKey = (item: ChecklistItem) => item.phase || 'General'
+
+    // Totals per group come from the full set of that type (matching the old checklist table,
+    // which showed x/y done across open + done items even in the Open view).
+    const deadlineTotals = new Map<string, { done: number; total: number }>()
+    for (const item of deadlines) {
+      const entry = deadlineTotals.get(deadlineGroupKey(item)) ?? { done: 0, total: 0 }
+      entry.total += 1
+      if (isDeadlineDone(item)) entry.done += 1
+      deadlineTotals.set(deadlineGroupKey(item), entry)
+    }
+    const taskTotals = new Map<string, { done: number; total: number }>()
+    for (const item of tasks) {
+      const entry = taskTotals.get(taskGroupKey(item)) ?? { done: 0, total: 0 }
+      entry.total += 1
+      if (isChecklistDone(item)) entry.done += 1
+      taskTotals.set(taskGroupKey(item), entry)
+    }
+
+    const deadlineGroups = new Map<string, DeadlineItem[]>()
+    for (const item of visibleDeadlines) {
+      const key = deadlineGroupKey(item)
+      deadlineGroups.set(key, [...(deadlineGroups.get(key) ?? []), item])
+    }
+    const taskGroups = new Map<string, ChecklistItem[]>()
+    for (const item of sortChecklistForDisplay(visibleTasks)) {
+      const key = taskGroupKey(item)
+      taskGroups.set(key, [...(taskGroups.get(key) ?? []), item])
+    }
+    const orderedDeadlineGroups = [...deadlineGroups.entries()].sort((a, b) => phaseRank(a[0]) - phaseRank(b[0]) || a[0].localeCompare(b[0]))
+    const orderedTaskGroups = [...taskGroups.entries()].sort((a, b) => phaseRank(a[0]) - phaseRank(b[0]) || a[0].localeCompare(b[0]))
+    const sortedEvents = [...visibleEvents].sort((a, b) => (a.hearingDate || '9999-12-31').localeCompare(b.hearingDate || '9999-12-31'))
+
+    // ---- bulk selection (spans both selectable kinds) ----
+    const selDeadlines = visibleDeadlines.filter((item) => selectedDeadlineIds.includes(item.id))
+    const selTasks = visibleTasks.filter((item) => selectedChecklistIds.includes(item.id))
+    const selCount = selDeadlines.length + selTasks.length
+    const selBreakdown = [
+      selDeadlines.length > 0 ? `${selDeadlines.length} deadline${selDeadlines.length === 1 ? '' : 's'}` : null,
+      selTasks.length > 0 ? `${selTasks.length} task${selTasks.length === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(', ')
+    const runBulk = (action: 'complete' | 'reopen' | 'dueDate' | 'delete') => {
+      if (selDeadlines.length > 0) void applyBulkDeadlineAction(action, visibleDeadlines)
+      if (selTasks.length > 0) void applyBulkChecklistAction(action, visibleTasks)
+    }
+    const clearWorkSelection = () => {
+      setSelectedDeadlineIds([])
+      setSelectedChecklistIds([])
+    }
+
+    const emptyCopy: Record<typeof workFacet, { title: string; hint: string }> = {
+      open: { title: 'No open work on this case', hint: 'Add a deadline, task, or event — or pull items in from a template.' },
+      deadlines: { title: 'No open deadlines', hint: 'Court-imposed dates and legally significant deadlines will appear here.' },
+      tasks: { title: 'No open tasks', hint: 'Internal action items and to-dos to keep the case moving.' },
+      events: { title: 'No events logged yet', hint: 'Hearings, depositions, and anything else worth logging - a quick reference alongside your calendaring system.' },
+      done: { title: 'Nothing completed yet', hint: 'Completed deadlines and tasks keep their completion timestamp and land here.' },
+    }
+    const hasRows = visibleDeadlines.length + visibleTasks.length + sortedEvents.length > 0
+
+    const renderDeadlineRow = (item: DeadlineItem) => (
+      <tr key={`deadline-${item.id}`} className={selectedDeadlineIds.includes(item.id) ? 'ui-row-sel' : undefined}>
+        <td className="selection-cell">
+          <input type="checkbox" checked={selectedDeadlineIds.includes(item.id)} onChange={() => toggleSelectedDeadline(item.id)} aria-label={`Select deadline ${item.title}`} />
+        </td>
+        <td><TypeChip kind="deadline" /></td>
+        <td>
+          <button className="ui-case-link" onClick={() => startDeadlineModal(item)}>{item.title}</button>
+          {item.history && item.history.length > 0 && <div className="ui-sub">Originally due {displayDate(item.history[0].previousDueDate)}</div>}
+          {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+          <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
+        </td>
+        <td>
+          <input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.title}`} onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+        </td>
+        <td>
+          <div className="work-status-cell">
+            <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
+            <select className="inline-edit-select" value={item.severity || 'normal'} aria-label={`Severity for ${item.title}`} onChange={(event) => void persistDeadline({ ...item, severity: event.target.value }, 'Deadline severity updated.', false)}>
+              {deadlineSeverities.map((level) => <option key={level} value={level}>{level}</option>)}
+            </select>
+          </div>
+        </td>
+        <td>
+          <div className="ui-row-actions">
+            {!isDeadlineDone(item) && (
+              <button className="row-icon-button" title="Mark done" aria-label={`Mark deadline ${item.title} done`} onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>✓</button>
+            )}
+            <button className="row-icon-button" aria-label={`Delete deadline ${item.title}`} onClick={() => void deleteDeadline(item)}>✕</button>
+          </div>
+        </td>
+      </tr>
+    )
+
+    const renderTaskRow = (item: ChecklistItem) => {
+      const isDone = isChecklistDone(item)
+      return (
+        <tr key={`task-${item.id}`} className={selectedChecklistIds.includes(item.id) ? 'ui-row-sel' : isDone ? 'muted-row' : undefined}>
+          <td className="selection-cell">
+            <input type="checkbox" checked={selectedChecklistIds.includes(item.id)} onChange={() => toggleSelectedChecklist(item.id)} aria-label={`Select checklist item ${item.task}`} />
+          </td>
+          <td><TypeChip kind="task" /></td>
+          <td>
+            {isDone && <span className="status-icon" aria-hidden="true">✓</span>}
+            <button className="ui-case-link" style={isDone ? { textDecoration: 'line-through' } : undefined} onClick={() => startChecklistModal(item)}>{item.task}</button>
+            {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+            <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
+          </td>
+          <td>
+            <input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.task}`} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+          </td>
+          <td>
+            <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
+          </td>
+          <td>
+            <div className="ui-row-actions">
+              {!isDone && (
+                <button className="row-icon-button" title="Mark done" aria-label={`Mark task ${item.task} done`} onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>✓</button>
+              )}
+              <button className="row-icon-button" aria-label={`Delete checklist item ${item.task}`} onClick={() => void deleteChecklistItem(item)}>✕</button>
+            </div>
+          </td>
+        </tr>
+      )
+    }
+
+    const renderEventRow = (hearing: Hearing) => (
+      <tr key={`event-${hearing.id}`}>
+        <td className="selection-cell" />
+        <td><TypeChip kind="event" /></td>
+        <td>
+          {hearing.title}
+          <div className="ui-sub">{hearing.eventType || 'Hearing'}{hearing.location ? ` · ${hearing.location}` : ''}</div>
+          {hearing.description && <div className="ui-sub work-event-desc" title={hearing.description}>{hearing.description}</div>}
+        </td>
+        <td className="ui-data">{displayDate(hearing.hearingDate)}</td>
+        <td><StatusChip tone="neutral">Scheduled</StatusChip></td>
+        <td>
+          <div className="ui-row-actions">
+            <button className="row-icon-button" title="Edit event" aria-label={`Edit event ${hearing.title}`} onClick={() => startEditHearing(hearing)}>✎</button>
+            <button className="row-icon-button" aria-label={`Delete event ${hearing.title}`} onClick={() => void deleteHearing(hearing)}>✕</button>
+          </div>
+        </td>
+      </tr>
+    )
+
+    const renderGroupHeader = (key: string, label: string, kind: 'deadline' | 'task' | 'event', groupItems: Array<{ id: number }>, totals?: { done: number; total: number }) => {
+      const pct = totals && totals.total > 0 ? Math.round((totals.done / totals.total) * 100) : 0
+      const selectedIdSet = kind === 'deadline' ? selectedDeadlineIds : selectedChecklistIds
+      const groupAllSelected = groupItems.length > 0 && groupItems.every((item) => selectedIdSet.includes(item.id))
+      return (
+        <tr key={`group-${kind}-${key}`} className="phase-row">
+          <td colSpan={6}>
+            <div className="phase-row-header">
+              {kind === 'event' ? (
+                <span className="phase-select-all">{label}</span>
+              ) : (
+                <label className="bulk-select-all phase-select-all">
+                  <input
+                    type="checkbox"
+                    checked={groupAllSelected}
+                    onChange={(event) => kind === 'task'
+                      ? setPhaseSelectedChecklist(groupItems as ChecklistItem[], event.target.checked)
+                      : setAllSelectedDeadlines(groupItems as DeadlineItem[], event.target.checked)}
+                    aria-label={`Select all ${label} items`}
+                  />
+                  <span>{label}</span>
+                </label>
+              )}
+              <span>{kind === 'event' ? `${groupItems.length} event${groupItems.length === 1 ? '' : 's'}` : `${totals?.done ?? 0} / ${totals?.total ?? 0} done`}</span>
+            </div>
+            {kind !== 'event' && <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>}
+          </td>
+        </tr>
+      )
+    }
+
+    const rows: ReactNode[] = []
+    for (const [key, groupItems] of orderedDeadlineGroups) {
+      rows.push(renderGroupHeader(key, key, 'deadline', groupItems, deadlineTotals.get(key)))
+      for (const item of groupItems) rows.push(renderDeadlineRow(item))
+    }
+    for (const [key, groupItems] of orderedTaskGroups) {
+      rows.push(renderGroupHeader(key, key, 'task', groupItems, taskTotals.get(key)))
+      for (const item of groupItems) rows.push(renderTaskRow(item))
+    }
+    if (sortedEvents.length > 0) {
+      rows.push(renderGroupHeader('events', 'Events', 'event', sortedEvents))
+      for (const hearing of sortedEvents) rows.push(renderEventRow(hearing))
+    }
 
     return (
-      <>
-        {!compact && (
-          <div className="bulk-action-bar">
-            <div className="bulk-action-summary">
-              <label className="bulk-select-all">
-                <input type="checkbox" checked={allSelected} onChange={(event) => setAllSelectedDeadlines(items, event.target.checked)} />
-                <span>Select all visible</span>
-              </label>
-              <span className="helper-text">{selectedCount} selected</span>
-            </div>
-            <div className="bulk-action-controls">
-              <button onClick={() => void applyBulkDeadlineAction('complete', items)} disabled={selectedCount === 0}>Mark Done</button>
-              <button onClick={() => void applyBulkDeadlineAction('reopen', items)} disabled={selectedCount === 0}>Reopen</button>
-              <input type="date" value={bulkDeadlineDueDate} onChange={(event) => setBulkDeadlineDueDate(event.target.value)} disabled={selectedCount === 0} />
-              <button onClick={() => void applyBulkDeadlineAction('dueDate', items)} disabled={selectedCount === 0 || !bulkDeadlineDueDate}>Apply Due Date</button>
-              <button onClick={() => setSelectedDeadlineIds([])} disabled={selectedCount === 0}>Clear</button>
-              <button onClick={() => void applyBulkDeadlineAction('delete', items)} disabled={selectedCount === 0}>Delete</button>
-            </div>
+      <div className="workspace-sections">
+        <div className="work-toolbar">
+          <Btn variant="primary" onClick={() => startDeadlineModal()}>Add deadline</Btn>
+          <Btn onClick={() => startChecklistModal()}>Add task</Btn>
+          <Btn onClick={startNewHearing}>Add event</Btn>
+          {!workFromTemplateOpen ? (
+            <Btn onClick={() => setWorkFromTemplateOpen(true)} aria-expanded={workFromTemplateOpen}>From template…</Btn>
+          ) : (
+            <span className="button-row compact-actions">
+              <Btn size="sm" onClick={() => { setWorkFromTemplateOpen(false); void openWorkTemplatePicker('Deadline') }}>Deadline template</Btn>
+              <Btn size="sm" onClick={() => { setWorkFromTemplateOpen(false); void openWorkTemplatePicker('Task') }}>Task template</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => setWorkFromTemplateOpen(false)}>Cancel</Btn>
+            </span>
+          )}
+          <FilterSep />
+          {facets.map((facet) => (
+            <FilterChip key={facet.key} active={workFacet === facet.key} onClick={() => switchFacet(facet.key)}>
+              {facet.label} · {facet.count}
+            </FilterChip>
+          ))}
+          <label className="work-trial-date">
+            <span>Trial / hearing date</span>
+            <input
+              type="date"
+              value={selectedCase.trialDate || ''}
+              onChange={(event) => void persistCasePatch({ trialDate: event.target.value }, 'Trial / hearing date updated.')}
+            />
+          </label>
+        </div>
+
+        {selCount > 0 && (
+          <div className="ui-bulkbar" role="status">
+            <span className="n">{selCount} selected{selBreakdown ? ` (${selBreakdown})` : ''}</span>
+            <Btn size="sm" onClick={() => runBulk('complete')}>Mark done</Btn>
+            <Btn size="sm" onClick={() => runBulk('reopen')}>Reopen</Btn>
+            <Btn size="sm" onClick={() => setBulkChecklistDueDateOpen((open) => !open)}>Change due date</Btn>
+            {bulkChecklistDueDateOpen && (
+              <span className="bulk-date-popover">
+                <input
+                  type="date"
+                  value={bulkChecklistDueDate}
+                  autoFocus
+                  aria-label="New due date for selected items"
+                  onChange={(event) => { setBulkChecklistDueDate(event.target.value); setBulkDeadlineDueDate(event.target.value) }}
+                />
+                <button onClick={() => { setBulkChecklistDueDateOpen(false); runBulk('dueDate') }} disabled={!bulkChecklistDueDate}>Apply</button>
+                <button onClick={() => setBulkChecklistDueDateOpen(false)}>Cancel</button>
+              </span>
+            )}
+            <Btn size="sm" onClick={() => runBulk('delete')}>Delete</Btn>
+            <Btn size="sm" variant="ghost" className="ui-bulkbar-clear" onClick={clearWorkSelection}>Clear</Btn>
           </div>
         )}
-        <div className="table-wrap">
-          <table className={compact ? 'compact-table' : 'dense-table'}>
-            <thead>
-              <tr>
-                {!compact && <th className="selection-cell">Select</th>}
-                {showCase && <th>Case</th>}
-                <th>Title</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Severity</th>
-                {!compact && <th className="action-cell-header">Delete</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {items.length === 0 ? (
+
+        <div className="ui-table-panel">
+          <div className="table-wrap">
+            <table className="ui-table">
+              <thead>
                 <tr>
-                  <td colSpan={compact ? 4 : (showCase ? 7 : 6)}>No deadlines for this case yet.</td>
+                  <th className="selection-cell"><span className="visually-hidden">Select</span></th>
+                  <th style={{ width: 90 }}>Type</th>
+                  <th>Item</th>
+                  <th style={{ width: 150 }}>Due</th>
+                  <th style={{ width: 230 }}>Status</th>
+                  <th style={{ width: 70 }}></th>
                 </tr>
-              ) : items.map((item) => (
-                <tr key={item.id}>
-                  {!compact && (
-                    <td className="selection-cell">
-                      <input type="checkbox" checked={selectedDeadlineIds.includes(item.id)} onChange={() => toggleSelectedDeadline(item.id)} aria-label={`Select deadline ${item.title}`} />
-                    </td>
-                  )}
-                  {showCase && <td><button className="link-button row-title-button" onClick={() => openCase(item.caseId, 'deadlines')}>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</button></td>}
-                  <td>
-                    {compact ? item.title : (
-                      <button className="link-button row-title-button" onClick={() => startDeadlineModal(item)}>{item.title}</button>
-                    )}
-                    {item.history && item.history.length > 0 && (
-                      <div className="flag-text muted">Originally due {displayDate(item.history[0].previousDueDate)}</div>
-                    )}
-                    {item.completedAt && <div className="flag-text muted">Completed {displayDateTime(item.completedAt)}</div>}
-                    <div className="flag-text muted">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
-                  </td>
-                  <td>
-                    {compact ? displayDate(item.dueDate) : (
-                      <input
-                        type="date"
-                        className="inline-edit-input"
-                        value={item.dueDate || ''}
-                        onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)}
-                      />
-                    )}
-                  </td>
-                  <td>
-                    {compact ? (
-                      <>
-                        <span>{item.status}</span>
-                        {item.completedAt && <div className="flag-text muted">Done {displayDate(item.completedAt)}</div>}
-                      </>
-                    ) : (
-                      <div className="button-row compact-actions row-actions">
-                        <select
-                          className="inline-edit-select"
-                          value={item.status}
-                          onChange={(event) => void persistDeadline({ ...item, status: event.target.value }, 'Deadline status updated.', false)}
-                        >
-                          {deadlineStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                        </select>
-                        {!isDeadlineDone(item) && (
-                          <button className="row-icon-button" title="Mark done" aria-label={`Mark deadline ${item.title} done`} onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>✓</button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    {compact ? (
-                      <span className={`pill pill-${severityPillTone(item.severity)}`}>{item.severity || 'normal'}</span>
-                    ) : (
-                      <select
-                        className="inline-edit-select"
-                        value={item.severity || 'normal'}
-                        onChange={(event) => void persistDeadline({ ...item, severity: event.target.value }, 'Deadline severity updated.', false)}
-                      >
-                        {deadlineSeverities.map((level) => <option key={level} value={level}>{level}</option>)}
-                      </select>
-                    )}
-                  </td>
-                  {!compact && (
-                    <td className="action-cell">
-                      <button className="row-icon-button" onClick={() => void deleteDeadline(item)} aria-label={`Delete deadline ${item.title}`}>✕</button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {hasRows ? rows : (
+                  <UiEmptyState
+                    colSpan={6}
+                    title={emptyCopy[workFacet].title}
+                    hint={emptyCopy[workFacet].hint}
+                    action={workFacet !== 'done' ? <Btn size="sm" variant="primary" onClick={() => (workFacet === 'tasks' ? startChecklistModal() : workFacet === 'events' ? startNewHearing() : startDeadlineModal())}>{workFacet === 'tasks' ? 'Add task' : workFacet === 'events' ? 'Add event' : 'Add deadline'}</Btn> : undefined}
+                  />
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </>
+      </div>
     )
   }
 
@@ -6236,7 +6412,7 @@ function App() {
             </td>
           )}
           {compact && <td>{phaseLabel}</td>}
-          {showCase && <td><button className="link-button row-title-button" onClick={() => openCase(item.caseId, 'checklist')}>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</button></td>}
+          {showCase && <td><button className="link-button row-title-button" onClick={() => openCase(item.caseId, 'work')}>{dashboardCasesById.get(item.caseId)?.caseName || `Case ${item.caseId}`}</button></td>}
           <td>
             {isDone && <span className="status-icon" aria-hidden="true">✓</span>}
             {compact ? (

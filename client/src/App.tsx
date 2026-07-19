@@ -1065,8 +1065,20 @@ function emptyPublication(caseId = 0): PublicationRecord {
   }
 }
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
 function displayDate(value?: string | null): string {
-  return value || 'Not set'
+  if (!value) return '—'
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return value
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return value
+  return `${MONTH_NAMES[month - 1]} ${day}, ${year}`
 }
 
 function matchesUrgency(dateValue: string | null | undefined, urgency: string): boolean {
@@ -1091,11 +1103,20 @@ function DateOnlyFromString(value: string): number | null {
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86400000
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Chicago',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
 function displayDateTime(value?: string | null): string {
-  if (!value) return 'Not set'
+  if (!value) return '—'
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString()
+  return `${dateTimeFormatter.format(parsed)} CT`
 }
 
 function formatFileSize(bytes: number): string {
@@ -4596,8 +4617,8 @@ function App() {
                               <EditHistoryList
                                 rows={entry.history.map((h) => ({
                                   id: h.id,
-                                  previous: `${activityTypeLabel(h.previousType ?? '')} ${h.previousOccurredAt?.slice(0, 10) ?? ''}${h.previousNotes ? ` | ${h.previousNotes}` : ''}`.trim(),
-                                  next: `${activityTypeLabel(h.newType ?? '')} ${h.newOccurredAt?.slice(0, 10) ?? ''}${h.newNotes ? ` | ${h.newNotes}` : ''}`.trim(),
+                                  previous: `${activityTypeLabel(h.previousType ?? '')} ${h.previousOccurredAt ? displayDate(h.previousOccurredAt) : ''}${h.previousNotes ? ` | ${h.previousNotes}` : ''}`.trim(),
+                                  next: `${activityTypeLabel(h.newType ?? '')} ${h.newOccurredAt ? displayDate(h.newOccurredAt) : ''}${h.newNotes ? ` | ${h.newNotes}` : ''}`.trim(),
                                   reason: h.reason,
                                   createdAt: h.createdAt,
                                 }))}
@@ -5101,7 +5122,7 @@ function App() {
                       <tbody>
                         {rows.map((row) => (
                           <tr key={row.key}>
-                            <td>{row.createdAt.slice(0, 19).replace('T', ' ')}</td>
+                            <td>{displayDateTime(row.createdAt)}</td>
                             <td><span className={`pill pill-${row.source === 'Platform' ? 'success' : 'neutral'}`}>{row.source}</span></td>
                             <td>{row.documentType}</td>
                             <td>{row.title}</td>
@@ -5128,7 +5149,7 @@ function App() {
         {caseTab === 'riskAnalysis' && (
           <div className="workspace-sections">
             {riskAnalysisHistory.length > 0 && <Panel title="Saved Risk Analyses">
-              <div className="table-wrap compact-table-wrap"><table className="compact-table"><thead><tr><th>Analysis date</th><th>Key scenario</th><th>Just compensation</th><th>Created</th><th>Actions</th></tr></thead><tbody>{riskAnalysisHistory.map((history) => <tr key={history.id}><td>{displayDate(history.analysisDate)}</td><td>{history.keyScenarioLabel || 'No populated scenario'}</td><td>{displayCurrency(history.keyScenarioValue)}</td><td>{history.createdAt.slice(0, 10)}</td><td><div className="button-row compact-actions row-actions"><button onClick={() => void openRiskAnalysisHistory(history.id)}>Open</button><button onClick={() => void compareRiskAnalysisHistory(history)}>Compare</button><button className="danger-button" onClick={() => void deleteRiskAnalysisHistory(history)}>Delete</button></div></td></tr>)}</tbody></table></div>
+              <div className="table-wrap compact-table-wrap"><table className="compact-table"><thead><tr><th>Analysis date</th><th>Key scenario</th><th>Just compensation</th><th>Created</th><th>Actions</th></tr></thead><tbody>{riskAnalysisHistory.map((history) => <tr key={history.id}><td>{displayDate(history.analysisDate)}</td><td>{history.keyScenarioLabel || 'No populated scenario'}</td><td>{displayCurrency(history.keyScenarioValue)}</td><td>{displayDate(history.createdAt)}</td><td><div className="button-row compact-actions row-actions"><button onClick={() => void openRiskAnalysisHistory(history.id)}>Open</button><button onClick={() => void compareRiskAnalysisHistory(history)}>Compare</button><button className="danger-button" onClick={() => void deleteRiskAnalysisHistory(history)}>Delete</button></div></td></tr>)}</tbody></table></div>
               <p className="helper-text top-gap-small">Each save retains an immutable snapshot with formula version <strong>risk-v1</strong>.</p>
               {riskAnalysisComparison && <div className="risk-comparison-card top-gap-small"><div><strong>Saved snapshot</strong><div>{displayDate(riskAnalysisComparison.left.analysisDate)} · {riskAnalysisComparison.left.keyScenarioLabel || 'No key scenario'} · {displayCurrency(riskAnalysisComparison.left.keyScenarioValue)}</div></div><div><strong>Rendered values</strong><div>Total deposited {displayCurrency(riskAnalysisComparison.right.totalDeposited)} · {riskAnalysisComparison.right.rows.filter((row) => !row.isSplit && row.justCompensation != null).length} populated scenarios</div></div><button onClick={() => setRiskAnalysisComparison(null)}>Close comparison</button></div>}
             </Panel>}
@@ -5235,7 +5256,7 @@ function App() {
                 <button onClick={() => void resetRiskAnalysis()}>Reset</button>
                 {selectedCaseId && <a className="button-like" href={`/api/cases/${selectedCaseId}/risk-analysis/export`}>Download Excel</a>}
               </div>
-              {riskAnalysisPreview && <p className="helper-text top-gap-small">Last saved {riskAnalysisPreview.updatedAt ? riskAnalysisPreview.updatedAt.slice(0, 19).replace('T', ' ') : 'never'}.</p>}
+              {riskAnalysisPreview && <p className="helper-text top-gap-small">Last saved {riskAnalysisPreview.updatedAt ? displayDateTime(riskAnalysisPreview.updatedAt) : 'never'}.</p>}
               </>}
             </Panel>
 
@@ -5326,7 +5347,7 @@ function App() {
                   <div className="button-row compact-actions top-gap-small">
                     <button className="primary" onClick={() => void saveValuationPosition(side)}>Save {side} Position</button>
                   </div>
-                  {valuationDrafts[side].updatedAt && <p className="helper-text top-gap-small">Last updated {(valuationDrafts[side].updatedAt || '').slice(0, 10)}.</p>}
+                  {valuationDrafts[side].updatedAt && <p className="helper-text top-gap-small">Last updated {displayDate(valuationDrafts[side].updatedAt)}.</p>}
                   </> : <div className="compact-empty-state"><p>No {side} position entered.</p><button className="primary" onClick={() => setEditingValuationSide(side)}>Add {side} Position</button></div>}
 
                   <div className="button-row compact-actions top-gap">
@@ -5603,7 +5624,7 @@ function App() {
                     {compact ? (
                       <>
                         <span>{item.status}</span>
-                        {item.completedAt && <div className="flag-text muted">Done {displayDate(item.completedAt.slice(0, 10))}</div>}
+                        {item.completedAt && <div className="flag-text muted">Done {displayDate(item.completedAt)}</div>}
                       </>
                     ) : (
                       <div className="button-row compact-actions row-actions">

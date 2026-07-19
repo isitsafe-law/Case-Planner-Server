@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARDOT Case Planner — Redesign Mockups (Phase 2)</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+/* ---------- Docket tokens ---------- */
+:root {
+  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", Consolas, monospace;
+  --bg:#F3F6F9; --surface:#FFFFFF; --surface-sunken:#EAEFF4;
+  --border:#D8E0E9; --border-strong:#B9C6D4;
+  --text:#16232F; --text-muted:#5A6B7D; --text-faint:#8595A6;
+  --primary:#14538F; --primary-hover:#0E3F6E; --primary-soft:#E3EDF7;
+  --brand-crimson:#9E1B32;
+  --ok:#1E7A44; --ok-bg:#E7F4EC; --warn:#A85B00; --warn-bg:#FBF1E2;
+  --danger:#B3261E; --danger-bg:#FBEAE8;
+  --focus:#4C8FD6; --overlay:rgba(13,22,32,.55);
+  --shadow-overlay:0 8px 24px rgba(15,25,40,.18);
+  --r-ctl:4px; --r-panel:8px;
+  --appbar-bg:#0E2E4E; --appbar-text:#E9F0F7;
+}
+:root[data-theme='dark'] {
+  --bg:#0F161D; --surface:#16202B; --surface-sunken:#111A23;
+  --border:#263442; --border-strong:#35485C;
+  --text:#E6EDF4; --text-muted:#9DAFC0; --text-faint:#6E8093;
+  --primary:#6FA8DC; --primary-hover:#8FBCE6; --primary-soft:#1B324A;
+  --brand-crimson:#C24B60;
+  --ok:#5FBF8A; --ok-bg:#16311F; --warn:#E0A458; --warn-bg:#33270F;
+  --danger:#E58278; --danger-bg:#3A1B17;
+  --focus:#7FB4E8; --overlay:rgba(0,0,0,.6);
+  --appbar-bg:#101C2A; --appbar-text:#DCE7F2;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; }
+body { background:var(--bg); color:var(--text); font-family:var(--font-ui); font-size:13px; line-height:20px; }
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+button { font:inherit; cursor:pointer; }
+
+/* ---------- mockup chrome (not part of the design) ---------- */
+.mock-bar { position:sticky; top:0; z-index:50; display:flex; align-items:center; gap:8px; padding:8px 16px; background:#1c1c1f; color:#cfcfd4; font-size:12px; }
+.mock-bar strong { color:#fff; letter-spacing:.08em; font-size:11px; }
+.mock-bar button { background:#2c2c31; color:#cfcfd4; border:1px solid #3d3d44; border-radius:4px; padding:4px 10px; font-size:12px; }
+.mock-bar button.on { background:#4C8FD6; border-color:#4C8FD6; color:#fff; }
+.mock-bar .spacer { flex:1; }
+.screen { display:none; }
+.screen.on { display:block; }
+
+/* ---------- app bar + nav ---------- */
+.appbar { display:flex; align-items:center; gap:12px; height:48px; padding:0 16px; background:var(--appbar-bg); color:var(--appbar-text); }
+.brand-tick { width:10px; height:22px; background:var(--brand-crimson); border-radius:2px; }
+.appbar .wordmark { font-weight:600; font-size:14px; letter-spacing:.02em; }
+.appbar .wordmark span { font-weight:400; opacity:.65; }
+.appbar .grow { flex:1; }
+.appbar input { width:280px; height:30px; border-radius:var(--r-ctl); border:1px solid rgba(255,255,255,.22); background:rgba(255,255,255,.10); color:var(--appbar-text); padding:0 10px; font:inherit; }
+.appbar input::placeholder { color:rgba(233,240,247,.55); }
+.kbd { font-family:var(--font-data); font-size:11px; padding:2px 6px; border:1px solid rgba(255,255,255,.28); border-radius:4px; opacity:.8; }
+.navtabs { display:flex; gap:2px; padding:0 16px; background:var(--surface); border-bottom:1px solid var(--border); }
+.navtabs button { border:0; background:none; color:var(--text-muted); padding:9px 14px 7px; font-size:13px; font-weight:500; border-bottom:2px solid transparent; }
+.navtabs button.on { color:var(--primary); border-bottom-color:var(--primary); }
+.navtabs button:hover { color:var(--text); }
+
+.page { max-width:1600px; margin:0 auto; padding:16px 24px 48px; }
+
+/* ---------- primitives ---------- */
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-panel); }
+.panel-hd { display:flex; align-items:center; gap:8px; height:36px; padding:0 12px; border-bottom:1px solid var(--border); }
+.panel-hd h3 { margin:0; font-size:15px; font-weight:600; }
+.panel-hd .count { margin-left:auto; color:var(--text-muted); font-size:12px; }
+.panel-bd { padding:12px; }
+.panel-bd.flush { padding:0; }
+
+.btn { height:30px; padding:0 12px; border-radius:var(--r-ctl); border:1px solid var(--border-strong); background:var(--surface); color:var(--text); font-size:13px; font-weight:500; }
+.btn:hover { border-color:var(--primary); color:var(--primary); }
+.btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; }
+:root[data-theme='dark'] .btn.primary { color:#0F161D; }
+.btn.primary:hover { background:var(--primary-hover); border-color:var(--primary-hover); }
+.btn.ghost { border-color:transparent; background:none; color:var(--primary); }
+.btn.sm { height:26px; padding:0 8px; font-size:12px; }
+.btn.icon { width:30px; padding:0; text-align:center; color:var(--text-muted); }
+.btn.icon:hover { color:var(--danger); border-color:var(--danger); }
+
+.chip { display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:var(--r-ctl); border:1px solid var(--border-strong); background:var(--surface); color:var(--text-muted); font-size:12px; font-weight:500; }
+.chip.on { background:var(--primary-soft); border-color:var(--primary); color:var(--primary); }
+
+.status { display:inline-flex; align-items:center; gap:6px; height:20px; padding:0 8px; border-radius:var(--r-ctl); font-size:12px; font-weight:500; border:1px solid; white-space:nowrap; }
+.status i { width:7px; height:7px; border-radius:50%; background:currentColor; }
+.status.ok { color:var(--ok); background:var(--ok-bg); border-color:color-mix(in srgb, var(--ok) 40%, transparent); }
+.status.warn { color:var(--warn); background:var(--warn-bg); border-color:color-mix(in srgb, var(--warn) 40%, transparent); }
+.status.danger { color:var(--danger); background:var(--danger-bg); border-color:color-mix(in srgb, var(--danger) 40%, transparent); }
+.status.neutral { color:var(--text-muted); background:var(--surface-sunken); border-color:var(--border-strong); }
+.status.primary { color:var(--primary); background:var(--primary-soft); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+select.status { appearance:none; padding-right:20px; background-image:linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position:calc(100% - 11px) 8px, calc(100% - 7px) 8px; background-size:4px 4px; background-repeat:no-repeat; cursor:pointer; }
+
+.data { font-family:var(--font-data); font-variant-numeric:tabular-nums; }
+.muted { color:var(--text-muted); } .faint { color:var(--text-faint); }
+.num { text-align:right; }
+
+/* ---------- tables ---------- */
+table.dt { width:100%; border-collapse:collapse; font-size:13px; }
+.dt thead th { position:sticky; top:0; background:var(--surface); z-index:2; height:26px; padding:0 10px; text-align:left; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted); border-bottom:1px solid var(--border-strong); white-space:nowrap; }
+.dt tbody td { height:32px; padding:4px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.dt tbody tr:hover { background:var(--surface-sunken); }
+.dt tbody tr.sel { background:var(--primary-soft); }
+.dt .sub { font-size:12px; color:var(--text-muted); line-height:16px; }
+.dt a { color:var(--primary); text-decoration:none; font-weight:500; }
+.dt a:hover { text-decoration:underline; }
+.dt td .status { vertical-align:middle; }
+.stripe { border-left:3px solid transparent; }
+.stripe.p1 { border-left-color:var(--danger); }
+.stripe.p2 { border-left-color:var(--warn); }
+.stripe.p3 { border-left-color:var(--primary); }
+.stripe.p4 { border-left-color:var(--border-strong); }
+.rowactions { display:flex; gap:6px; justify-content:flex-end; }
+.inline-input { height:26px; border:1px solid var(--border-strong); border-radius:var(--r-ctl); background:var(--surface); color:var(--text); font:inherit; font-size:12px; padding:0 6px; }
+
+/* ---------- filter bar ---------- */
+.filterbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-panel); }
+.filterbar input[type=search] { height:30px; width:260px; border:1px solid var(--border-strong); border-radius:var(--r-ctl); background:var(--surface); color:var(--text); font:inherit; padding:0 10px; }
+.filterbar select { height:30px; border:1px solid var(--border-strong); border-radius:var(--r-ctl); background:var(--surface); color:var(--text); font:inherit; padding:0 8px; }
+.filterbar .sep { width:1px; height:20px; background:var(--border); }
+.filterbar .summary { margin-left:auto; color:var(--text-muted); font-size:12px; }
+.toggle { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); }
+
+/* ---------- metric tiles ---------- */
+.tiles { display:flex; gap:8px; }
+.tile { flex:1; min-width:0; height:64px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-panel); text-align:left; display:flex; flex-direction:column; justify-content:space-between; }
+.tile .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); font-weight:600; }
+.tile .val { font-family:var(--font-data); font-variant-numeric:tabular-nums; font-size:18px; font-weight:500; line-height:1; }
+button.tile:hover { border-color:var(--primary); }
+button.tile.on { border-color:var(--primary); background:var(--primary-soft); }
+button.tile.on .lbl { color:var(--primary); }
+.tile.t-danger .val { color:var(--danger); }
+.tile.t-warn .val { color:var(--warn); }
+
+/* ---------- dashboard layout ---------- */
+.dash-hd { display:flex; align-items:baseline; gap:16px; margin:4px 0 16px; }
+.dash-hd h2 { margin:0; font-size:22px; font-weight:600; }
+.dash-hd .date { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); font-weight:600; }
+.dash-cols { display:grid; grid-template-columns:1fr 380px; gap:16px; align-items:start; }
+.expand-row td { background:var(--surface-sunken); }
+.inlineform { display:flex; gap:12px; align-items:end; padding:8px 4px; }
+.inlineform label { display:grid; gap:4px; font-size:12px; color:var(--text-muted); }
+.inlineform input { height:28px; border:1px solid var(--border-strong); border-radius:var(--r-ctl); background:var(--surface); color:var(--text); font:inherit; padding:0 8px; }
+.minitabs { display:flex; gap:2px; border-bottom:1px solid var(--border); padding:0 8px; }
+.minitabs button { border:0; background:none; color:var(--text-muted); font-size:12px; font-weight:500; padding:8px 10px 6px; border-bottom:2px solid transparent; }
+.minitabs button.on { color:var(--primary); border-bottom-color:var(--primary); }
+.kv { display:grid; grid-template-columns:1fr auto; gap:4px 12px; font-size:13px; padding:4px 0; }
+.kv .v { font-family:var(--font-data); font-variant-numeric:tabular-nums; font-weight:500; text-align:right; }
+
+/* ---------- workspace ---------- */
+.ws-hd { display:flex; align-items:start; gap:16px; margin-bottom:12px; }
+.ws-hd h2 { margin:0 0 2px; font-size:18px; font-weight:600; }
+.ws-meta { font-family:var(--font-data); font-size:12px; color:var(--text-muted); }
+.ws-hd .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+.tagchips { display:flex; gap:6px; margin-top:6px; }
+.keydates { display:flex; gap:8px; margin-bottom:12px; }
+.keydates .tile { height:56px; }
+.wstabs { display:flex; gap:2px; border-bottom:1px solid var(--border-strong); margin-bottom:16px; }
+.wstabs button { border:0; background:none; color:var(--text-muted); padding:8px 13px 6px; font-size:13px; font-weight:500; border-bottom:2px solid transparent; }
+.wstabs button.on { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
+.phase-row td { background:var(--surface-sunken); height:28px; font-size:12px; font-weight:600; color:var(--text-muted); }
+.progress { display:inline-block; width:90px; height:4px; border-radius:2px; background:var(--border); vertical-align:middle; margin-left:10px; }
+.progress i { display:block; height:100%; border-radius:2px; background:var(--ok); }
+.bulkbar { display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--primary-soft); border:1px solid var(--primary); border-radius:var(--r-ctl); font-size:12px; color:var(--primary); margin-bottom:8px; }
+.bulkbar .n { font-weight:600; }
+.toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+.typechip { font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; padding:1px 6px; border-radius:var(--r-ctl); }
+.typechip.deadline { color:var(--danger); background:var(--danger-bg); }
+.typechip.task { color:var(--primary); background:var(--primary-soft); }
+.typechip.event { color:var(--text-muted); background:var(--surface-sunken); }
+.typechip.service { color:var(--warn); background:var(--warn-bg); }
+.typechip.discovery { color:#5B3E96; background:#EFE9F9; }
+:root[data-theme='dark'] .typechip.discovery { color:#B79FE8; background:#291F3D; }
+
+/* ---------- reports ---------- */
+.rep-grid { display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
+.rep-rail .panel { margin-bottom:12px; }
+.field { display:grid; gap:4px; margin-bottom:10px; font-size:12px; color:var(--text-muted); }
+.field select,.field input { height:30px; border:1px solid var(--border-strong); border-radius:var(--r-ctl); background:var(--surface); color:var(--text); font:inherit; padding:0 8px; }
+.bars { display:grid; grid-template-columns:90px 1fr 34px; gap:4px 8px; align-items:center; font-size:12px; }
+.bars .bar { height:14px; background:var(--primary-soft); border-radius:2px; position:relative; }
+.bars .bar i { position:absolute; inset:0 auto 0 0; background:var(--primary); border-radius:2px; }
+.footnote { font-size:12px; color:var(--text-faint); margin-top:8px; }
+h4.sec { margin:16px 0 8px; font-size:13px; }
+</style>
+</head>
+<body>
+
+<!-- ============ MOCKUP SWITCHER (not part of the design) ============ -->
+<div class="mock-bar">
+  <strong>PHASE 2 MOCKUPS</strong>
+  <button class="scr-btn on" data-scr="dash">Dashboard</button>
+  <button class="scr-btn" data-scr="list">Case List</button>
+  <button class="scr-btn" data-scr="ws">Case Workspace</button>
+  <button class="scr-btn" data-scr="queue">Work Queue</button>
+  <button class="scr-btn" data-scr="rep">Reports</button>
+  <div class="spacer"></div>
+  <button id="themeBtn">Toggle dark</button>
+</div>
+
+<!-- ============================= DASHBOARD ============================= -->
+<section class="screen on" id="scr-dash">
+  <header class="appbar"><div class="brand-tick"></div><div class="wordmark">ARDOT Case Planner <span>· Legal Division</span></div><div class="grow"></div><input placeholder="Search cases, actions… " aria-label="Search"><span class="kbd">Ctrl K</span></header>
+  <nav class="navtabs"><button class="on">Dashboard</button><button>Cases</button><button>Work Queues</button><button>Reports</button><button>Settings</button></nav>
+  <div class="page">
+    <div class="dash-hd"><h2>Good evening.</h2><span class="date">Saturday, July 18, 2026</span><span class="muted">44 active cases · <strong style="color:var(--danger)">2 need action now</strong> · 5 due this week</span></div>
+
+    <div class="tiles" style="margin-bottom:16px">
+      <button class="tile t-danger on"><span class="lbl">Immediate</span><span class="val">2</span></button>
+      <button class="tile t-warn on"><span class="lbl">Attorney decision</span><span class="val">4</span></button>
+      <button class="tile"><span class="lbl">Momentum</span><span class="val">9</span></button>
+      <button class="tile"><span class="lbl">Planned work</span><span class="val">12</span></button>
+      <button class="tile"><span class="lbl">Awaiting triage</span><span class="val">3</span></button>
+    </div>
+
+    <div class="dash-cols">
+      <div class="panel">
+        <div class="panel-hd"><h3>Action Queue</h3><span class="count">6 cases · filtered: Immediate, Attorney decision</span></div>
+        <div class="panel-bd flush">
+          <table class="dt">
+            <thead><tr><th style="width:28px"></th><th>Case</th><th>Why it's here</th><th>Review by</th><th style="width:210px"></th></tr></thead>
+            <tbody>
+              <tr class="stripe p1">
+                <td><input type="checkbox" aria-label="Select Phipps"></td>
+                <td><a href="#">Catherine I. Phipps et al.</a><div class="sub data">51CV-25-60 · Perry Co.</div></td>
+                <td>120-day service deadline in <strong>9 days</strong>; 2 of 5 defendants unserved<div class="sub">Recommended: complete service on remaining heirs</div></td>
+                <td class="data">July 20, 2026</td>
+                <td><div class="rowactions"><button class="btn sm">Log service</button><button class="btn sm">Plan next step</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+              <tr class="stripe p1">
+                <td><input type="checkbox" aria-label="Select Boone"></td>
+                <td><a href="#">Unknown Heirs of Cleta Lee Boone et al.</a><div class="sub data">51CV-25-61 · Perry Co.</div></td>
+                <td>Second publication not yet run; proof of publication due before <span class="data">August 2, 2026</span></td>
+                <td class="data">July 22, 2026</td>
+                <td><div class="rowactions"><button class="btn sm">Add publication</button><button class="btn sm">Plan next step</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+              <tr class="stripe p2 sel">
+                <td><input type="checkbox" checked aria-label="Select Kraft Farm"></td>
+                <td><a href="#">M &amp; B Kraft Farm 5 LLC et al.</a><div class="sub data">19CV-25-204 · Craighead Co.</div></td>
+                <td>Discovery strategy not selected; responses received <span class="data">June 30</span>, unreviewed</td>
+                <td class="data">July 24, 2026</td>
+                <td><div class="rowactions"><button class="btn sm">Set strategy</button><button class="btn sm">Plan next step</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+              <tr class="expand-row"><td></td><td colspan="4">
+                <div class="inlineform">
+                  <label>Discovery strategy
+                    <select class="inline-input" style="height:28px"><option>Written discovery first</option><option>Landowner deposition first</option><option>Appraiser discovery first</option><option>Limited targeted discovery</option><option>Full discovery plan</option></select>
+                  </label>
+                  <label>Review date <input type="text" class="data" value="July 31, 2026"></label>
+                  <button class="btn sm primary">Save</button><button class="btn sm">Cancel</button>
+                </div>
+              </td></tr>
+              <tr class="stripe p2">
+                <td><input type="checkbox" aria-label="Select Richardson"></td>
+                <td><a href="#">Monica Richardson et al.</a><div class="sub data">63CV-25-2043 · Saline Co.</div></td>
+                <td>Landowner counteroffer <span class="data">$148,500</span> awaiting decision — 12 days on attorney's desk</td>
+                <td class="data">July 25, 2026</td>
+                <td><div class="rowactions"><button class="btn sm">Record decision</button><button class="btn sm">Defer</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+              <tr class="stripe p2">
+                <td><input type="checkbox" aria-label="Select Cameron"></td>
+                <td><a href="#">Cameron-SQRL Bryant LLC et al.</a><div class="sub data">63CV-25-2234 · Saline Co.</div></td>
+                <td>Updated appraisal received; risk analysis is 94 days old<div class="sub">Recommended: refresh risk analysis before settlement conference</div></td>
+                <td class="data">July 28, 2026</td>
+                <td><div class="rowactions"><button class="btn sm">Open risk analysis</button><button class="btn sm">Defer</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+              <tr class="stripe p2">
+                <td><input type="checkbox" aria-label="Select Slaughter"></td>
+                <td><a href="#">Unknown Heirs of Bobby W. Slaughter et al.</a><div class="sub data">02CV-25-170 · Ashley Co.</div></td>
+                <td>No next action on file; 41 days since meaningful activity</td>
+                <td class="data faint">—</td>
+                <td><div class="rowactions"><button class="btn sm">Plan next step</button><button class="btn sm">Defer</button><button class="btn sm ghost">Open ▸</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="display:flex; gap:8px; padding:8px 12px; border-top:1px solid var(--border); align-items:center">
+            <span class="muted" style="font-size:12px">1 selected</span>
+            <button class="btn sm">Defer selected…</button>
+            <span class="faint" style="font-size:12px; margin-left:auto">Momentum &amp; Planned hidden — click tiles above to include</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hd"><h3>Case Insight</h3></div>
+        <div class="minitabs"><button class="on">Docket</button><button>Discovery</button><button>Pipeline</button><button>Trials</button><button>Projects</button></div>
+        <div class="panel-bd">
+          <div class="kv">
+            <span>Pre-filing matters</span><span class="v">6</span>
+            <span>Filed matters</span><span class="v">31</span>
+            <span>Trial-track matters</span><span class="v">4</span>
+            <span>Waiting on others</span><span class="v">11</span>
+            <span>On attorney's desk</span><span class="v" style="color:var(--warn)">7</span>
+            <span>Missing next review date</span><span class="v" style="color:var(--danger)">3</span>
+          </div>
+          <p class="footnote">Click a metric to list its cases here.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-hd"><h3>Due in the next 7 days</h3><span class="count">8 items</span><button class="btn sm ghost" style="margin-left:8px">Full work queue ▸</button></div>
+      <div class="panel-bd flush">
+        <table class="dt">
+          <thead><tr><th style="width:90px">Type</th><th>Item</th><th>Case</th><th style="width:130px">Due</th><th style="width:170px"></th></tr></thead>
+          <tbody>
+            <tr><td><span class="typechip deadline">Deadline</span></td><td>Answer to amended complaint due</td><td class="muted">Phipps et al.</td><td class="data" style="color:var(--danger)">July 19, 2026</td><td><div class="rowactions"><button class="btn sm">Mark done</button><button class="btn sm ghost">Open ▸</button></div></td></tr>
+            <tr><td><span class="typechip service">Service</span></td><td>120-day service deadline — 2 defendants unserved</td><td class="muted">Phipps et al.</td><td class="data" style="color:var(--danger)">July 20, 2026</td><td><div class="rowactions"><button class="btn sm">Log service</button><button class="btn sm ghost">Open ▸</button></div></td></tr>
+            <tr><td><span class="typechip task">Task</span></td><td>Prepare order of possession package</td><td class="muted">Kraft Farm 5 LLC</td><td class="data">July 22, 2026</td><td><div class="rowactions"><button class="btn sm">Mark done</button><button class="btn sm ghost">Open ▸</button></div></td></tr>
+            <tr><td><span class="typechip discovery">Discovery</span></td><td>Interrogatory responses due from landowner</td><td class="muted">Richardson et al.</td><td class="data">July 23, 2026</td><td><div class="rowactions"><button class="btn sm">Record response</button><button class="btn sm ghost">Open ▸</button></div></td></tr>
+            <tr><td><span class="typechip event">Event</span></td><td>Hearing — motion for order of possession · Pulaski Co. Circuit, Div. 4</td><td class="muted">Spirit Master Fund X</td><td class="data">July 24, 2026</td><td><div class="rowactions"><button class="btn sm ghost">Open ▸</button></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================= CASE LIST ============================= -->
+<section class="screen" id="scr-list">
+  <header class="appbar"><div class="brand-tick"></div><div class="wordmark">ARDOT Case Planner <span>· Legal Division</span></div><div class="grow"></div><input placeholder="Search cases, actions…" aria-label="Search"><span class="kbd">Ctrl K</span></header>
+  <nav class="navtabs"><button>Dashboard</button><button class="on">Cases</button><button>Work Queues</button><button>Reports</button><button>Settings</button></nav>
+  <div class="page">
+    <div style="display:flex; align-items:center; margin-bottom:12px">
+      <h2 style="margin:0; font-size:18px">Cases</h2>
+      <div style="margin-left:auto; display:flex; gap:8px"><button class="btn">Import cases</button><button class="btn primary">Add case</button></div>
+    </div>
+
+    <div class="filterbar" style="margin-bottom:12px">
+      <input type="search" placeholder="Name, number, job, or tract — filters as you type" aria-label="Search cases">
+      <span class="sep"></span>
+      <span class="chip on">All statuses</span><span class="chip">Pipeline</span><span class="chip">Filed / Service Pending</span><span class="chip">Discovery &amp; Evaluation</span><span class="chip">Trial Track</span><span class="chip">Triage <b style="color:var(--warn)">3</b></span>
+      <span class="sep"></span>
+      <select aria-label="County"><option>All counties</option><option>Craighead</option><option>Perry</option><option>Pulaski</option><option>Saline</option></select>
+      <label class="toggle"><input type="checkbox"> Include closed</label>
+      <span class="summary">44 cases</span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-bd flush">
+        <table class="dt">
+          <thead><tr>
+            <th>Case</th><th style="width:80px">Job</th><th style="width:70px">Tract</th><th style="width:110px">County</th><th>Next deadline ▲</th><th style="width:150px">Status</th><th style="width:120px">Opened</th>
+          </tr></thead>
+          <tbody>
+            <tr><td><a href="#">Catherine I. Phipps et al.</a><div class="sub data">51CV-25-60</div></td><td class="data">061318</td><td class="data">T-4</td><td>Perry</td><td class="data" style="color:var(--danger)">July 19, 2026<div class="sub" style="font-family:var(--font-ui)">Answer to amended complaint</div></td><td><span class="status danger"><i></i>Overdue risk</span></td><td class="data">March 3, 2025</td></tr>
+            <tr><td><a href="#">Unknown Heirs of Cleta Lee Boone et al.</a><div class="sub data">51CV-25-61</div></td><td class="data">061318</td><td class="data">T-7</td><td>Perry</td><td class="data">August 2, 2026<div class="sub" style="font-family:var(--font-ui)">Proof of publication</div></td><td><span class="status warn"><i></i>Needs review</span></td><td class="data">March 3, 2025</td></tr>
+            <tr><td><a href="#">M &amp; B Kraft Farm 5 LLC et al.</a><div class="sub data">19CV-25-204</div></td><td class="data">100842</td><td class="data">T-12</td><td>Craighead</td><td class="data">August 9, 2026<div class="sub" style="font-family:var(--font-ui)">Discovery cutoff</div></td><td><span class="status warn"><i></i>Needs review</span></td><td class="data">April 21, 2025</td></tr>
+            <tr><td><a href="#">Monica Richardson et al.</a><div class="sub data">63CV-25-2043</div></td><td class="data">012101</td><td class="data">T-2</td><td>Saline</td><td class="data">August 15, 2026<div class="sub" style="font-family:var(--font-ui)">Settlement conference</div></td><td><span class="status primary"><i></i>On track</span></td><td class="data">May 30, 2025</td></tr>
+            <tr><td><a href="#">Cameron-SQRL Bryant LLC et al.</a><div class="sub data">63CV-25-2234</div></td><td class="data">012101</td><td class="data">T-9</td><td>Saline</td><td class="data">September 1, 2026<div class="sub" style="font-family:var(--font-ui)">Expert disclosure</div></td><td><span class="status primary"><i></i>On track</span></td><td class="data">June 12, 2025</td></tr>
+            <tr><td><a href="#">Spirit Master Fund X LLC</a><div class="sub data">60CV-26-118</div></td><td class="data">080122</td><td class="data">T-1</td><td>Pulaski</td><td class="data">September 12, 2026<div class="sub" style="font-family:var(--font-ui)">Jury trial — Div. 4</div></td><td><span class="status ok"><i></i>Trial ready</span></td><td class="data">January 8, 2026</td></tr>
+            <tr><td><a href="#">Unknown Heirs of Norrell Thompson et al.</a><div class="sub data">09CV-26-40</div></td><td class="data">110377</td><td class="data">T-22</td><td>Boone</td><td class="faint">—</td><td><span class="status neutral"><i></i>Awaiting triage</span></td><td class="data">February 14, 2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="footnote">Sticky header at scroll · click any column to sort · Triage chip surfaces imported cases needing intake.</p>
+  </div>
+</section>
+
+<!-- ============================= CASE WORKSPACE ============================= -->
+<section class="screen" id="scr-ws">
+  <header class="appbar"><div class="brand-tick"></div><div class="wordmark">ARDOT Case Planner <span>· Legal Division</span></div><div class="grow"></div><input placeholder="Search cases, actions…" aria-label="Search"><span class="kbd">Ctrl K</span></header>
+  <nav class="navtabs"><button>Dashboard</button><button class="on">Cases</button><button>Work Queues</button><button>Reports</button><button>Settings</button></nav>
+  <div class="page">
+    <div style="margin-bottom:8px"><button class="btn ghost sm">◂ Cases</button></div>
+    <div class="ws-hd">
+      <div>
+        <h2>Catherine I. Phipps et al.</h2>
+        <div class="ws-meta">51CV-25-60 · Job 061318 · Tract T-4 · Perry County</div>
+        <div class="tagchips"><span class="typechip discovery">Timber</span><span class="typechip discovery">Access</span></div>
+      </div>
+      <div class="right">
+        <span class="status warn"><i></i>Filed / Service Pending</span>
+        <button class="btn">Edit case</button>
+        <button class="btn icon" aria-label="Case menu">⋯</button>
+      </div>
+    </div>
+
+    <div class="keydates">
+      <div class="tile"><span class="lbl">Filing date</span><span class="val" style="font-size:14px">March 21, 2025</span></div>
+      <div class="tile"><span class="lbl">Date of taking</span><span class="val" style="font-size:14px">April 2, 2025</span></div>
+      <div class="tile"><span class="lbl">Trial / hearing</span><span class="val" style="font-size:14px; color:var(--warn)">October 6, 2026</span></div>
+      <div class="tile"><span class="lbl">Deposit</span><span class="val" style="font-size:14px">$86,400.00</span></div>
+      <div class="tile"><span class="lbl">Service deadline</span><span class="val" style="font-size:14px; color:var(--danger)">July 20, 2026</span></div>
+    </div>
+
+    <div class="wstabs">
+      <button>Overview</button><button class="on">Work</button><button>Discovery</button><button>Service &amp; Publication</button><button>Valuation &amp; Risk</button><button>Trial</button><button>Documents</button><button>Notes</button>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn primary">Add deadline</button><button class="btn">Add task</button><button class="btn">Add event</button><button class="btn">From template…</button>
+      <span class="sep" style="width:1px;height:20px;background:var(--border)"></span>
+      <span class="chip on">Open · 14</span><span class="chip">Deadlines · 5</span><span class="chip">Tasks · 8</span><span class="chip">Events · 1</span><span class="chip">Done · 21</span>
+    </div>
+
+    <div class="bulkbar"><span class="n">2 selected</span><button class="btn sm">Mark done</button><button class="btn sm">Change due date</button><button class="btn sm">Delete</button><button class="btn sm ghost" style="margin-left:auto">Clear</button></div>
+
+    <div class="panel">
+      <div class="panel-bd flush">
+        <table class="dt">
+          <thead><tr><th style="width:28px"></th><th style="width:90px">Type</th><th>Item</th><th style="width:150px">Due</th><th style="width:180px">Status</th><th style="width:60px"></th></tr></thead>
+          <tbody>
+            <tr class="phase-row"><td colspan="6">FILING &amp; SERVICE <span class="progress"><i style="width:60%"></i></span> <span style="font-weight:400">6 / 10 done</span></td></tr>
+            <tr>
+              <td><input type="checkbox" checked aria-label="Select"></td>
+              <td><span class="typechip deadline">Deadline</span></td>
+              <td><a href="#">Answer to amended complaint due</a><div class="sub">Court-imposed · originally due July 12, 2026</div></td>
+              <td><input class="inline-input data" value="July 19, 2026" style="width:120px" aria-label="Due date"></td>
+              <td><select class="status danger" aria-label="Status"><option>Overdue risk</option><option>Open</option><option>Done</option></select></td>
+              <td><div class="rowactions"><button class="btn sm icon" title="Mark done" aria-label="Mark done">✓</button><button class="btn sm icon" aria-label="Delete">✕</button></div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" checked aria-label="Select"></td>
+              <td><span class="typechip task">Task</span></td>
+              <td><a href="#">Confirm sheriff's return filed for J. Phipps</a><div class="sub">From checklist template · Filing &amp; Service</div></td>
+              <td><input class="inline-input data" value="July 21, 2026" style="width:120px" aria-label="Due date"></td>
+              <td><select class="status warn" aria-label="Status"><option>Waiting</option><option>Open</option><option>Done</option><option>N/A</option></select></td>
+              <td><div class="rowactions"><button class="btn sm icon" title="Mark done" aria-label="Mark done">✓</button><button class="btn sm icon" aria-label="Delete">✕</button></div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" aria-label="Select"></td>
+              <td><span class="typechip event">Event</span></td>
+              <td><a href="#">Hearing — motion for order of possession</a><div class="sub">Perry Co. Circuit Court · added July 2, 2026</div></td>
+              <td class="data">July 24, 2026</td>
+              <td><span class="status neutral"><i></i>Scheduled</span></td>
+              <td><div class="rowactions"><button class="btn sm icon" aria-label="Delete">✕</button></div></td>
+            </tr>
+            <tr class="phase-row"><td colspan="6">DISCOVERY &amp; EVALUATION <span class="progress"><i style="width:20%"></i></span> <span style="font-weight:400">1 / 5 done</span></td></tr>
+            <tr>
+              <td><input type="checkbox" aria-label="Select"></td>
+              <td><span class="typechip task">Task</span></td>
+              <td><a href="#">Serve interrogatories &amp; requests for production</a><div class="sub">Pre-checked from issue tags: Timber, Access</div></td>
+              <td><input class="inline-input data" value="August 1, 2026" style="width:120px" aria-label="Due date"></td>
+              <td><select class="status primary" aria-label="Status"><option>Open</option><option>Done</option><option>N/A</option></select></td>
+              <td><div class="rowactions"><button class="btn sm icon" title="Mark done" aria-label="Mark done">✓</button><button class="btn sm icon" aria-label="Delete">✕</button></div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" aria-label="Select"></td>
+              <td><span class="typechip deadline">Deadline</span></td>
+              <td><a href="#">Discovery cutoff</a><div class="sub">Court-imposed · scheduling order March 30, 2026</div></td>
+              <td><input class="inline-input data" value="September 30, 2026" style="width:130px" aria-label="Due date"></td>
+              <td><select class="status primary" aria-label="Status"><option>Open</option><option>Done</option></select></td>
+              <td><div class="rowactions"><button class="btn sm icon" title="Mark done" aria-label="Mark done">✓</button><button class="btn sm icon" aria-label="Delete">✕</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="footnote">One Work surface replaces the Deadlines, Checklist, and Events tabs — same controls (inline due date, status, ✓, bulk bar, templates), one table. The former read-only Details tab becomes the sectioned case editor + a "Case record" section on Overview.</p>
+  </div>
+</section>
+
+<!-- ============================= WORK QUEUE ============================= -->
+<section class="screen" id="scr-queue">
+  <header class="appbar"><div class="brand-tick"></div><div class="wordmark">ARDOT Case Planner <span>· Legal Division</span></div><div class="grow"></div><input placeholder="Search cases, actions…" aria-label="Search"><span class="kbd">Ctrl K</span></header>
+  <nav class="navtabs"><button>Dashboard</button><button>Cases</button><button class="on">Work Queues</button><button>Reports</button><button>Settings</button></nav>
+  <div class="page">
+    <div style="display:flex; align-items:center; margin-bottom:12px">
+      <h2 style="margin:0; font-size:18px">Work Queue</h2>
+      <span class="muted" style="margin-left:12px">every open item across all cases</span>
+    </div>
+
+    <div class="filterbar" style="margin-bottom:12px">
+      <span class="chip on">All · 61</span><span class="chip">Service · 9</span><span class="chip">Deadlines · 17</span><span class="chip">Tasks · 24</span><span class="chip">Discovery · 8</span><span class="chip">Events · 3</span>
+      <span class="sep"></span>
+      <select aria-label="Urgency"><option>Due in 14 days</option><option>All open</option><option>Overdue</option><option>Due today</option><option>Due in 7 days</option><option>Due in 30 days</option><option>No due date</option></select>
+      <select aria-label="Sort"><option>Due date ↑</option><option>Due date ↓</option><option>Case A–Z</option></select>
+      <input type="search" placeholder="Case or item" aria-label="Search queue">
+      <span class="summary">12 of 61 items match</span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-bd flush">
+        <table class="dt">
+          <thead><tr><th style="width:95px">Type</th><th>Item</th><th>Case</th><th style="width:135px">Due ▲</th><th style="width:180px">Status</th><th style="width:200px"></th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="typechip deadline">Deadline</span></td>
+              <td>Answer to amended complaint due</td>
+              <td><a href="#">Phipps et al.</a><div class="sub data">51CV-25-60</div></td>
+              <td class="data" style="color:var(--danger)">July 19, 2026<div class="sub" style="font-family:var(--font-ui)">overdue tomorrow</div></td>
+              <td><select class="status danger" aria-label="Status"><option>Overdue risk</option><option>Open</option><option>Done</option></select></td>
+              <td><div class="rowactions"><button class="btn sm">Mark done</button><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="typechip service">Service</span></td>
+              <td>120-day deadline — 2 of 5 defendants unserved<div class="sub">Basis: filing March 21, 2025 · certified mail + sheriff</div></td>
+              <td><a href="#">Phipps et al.</a><div class="sub data">51CV-25-60</div></td>
+              <td class="data" style="color:var(--danger)">July 20, 2026</td>
+              <td><span class="status danger"><i></i>2 unserved</span></td>
+              <td><div class="rowactions"><button class="btn sm">Log service</button><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="typechip task">Task</span></td>
+              <td>Prepare order of possession package</td>
+              <td><a href="#">Kraft Farm 5 LLC</a><div class="sub data">19CV-25-204</div></td>
+              <td class="data">July 22, 2026</td>
+              <td><select class="status primary" aria-label="Status"><option>Open</option><option>Waiting</option><option>Done</option><option>N/A</option></select></td>
+              <td><div class="rowactions"><button class="btn sm">Mark done</button><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="typechip discovery">Discovery</span></td>
+              <td>Interrogatory responses due from landowner<div class="sub">Outgoing · served June 23, 2026</div></td>
+              <td><a href="#">Richardson et al.</a><div class="sub data">63CV-25-2043</div></td>
+              <td class="data">July 23, 2026</td>
+              <td><select class="status warn" aria-label="Status"><option>Waiting on response</option><option>Follow-up needed</option><option>Complete</option></select></td>
+              <td><div class="rowactions"><button class="btn sm">Record response</button><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="typechip event">Event</span></td>
+              <td>Hearing — motion for order of possession<div class="sub">Pulaski Co. Circuit, Div. 4 · Judge Warren</div></td>
+              <td><a href="#">Spirit Master Fund X</a><div class="sub data">60CV-26-118</div></td>
+              <td class="data">July 24, 2026</td>
+              <td><span class="status neutral"><i></i>Scheduled</span></td>
+              <td><div class="rowactions"><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+            <tr>
+              <td><span class="typechip task">Task</span></td>
+              <td>Draft settlement justification memo</td>
+              <td><a href="#">Cameron-SQRL Bryant LLC</a><div class="sub data">63CV-25-2234</div></td>
+              <td class="data">July 29, 2026</td>
+              <td><select class="status primary" aria-label="Status"><option>Open</option><option>Waiting</option><option>Done</option></select></td>
+              <td><div class="rowactions"><button class="btn sm">Mark done</button><button class="btn sm ghost">Open case ▸</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="footnote">One table replaces five stacked ones. Same status controls as the case workspace. Selecting a single type facet adds that type's extra columns (e.g. Service adds Basis date / Method / Perfected). Bulk selection appears when the Deadlines or Tasks facet is active.</p>
+  </div>
+</section>
+
+<!-- ============================= REPORTS ============================= -->
+<section class="screen" id="scr-rep">
+  <header class="appbar"><div class="brand-tick"></div><div class="wordmark">ARDOT Case Planner <span>· Legal Division</span></div><div class="grow"></div><input placeholder="Search cases, actions…" aria-label="Search"><span class="kbd">Ctrl K</span></header>
+  <nav class="navtabs"><button>Dashboard</button><button>Cases</button><button>Work Queues</button><button class="on">Reports</button><button>Settings</button></nav>
+  <div class="page">
+    <div style="display:flex; align-items:center; margin-bottom:12px">
+      <h2 style="margin:0; font-size:18px">Reports</h2>
+      <div style="margin-left:auto; display:flex; gap:8px"><button class="btn">Export CSV</button><button class="btn primary">Export Excel</button></div>
+    </div>
+
+    <div class="rep-grid">
+      <div class="rep-rail">
+        <div class="panel">
+          <div class="panel-hd"><h3>Filters</h3></div>
+          <div class="panel-bd">
+            <div class="field"><span>Case status</span><select><option>All open statuses</option><option>Filed / Service Pending</option><option>Discovery &amp; Evaluation</option><option>Trial Track</option><option>Closed / resolved</option></select></div>
+            <div class="field"><span>County</span><select><option>All counties</option></select></div>
+            <div class="field"><span>Search</span><input placeholder="Name, number, job, tract…"></div>
+            <div class="field"><span>Date opened</span><select><option>Last 12 months</option><option>Last 30 days</option><option>Last 90 days</option><option>This calendar year</option><option>Custom range…</option></select></div>
+            <button class="btn sm ghost">Reset filters</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-hd"><h3>Columns</h3><span class="count">6 of 14</span></div>
+          <div class="panel-bd">
+            <p class="muted" style="margin:0 0 8px; font-size:12px">Case · County · Status · Date opened · Date closed · Duration</p>
+            <button class="btn sm">Choose columns…</button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="tiles" style="margin-bottom:12px">
+          <div class="tile"><span class="lbl">Avg closed duration</span><span class="val">411 <span style="font-size:12px; font-family:var(--font-ui); color:var(--text-muted)">days</span></span></div>
+          <div class="tile"><span class="lbl">Median closed</span><span class="val">377</span></div>
+          <div class="tile"><span class="lbl">Avg open age</span><span class="val">289</span></div>
+          <div class="tile"><span class="lbl">Shortest</span><span class="val">94</span></div>
+          <div class="tile"><span class="lbl">Longest</span><span class="val">1,142</span></div>
+        </div>
+
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-hd"><h3>Open-case age</h3><span class="count">44 open cases</span></div>
+          <div class="panel-bd">
+            <div class="bars">
+              <span>&lt; 90 days</span><span class="bar"><i style="width:29%"></i></span><span class="data num">8</span>
+              <span>90–179</span><span class="bar"><i style="width:43%"></i></span><span class="data num">12</span>
+              <span>180–364</span><span class="bar"><i style="width:54%"></i></span><span class="data num">15</span>
+              <span>1–2 years</span><span class="bar"><i style="width:25%"></i></span><span class="data num">7</span>
+              <span>2–3 years</span><span class="bar"><i style="width:7%"></i></span><span class="data num">2</span>
+              <span>&gt; 3 years</span><span class="bar"><i style="width:0%"></i></span><span class="data num">0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><h3>Preview</h3><span class="count">21 matching cases</span></div>
+          <div class="panel-bd flush">
+            <table class="dt">
+              <thead><tr><th>Case</th><th style="width:110px">County</th><th style="width:170px">Status</th><th style="width:130px">Opened</th><th style="width:130px">Closed</th><th class="num" style="width:90px">Duration</th></tr></thead>
+              <tbody>
+                <tr><td><a href="#">Hutchins Family Trust</a><div class="sub data">60CV-24-871</div></td><td>Pulaski</td><td><span class="status ok"><i></i>Closed</span></td><td class="data">May 2, 2024</td><td class="data">June 11, 2026</td><td class="data num">770</td></tr>
+                <tr><td><a href="#">Ozark Timber Holdings LLC</a><div class="sub data">44CV-24-233</div></td><td>Madison</td><td><span class="status ok"><i></i>Closed</span></td><td class="data">July 19, 2024</td><td class="data">April 3, 2026</td><td class="data num">623</td></tr>
+                <tr><td><a href="#">Monica Richardson et al.</a><div class="sub data">63CV-25-2043</div></td><td>Saline</td><td><span class="status primary"><i></i>Discovery &amp; Evaluation</span></td><td class="data">May 30, 2025</td><td class="faint">—</td><td class="data num">414</td></tr>
+                <tr><td><a href="#">Spirit Master Fund X LLC</a><div class="sub data">60CV-26-118</div></td><td>Pulaski</td><td><span class="status warn"><i></i>Trial Track</span></td><td class="data">January 8, 2026</td><td class="faint">—</td><td class="data num">191</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+document.querySelectorAll('.scr-btn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.scr-btn').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === 'scr-' + b.dataset.scr));
+  window.scrollTo(0, 0);
+}));
+document.getElementById('themeBtn').addEventListener('click', () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? '' : 'dark';
+});
+</script>
+</body>
+</html>

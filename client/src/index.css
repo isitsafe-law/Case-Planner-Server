@@ -1220,10 +1220,6 @@ code {
 .settings-nav button:hover, .settings-nav button.active { background: var(--surface); color: var(--accent); }
 .settings-content { min-width: 0; }
 .settings-subpanel { margin-bottom: 1rem; padding: .8rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface-subtle); }
-.docket-metric { display: grid; gap: .2rem; padding: .7rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface); text-align: left; cursor: pointer; }
-.docket-metric:hover, .docket-metric.active { border-color: var(--accent); background: var(--accent-soft); }
-.docket-metric span { color: var(--text-muted); font-size: .78rem; }
-.docket-metric strong { font-size: 1.25rem; }
 .trial-watch-list { display: grid; gap: .65rem; }
 .trial-watch-card { display: grid; gap: .65rem; padding: .8rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface); cursor: pointer; }
 .trial-watch-card:hover { border-color: var(--accent); }
@@ -1773,39 +1769,6 @@ code {
 
 /* Attorney Dashboard */
 
-.dashboard-summary-card-row {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.dashboard-summary-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.85rem 1rem;
-  border-radius: var(--r-panel);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
-}
-
-.dashboard-summary-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 28px rgba(15, 23, 36, 0.08);
-}
-
-.dashboard-summary-card.active {
-  border-color: var(--primary);
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(15, 106, 92, 0.16);
-}
-
 .template-diff {
   max-height: 16rem;
   overflow: auto;
@@ -1818,15 +1781,6 @@ code {
   font: .82rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.dashboard-summary-card-label {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.dashboard-summary-card-value {
-  font-size: 1.4rem;
-}
-
 .action-queue-filters {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1836,121 +1790,6 @@ code {
 
 .action-queue-filters label {
   font-size: 0.85rem;
-}
-
-.dashboard-columns {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
-.dashboard-column-primary,
-.dashboard-column-secondary {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.action-queue-list {
-  list-style: none;
-  margin: 1rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.action-queue-item {
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  padding: 0.85rem 1rem;
-  background: var(--surface-muted);
-  display: grid;
-  grid-template-columns: 1.25rem minmax(0, 1fr);
-  column-gap: 0.75rem;
-  align-items: start;
-}
-
-.dashboard-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-/* Keep the attorney queue and case insight together at the top of the dashboard;
-   Upcoming Work is the follow-on review surface below them. */
-.dashboard-columns { order: 1; }
-.dashboard-upcoming-work { order: 2; }
-
-.upcoming-work-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.upcoming-work-secondary-controls {
-  display: flex;
-  gap: 0.65rem;
-}
-
-.upcoming-work-secondary-controls label {
-  min-width: 130px;
-}
-
-.upcoming-work-secondary-controls select {
-  padding: 0.4rem 0.55rem;
-}
-
-.upcoming-work-list {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.upcoming-work-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  background: var(--surface-muted);
-}
-
-.upcoming-work-main {
-  min-width: 0;
-}
-
-.upcoming-work-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.upcoming-work-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upcoming-work-main .subtle-text {
-  margin: 0.2rem 0 0;
-  font-size: 0.82rem;
-}
-
-.upcoming-work-actions {
-  min-width: 0;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-
-.upcoming-work-empty {
-  padding: 0.8rem 0;
-  color: var(--text-muted);
 }
 
 .report-builder-grid {
@@ -1970,69 +1809,12 @@ code {
   }
 }
 
-@media (max-width: 900px) {
-  .upcoming-work-row {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
-
-  .upcoming-work-actions {
-    justify-content: flex-start;
-  }
-}
-
-.action-queue-item-selection {
-  grid-column: 1;
-  padding-top: 0.2rem;
-}
-
-.action-queue-item-selection input[type='checkbox'] {
-  margin: 0;
-}
-
-.action-queue-item-content {
-  grid-column: 2;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.action-queue-item-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-
-.action-queue-item-title {
-  font-weight: 600;
-}
-
 .action-queue-item-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem 1rem;
   color: var(--text-muted);
   font-size: 0.85rem;
-}
-
-.matter-posture-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.matter-posture-reason {
-  font-weight: 600;
-  margin: 0;
-}
-
-.matter-posture-text,
-.matter-posture-next {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.92rem;
 }
 
 .inline-quick-form {
@@ -2139,27 +1921,6 @@ code {
   margin-bottom: 0.4rem;
 }
 
-.docket-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-}
-
-.docket-summary-grid > div {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.docket-summary-grid span {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.docket-summary-grid strong {
-  font-size: 1.2rem;
-}
-
 .dashboard-empty-state {
   padding: 1.25rem;
   text-align: center;
@@ -2210,30 +1971,30 @@ code {
 }
 
 @media (max-width: 1200px) {
-  .dashboard-summary-card-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .action-queue-filters {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .dashboard-columns {
+  .dash-cols {
     grid-template-columns: 1fr;
+  }
+
+  .ui-tiles {
+    flex-wrap: wrap;
+  }
+
+  .ui-tiles .ui-tile {
+    min-width: calc(33% - 8px);
   }
 }
 
 @media (max-width: 900px) {
-  .dashboard-summary-card-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .action-queue-filters {
     grid-template-columns: 1fr;
   }
 
-  .docket-summary-grid {
-    grid-template-columns: 1fr;
+  .kv {
+    grid-template-columns: 1fr auto;
   }
 }
 /* Authentication bootstrap is intentionally independent of the application layout so failures
@@ -2721,6 +2482,208 @@ table.ui-table {
 .ui-table a.ui-case-link:hover,
 .ui-table button.ui-case-link:hover {
   text-decoration: underline;
+}
+
+.ui-row-actions-wrap {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.ui-cell-danger {
+  color: var(--danger-text);
+}
+
+.ui-cell-warn {
+  color: var(--warning-text);
+}
+
+.ui-cell-faint {
+  color: var(--text-muted);
+}
+
+/* Dashboard headline strip */
+.dash-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin: 4px 0 16px;
+  flex-wrap: wrap;
+}
+
+.dash-hd h2 {
+  margin: 0;
+  font-size: var(--text-2xl, 22px);
+  font-weight: 600;
+}
+
+.dash-hd .dash-date {
+  font-size: var(--text-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* Metric tile facet row (MetricTile) */
+.ui-tiles {
+  display: flex;
+  gap: 8px;
+}
+
+.ui-tile {
+  flex: 1;
+  min-width: 0;
+  height: 64px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font: inherit;
+  color: inherit;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.ui-tile-label {
+  font-size: var(--text-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ui-tile-value {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+button.ui-tile:hover {
+  border-color: var(--primary);
+}
+
+button.ui-tile.ui-tile-on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+button.ui-tile.ui-tile-on .ui-tile-label {
+  color: var(--primary);
+}
+
+.ui-tile-danger .ui-tile-value {
+  color: var(--danger-text);
+}
+
+.ui-tile-warn .ui-tile-value {
+  color: var(--warning-text);
+}
+
+/* Dashboard two-column layout: Action Queue + Case Insight rail */
+.dash-cols {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 16px;
+  align-items: start;
+}
+
+.ui-table-panel .panel-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ui-table-panel .panel-hd h3 {
+  margin: 0;
+  font-size: var(--text-lg, 15px);
+  font-weight: 600;
+}
+
+.ui-table-panel .panel-hd .count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--text-sm, 12px);
+  white-space: nowrap;
+}
+
+.ui-table-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Priority stripe on the Action Queue's checkbox cell */
+.ui-table td.ui-stripe-cell {
+  border-left: 3px solid transparent;
+}
+
+.ui-table td.ui-stripe-cell.p1 {
+  border-left-color: var(--danger-text);
+}
+
+.ui-table td.ui-stripe-cell.p2 {
+  border-left-color: var(--warning-text);
+}
+
+.ui-table td.ui-stripe-cell.p3 {
+  border-left-color: var(--primary);
+}
+
+.ui-table td.ui-stripe-cell.p4 {
+  border-left-color: var(--border-strong);
+}
+
+.ui-expand-row td {
+  background: var(--surface-subtle);
+}
+
+/* Case Insight docket key/value rail (replaces .docket-summary-grid) */
+.kv {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+}
+
+.kv-row {
+  display: contents;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 0;
+}
+
+.kv-row span {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kv-row .v {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+}
+
+.kv-row:hover span {
+  background: var(--surface-subtle);
+}
+
+.kv-row.kv-row-active span {
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,10 +1,9 @@
 import type { FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, AttorneyDashboardSummaryCounts, DiscoveryPosture, PipelineHandoffRecord } from './dashboard/types'
-import { SUMMARY_CARD_KEYS, DISCOVERY_STRATEGIES } from './dashboard/types'
-import { DashboardSummaryCard } from './dashboard/DashboardSummaryCard'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord } from './dashboard/types'
+import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
-import { ActionQueueItemCard, type ActionQueueHandlers } from './dashboard/ActionQueueItemCard'
+import { ActionQueueRow, type ActionQueueHandlers } from './dashboard/ActionQueueRow'
 import { DiscoveryControlPanel } from './dashboard/DiscoveryControlPanel'
 import { MomentumReviewPanel } from './dashboard/MomentumReviewPanel'
 import { FilingPipelinePanel } from './dashboard/FilingPipelinePanel'
@@ -25,6 +24,7 @@ import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
 import { FilterBar, FilterChip, FilterSep, FilterSummary } from './ui/FilterBar'
 import { Btn } from './ui/Btn'
+import { MetricTile } from './ui/MetricTile'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -1364,7 +1364,8 @@ function App() {
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
   const [attorneyDashboardFilters, setAttorneyDashboardFilters] = useState<AttorneyDashboardFilters>({})
-  const [activeSummaryCard, setActiveSummaryCard] = useState<keyof AttorneyDashboardSummaryCounts | null>(null)
+  // Default = the two highest-priority tiles (Immediate + Attorney decision) so the queue starts focused.
+  const [activeQueueTiles, setActiveQueueTiles] = useState<Set<number>>(() => new Set([1, 2]))
   const [handoffTarget, setHandoffTarget] = useState<{ caseId: number; caseName: string } | null>(null)
   const [selectedActionQueueIds, setSelectedActionQueueIds] = useState<number[]>([])
   const [bulkDeferOpen, setBulkDeferOpen] = useState(false)
@@ -1394,9 +1395,6 @@ function App() {
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
   const [workQueueFilter, setWorkQueueFilter] = useState<'all' | 'service' | 'deadlines' | 'checklist' | 'discovery' | 'hearings'>('all')
   const [workQueueUrgency, setWorkQueueUrgency] = useState('All Open')
-  const [upcomingWorkLimit, setUpcomingWorkLimit] = useState<5 | 10>(() => window.localStorage.getItem('upcoming-work-limit') === '10' ? 10 : 5)
-  const [upcomingWorkType, setUpcomingWorkType] = useState<'all' | UpcomingWorkType>('all')
-  const [upcomingWorkUrgency, setUpcomingWorkUrgency] = useState('All Open')
   const [serverUpcomingWorkItems, setServerUpcomingWorkItems] = useState<UpcomingWorkItem[]>([])
   const [serverUpcomingWorkLoaded, setServerUpcomingWorkLoaded] = useState(false)
   const [serviceConditionFilter, setServiceConditionFilter] = useState<'all' | 'missingDeadline' | 'notPerfected' | 'missingBasis'>('all')
@@ -4184,12 +4182,6 @@ function App() {
     return 'Good evening.'
   }, [])
   const dashboardDateLine = useMemo(() => new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), [])
-  const dashboardSummaryLine = useMemo(() => {
-    if (!dashboard) return 'Loading case status...'
-    const needsAttention = dashboard.triageQueue.length
-    if (needsAttention === 0) return `All ${dashboard.activeCaseCount} active cases are quiet and healthy.`
-    return `${needsAttention} of ${dashboard.activeCaseCount} active cases need attention today.`
-  }, [dashboard])
   const dashboardCasesById = useMemo(() => {
     const map = new Map<number, CaseRecord>()
     for (const item of allCases) map.set(item.id, item)
@@ -4199,32 +4191,25 @@ function App() {
     }
     return map
   }, [allCases, cases, dashboard])
+  // Metric-tile facet filter: a union of the selected priority levels; no tiles active shows everything.
   const filteredActionQueue = useMemo(() => {
-    if (!attorneyDashboard || !activeSummaryCard) return attorneyDashboard?.actionQueue ?? []
-    const queue = attorneyDashboard.actionQueue
-    switch (activeSummaryCard) {
-      case 'needsJudgment':
-        return queue.filter((a) => a.actionCategory === 'Decide')
-      case 'stalled': {
-        const stalledIds = new Set(attorneyDashboard.momentumReview.filter((m) => m.momentumStatus === 'Stalled').map((m) => m.caseId))
-        return queue.filter((a) => stalledIds.has(a.caseId))
-      }
-      case 'discoveryUnset': {
-        const unsetIds = new Set((attorneyDashboard.discoveryControl.casesByCondition['Strategy not selected'] ?? []).map((c) => c.caseId))
-        return queue.filter((a) => unsetIds.has(a.caseId))
-      }
-      case 'onMyDesk':
-        return queue.filter((a) => a.currentHolder === 'Attorney')
-      case 'trialTrack': {
-        const trialIds = new Set(attorneyDashboard.trialWatch.map((t) => t.caseId))
-        return queue.filter((a) => trialIds.has(a.caseId))
-      }
-      case 'missingNextReview':
-        return queue.filter((a) => !a.reviewDate)
-      default:
-        return queue
-    }
-  }, [attorneyDashboard, activeSummaryCard])
+    const queue = attorneyDashboard?.actionQueue ?? []
+    if (activeQueueTiles.size === 0) return queue
+    return queue.filter((item) => activeQueueTiles.has(item.priorityLevel))
+  }, [attorneyDashboard, activeQueueTiles])
+  function toggleQueueTile(level: number) {
+    setActiveQueueTiles((current) => {
+      const next = new Set(current)
+      if (next.has(level)) next.delete(level)
+      else next.add(level)
+      return next
+    })
+  }
+  const priorityQueueCounts = useMemo(() => {
+    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 }
+    for (const item of attorneyDashboard?.actionQueue ?? []) counts[item.priorityLevel] = (counts[item.priorityLevel] ?? 0) + 1
+    return counts
+  }, [attorneyDashboard])
   const filteredServiceQueue = useMemo(() => serviceConditionFilter === 'missingDeadline'
     ? queueService.filter((item) => item.warningLevel === 'missing' || !item.serviceDeadline120)
     : serviceConditionFilter === 'notPerfected'
@@ -4240,6 +4225,9 @@ function App() {
   const sortedChecklistQueue = useMemo(() => sortQueueItems(queueChecklist.filter((item) => !isChecklistDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.task)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueChecklist, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedDiscoveryQueue = useMemo(() => sortQueueItems(queueDiscovery.filter((item) => matchesUrgency(item.followUpDate || item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.requestTitle || item.discoveryType)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.followUpDate || item.dueDate), [queueDiscovery, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedHearingQueue = useMemo(() => sortQueueItems(queueHearings.filter((item) => matchesUrgency(item.hearingDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.hearingDate), [queueHearings, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
+  // Raw eligible-work pipeline (all types, no urgency/limit narrowing) - the dashboard's "Due in the
+  // next 7 days" panel and the Work Queue page both read from this; the Work Queue page owns its own
+  // type/urgency/search filtering separately (workQueueFilter etc.), so this stays unfiltered here.
   const upcomingWorkItems = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
     const caseById = new Map(allCases.map((item) => [item.id, item]))
@@ -4256,27 +4244,39 @@ function App() {
     for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId, 'discovery')) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
     for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId, 'service')) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'details' })
     for (const item of queueHearings) if (eligible(item.caseId, 'hearing')) items.push({ key: `hearing-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'hearing', dueDate: item.hearingDate, source: item, tab: 'hearings' })
-    return items
-      .filter((item) => upcomingWorkType === 'all' || item.type === upcomingWorkType)
-      .filter((item) => matchesUrgency(item.dueDate, upcomingWorkUrgency === 'Next 7 Days' ? 'Due in 7 Days' : upcomingWorkUrgency === 'Next 14 Days' ? 'Due in 14 Days' : upcomingWorkUrgency === 'Next 30 Days' ? 'Due in 30 Days' : upcomingWorkUrgency))
-      .sort((a, b) => {
-        const dueA = a.dueDate || '9999-12-31'
-        const dueB = b.dueDate || '9999-12-31'
-        const urgencyA = !a.dueDate ? 5 : dueA < today ? 0 : dueA === today ? 1 : DateOnlyFromString(dueA)! - DateOnlyFromString(today)! <= 7 ? 2 : DateOnlyFromString(dueA)! - DateOnlyFromString(today)! <= 14 ? 3 : 4
-        const urgencyB = !b.dueDate ? 5 : dueB < today ? 0 : dueB === today ? 1 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 7 ? 2 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 14 ? 3 : 4
-        return urgencyA - urgencyB || dueA.localeCompare(dueB) || a.caseName.localeCompare(b.caseName)
-      })
-      .slice(0, upcomingWorkLimit)
-  }, [queueChecklist, queueDeadlines, queueDiscovery, queueService, queueHearings, allCases, upcomingWorkType, upcomingWorkUrgency, upcomingWorkLimit])
+    return items.sort((a, b) => {
+      const dueA = a.dueDate || '9999-12-31'
+      const dueB = b.dueDate || '9999-12-31'
+      const urgencyA = !a.dueDate ? 5 : dueA < today ? 0 : dueA === today ? 1 : DateOnlyFromString(dueA)! - DateOnlyFromString(today)! <= 7 ? 2 : DateOnlyFromString(dueA)! - DateOnlyFromString(today)! <= 14 ? 3 : 4
+      const urgencyB = !b.dueDate ? 5 : dueB < today ? 0 : dueB === today ? 1 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 7 ? 2 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 14 ? 3 : 4
+      return urgencyA - urgencyB || dueA.localeCompare(dueB) || a.caseName.localeCompare(b.caseName)
+    })
+  }, [queueChecklist, queueDeadlines, queueDiscovery, queueService, queueHearings, allCases])
   useEffect(() => {
     let cancelled = false
-    const params = new URLSearchParams({ type: upcomingWorkType, urgency: upcomingWorkUrgency, limit: String(upcomingWorkLimit) })
+    // Fixed "all open" fetch - the dashboard no longer exposes type/urgency/limit controls, so the
+    // window is narrowed client-side (see dashboardDueThisWeekItems below) after loading.
+    const params = new URLSearchParams({ type: 'all', urgency: 'All Open', limit: '200' })
     void api<Array<Omit<UpcomingWorkItem, 'source'>>>(`/api/dashboard/upcoming-work?${params.toString()}`)
       .then((items) => { if (!cancelled) { setServerUpcomingWorkItems(items); setServerUpcomingWorkLoaded(true) } })
       .catch(() => { if (!cancelled) setServerUpcomingWorkLoaded(false) })
     return () => { cancelled = true }
-  }, [upcomingWorkType, upcomingWorkUrgency, upcomingWorkLimit])
+  }, [])
   const dashboardUpcomingWorkItems = serverUpcomingWorkLoaded ? serverUpcomingWorkItems : upcomingWorkItems
+  // "Due in the next 7 days" window: overdue items stay visible so nothing urgent silently drops
+  // off the dashboard once its due date passes.
+  const dashboardDueThisWeekItems = useMemo(() => {
+    const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
+    return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! - today <= 7)
+  }, [dashboardUpcomingWorkItems])
+  // Headline strip: "N active cases · X need action now · Y due this week" - N comes from the
+  // (non-attorney) dashboard summary, X is the Immediate-priority action-queue count, Y is the
+  // "Due in the next 7 days" panel's item count.
+  const dashboardHeadline = useMemo(() => ({
+    activeCaseCount: dashboard?.activeCaseCount ?? null,
+    actionsNeededNow: priorityQueueCounts[1] ?? 0,
+    dueThisWeekCount: dashboardDueThisWeekItems.length,
+  }), [dashboard, priorityQueueCounts, dashboardDueThisWeekItems])
   const workQueueFilteredCount = useMemo(() => {
     const service = sortedServiceQueue.length
     const deadlines = sortedDeadlineQueue.length
@@ -7075,34 +7075,19 @@ function App() {
 
       {page === 'dashboard' && (
         <main className="page">
-          <section className="hero-panel">
-            <div>
-              <p className="eyebrow dark">{dashboardDateLine}</p>
-              <h2>{dashboardGreeting}</h2>
-              <p className="subtle-text">{dashboardSummaryLine}</p>
-            </div>
-          </section>
-
-          {dashboard && dashboard.attentionCases.length > 0 && (
-            <Panel title="Cases Flagged Urgent / Attention" headerAction={<span className="pill pill-neutral">{dashboard.attentionCases.length} case{dashboard.attentionCases.length === 1 ? '' : 's'}</span>}>
-              <div className="upcoming-work-list">
-                {dashboard.attentionCases.map((item) => (
-                  <div className="upcoming-work-row" key={item.id}>
-                    <div className="upcoming-work-main">
-                      <div className="upcoming-work-title">
-                        <span className={`pill pill-${attentionPillTone(item.attentionStatus)}`}>{attentionLabels[item.attentionStatus || 'onTrack']}</span>
-                        <strong>{item.caseName || item.caseNumber || `Case ${item.id}`}</strong>
-                      </div>
-                      <span className="subtle-text">{item.caseNumber}{item.nextDeadlineTitle ? ` · ${item.nextDeadlineTitle} (${displayDate(item.nextDeadlineDate)})` : ' · No upcoming deadline on file'}</span>
-                    </div>
-                    <div className="button-row compact-actions">
-                      <button onClick={() => openCase(item.id, 'overview')}>Open Case</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          )}
+          <div className="dash-hd">
+            <h2>{dashboardGreeting}</h2>
+            <span className="dash-date">{dashboardDateLine}</span>
+            {dashboardHeadline.activeCaseCount == null ? (
+              <span className="muted">Loading case status…</span>
+            ) : (
+              <span className="muted">
+                {dashboardHeadline.activeCaseCount} active case{dashboardHeadline.activeCaseCount === 1 ? '' : 's'} ·{' '}
+                <strong className={dashboardHeadline.actionsNeededNow > 0 ? 'ui-cell-danger' : undefined}>{dashboardHeadline.actionsNeededNow} need action now</strong> ·{' '}
+                {dashboardHeadline.dueThisWeekCount} due this week
+              </span>
+            )}
+          </div>
 
           {attorneyDashboardError && <ErrorState message={attorneyDashboardError} onRetry={() => void loadAttorneyDashboard(attorneyDashboardFilters)} />}
 
@@ -7110,24 +7095,19 @@ function App() {
             <LoadingSkeleton rows={6} />
           ) : attorneyDashboard && (
             <>
-              <div className="dashboard-summary-card-row">
-                {SUMMARY_CARD_KEYS.map(({ key, label }) => (
-                  <DashboardSummaryCard
-                    key={key}
-                    label={label}
-                    value={attorneyDashboard.summaryCounts[key]}
-                    active={activeSummaryCard === key}
-                    onClick={() => setActiveSummaryCard(activeSummaryCard === key ? null : key)}
+              <div className="ui-tiles" style={{ marginBottom: '1rem' }}>
+                {PRIORITY_TILES.map((tile) => (
+                  <MetricTile
+                    key={tile.level}
+                    label={tile.label}
+                    value={priorityQueueCounts[tile.level] ?? 0}
+                    tone={tile.tone}
+                    active={activeQueueTiles.has(tile.level)}
+                    onClick={() => toggleQueueTile(tile.level)}
                   />
                 ))}
+                <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />
               </div>
-
-              {attorneyDashboard.triageCaseCount > 0 && (
-                <div className="inline-message warn">
-                  {attorneyDashboard.triageCaseCount} imported case{attorneyDashboard.triageCaseCount === 1 ? '' : 's'} awaiting triage — no alerts are generated until intake is completed.
-                  <button style={{ marginLeft: '0.75rem' }} onClick={() => goToTriageQueue()}>Review</button>
-                </div>
-              )}
 
               <div className="button-row compact-actions">
                 <button onClick={() => setDashboardFiltersOpen(true)}>
@@ -7153,173 +7133,212 @@ function App() {
                 </>
               )}
 
-              <div className="dashboard-stack">
-              <div className="dashboard-upcoming-work">
-              <Panel title="Upcoming Work" headerAction={<button className="link-button" onClick={() => { setPage('queues'); setWorkQueueFilter(upcomingWorkType === 'all' ? 'all' : upcomingWorkType === 'task' ? 'checklist' : upcomingWorkType === 'deadline' ? 'deadlines' : upcomingWorkType === 'hearing' ? 'hearings' : upcomingWorkType); setWorkQueueUrgency(upcomingWorkUrgency === 'Next 7 Days' ? 'Due in 7 Days' : upcomingWorkUrgency === 'Next 14 Days' ? 'Due in 14 Days' : upcomingWorkUrgency === 'Next 30 Days' ? 'Due in 30 Days' : upcomingWorkUrgency) }}>View Full Work Queue</button>}>
-                <div className="upcoming-work-controls">
-                  <div className="chip-row compact-segments">
-                    {(['all', 'task', 'deadline', 'discovery', 'service', 'hearing'] as const).map((type) => <button key={type} className={upcomingWorkType === type ? 'chip active' : 'chip'} onClick={() => setUpcomingWorkType(type)}>{type === 'all' ? 'All' : type === 'task' ? 'Tasks' : type === 'hearing' ? 'Hearings' : type[0].toUpperCase() + type.slice(1)}</button>)}
+              <div className="dash-cols">
+                <div className="ui-table-panel">
+                  <div className="panel-hd">
+                    <h3>Action Queue</h3>
+                    <span className="count">
+                      {filteredActionQueue.length} item{filteredActionQueue.length === 1 ? '' : 's'}
+                      {activeQueueTiles.size > 0 && activeQueueTiles.size < PRIORITY_TILES.length && ` · filtered: ${PRIORITY_TILES.filter((tile) => activeQueueTiles.has(tile.level)).map((tile) => tile.label).join(', ')}`}
+                    </span>
                   </div>
-                  <div className="upcoming-work-secondary-controls">
-                    <label><span>Urgency</span><select value={upcomingWorkUrgency} onChange={(event) => setUpcomingWorkUrgency(event.target.value)}><option>All Open</option><option>Overdue</option><option>Due Today</option><option>Next 7 Days</option><option>Next 14 Days</option><option>Next 30 Days</option></select></label>
-                    <label><span>Show</span><select value={upcomingWorkLimit} onChange={(event) => { const next = Number(event.target.value) as 5 | 10; setUpcomingWorkLimit(next); window.localStorage.setItem('upcoming-work-limit', String(next)) }}><option value={5}>Next 5</option><option value={10}>Next 10</option></select></label>
+                  <div className="table-wrap">
+                    <table className="ui-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 28 }}></th>
+                          <th>Case</th>
+                          <th>Why it's here</th>
+                          <th style={{ width: 130 }}>Review by</th>
+                          <th style={{ width: 260 }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredActionQueue.length === 0 ? (
+                          <UiEmptyState colSpan={5} title="Nothing needs attorney judgment right now" hint="Cases needing a decision, action, review, escalation, or trial preparation will appear here." />
+                        ) : filteredActionQueue.map((item) => (
+                          <ActionQueueRow
+                            key={item.caseId}
+                            item={item}
+                            handlers={actionQueueHandlers}
+                            selected={selectedActionQueueIds.includes(item.caseId)}
+                            onToggleSelect={(caseId) => setSelectedActionQueueIds((prev) => (prev.includes(caseId) ? prev.filter((id) => id !== caseId) : [...prev, caseId]))}
+                            county={dashboardCasesById.get(item.caseId)?.county}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-                {dashboardUpcomingWorkItems.length === 0 ? <div className="upcoming-work-empty"><p>No upcoming work matches the current filters.</p><div className="button-row compact-actions"><button onClick={() => { setUpcomingWorkType('all'); setUpcomingWorkUrgency('All Open') }}>Clear Filters</button><button onClick={() => setPage('queues')}>View Full Work Queue</button></div></div> : (
-                  <div className="upcoming-work-list">
-                    {dashboardUpcomingWorkItems.map((item) => <div className="upcoming-work-row" key={item.key}>
-                      <div className="upcoming-work-main"><div className="upcoming-work-title"><span className={`pill pill-${item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10) ? 'danger' : 'neutral'}`}>{item.type}</span><strong>{item.title}</strong></div><span className="subtle-text">{item.caseName} · {item.dueDate ? displayDate(item.dueDate) : 'No due date'}</span></div>
-                      <div className="button-row compact-actions upcoming-work-actions">
-                        {item.type === 'task' && <button onClick={() => { const source = item.source as ChecklistItem | undefined ?? queueChecklist.find((candidate) => item.key === `task-${candidate.id}`); if (source) void persistChecklist({ ...source, status: 'Done' }, 'Task marked done.', false) }}>Mark Done</button>}
-                        {item.type === 'deadline' && <button onClick={() => { const source = item.source as DeadlineItem | undefined ?? queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`); if (source) void persistDeadline({ ...source, status: 'Done' }, 'Deadline marked done.', false) }}>Complete</button>}
-                        {item.type === 'service' && <button onClick={() => void markGlobalServicePerfected(item.caseId)}>Perfect Service</button>}
-                        {item.type === 'discovery' && <button onClick={() => { const source = item.source as DiscoveryItem | undefined ?? queueDiscovery.find((candidate) => item.key === `discovery-${candidate.id}`); if (source) void recordDiscoveryResponse(source) }}>Record Response</button>}
-                        <button onClick={() => openCase(item.caseId, item.tab)}>Open Case</button>
-                      </div>
-                    </div>)}
-                  </div>
-                )}
-              </Panel>
-              </div>
-
-              <div className="dashboard-columns">
-                <div className="dashboard-column-primary">
-                  <Panel
-                    title="Attorney Action Queue"
-                    headerAction={<span className="pill pill-neutral">{filteredActionQueue.length} item{filteredActionQueue.length === 1 ? '' : 's'}</span>}
-                  >
-                    {filteredActionQueue.length === 0 ? (
-                      <EmptyState title="Nothing needs attorney judgment right now" description="Cases needing a decision, action, review, escalation, or trial preparation will appear here." />
-                    ) : (
-                      <>
-                        <div className="button-row compact-actions top-gap-small">
-                          <label className="toggle-inline">
-                            <span>Select all</span>
-                            <input
-                              type="checkbox"
-                              checked={selectedActionQueueIds.length > 0 && selectedActionQueueIds.length === filteredActionQueue.length}
-                              onChange={(event) => setSelectedActionQueueIds(event.target.checked ? filteredActionQueue.map((item) => item.caseId) : [])}
-                            />
-                          </label>
-                          {selectedActionQueueIds.length > 0 && (
-                            <button
-                              onClick={() => {
-                                applyBulkDeferPreset('7')
-                                setBulkDeferOpen(true)
-                              }}
-                            >Defer {selectedActionQueueIds.length} selected</button>
-                          )}
-                        </div>
-                        {bulkDeferOpen && selectedActionQueueIds.length > 0 && (
-                          <form
-                            className="inline-quick-form top-gap-small"
-                            onSubmit={(event) => { event.preventDefault(); void submitBulkDefer() }}
-                          >
-                            <label>
-                              Defer interval
-                              <select value={bulkDeferPreset} onChange={(event) => applyBulkDeferPreset(event.target.value as '7' | '14' | '30' | 'custom')}>
-                                <option value="7">7 days (default)</option>
-                                <option value="14">14 days</option>
-                                <option value="30">30 days</option>
-                                <option value="custom">Custom date</option>
-                              </select>
-                            </label>
-                            <label>
-                              Future review date (applied to all selected)
-                              <input type="date" value={bulkDeferDate} onChange={(event) => setBulkDeferDate(event.target.value)} required />
-                            </label>
-                            <button className="primary" type="submit">Defer Selected</button>
-                            <button type="button" onClick={() => setBulkDeferOpen(false)}>Cancel</button>
-                          </form>
-                        )}
-                        <ul className="action-queue-list">
-                          {filteredActionQueue.map((item) => (
-                            <ActionQueueItemCard
-                              key={item.caseId}
-                              item={item}
-                              handlers={actionQueueHandlers}
-                              selected={selectedActionQueueIds.includes(item.caseId)}
-                              onToggleSelect={(caseId) => setSelectedActionQueueIds((prev) => (prev.includes(caseId) ? prev.filter((id) => id !== caseId) : [...prev, caseId]))}
-                            />
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </Panel>
-
+                  {filteredActionQueue.length > 0 && (
+                    <div className="ui-table-footer">
+                      <label className="toggle-inline">
+                        <span>Select all</span>
+                        <input
+                          type="checkbox"
+                          checked={selectedActionQueueIds.length > 0 && selectedActionQueueIds.length === filteredActionQueue.length}
+                          onChange={(event) => setSelectedActionQueueIds(event.target.checked ? filteredActionQueue.map((item) => item.caseId) : [])}
+                        />
+                      </label>
+                      {selectedActionQueueIds.length > 0 && (
+                        <span className="helper-text">{selectedActionQueueIds.length} selected</span>
+                      )}
+                      {selectedActionQueueIds.length > 0 && (
+                        <Btn size="sm" onClick={() => { applyBulkDeferPreset('7'); setBulkDeferOpen(true) }}>Defer selected…</Btn>
+                      )}
+                      {activeQueueTiles.size > 0 && activeQueueTiles.size < PRIORITY_TILES.length && (
+                        <span className="ui-cell-faint" style={{ marginLeft: 'auto', fontSize: '.78rem' }}>
+                          {PRIORITY_TILES.filter((tile) => !activeQueueTiles.has(tile.level)).map((tile) => tile.label).join(' & ')} hidden — click tiles above to include
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {bulkDeferOpen && selectedActionQueueIds.length > 0 && (
+                    <form
+                      className="inline-quick-form"
+                      style={{ borderTop: '1px solid var(--border)', padding: '0.75rem 0.9rem' }}
+                      onSubmit={(event) => { event.preventDefault(); void submitBulkDefer() }}
+                    >
+                      <label>
+                        Defer interval
+                        <select value={bulkDeferPreset} onChange={(event) => applyBulkDeferPreset(event.target.value as '7' | '14' | '30' | 'custom')}>
+                          <option value="7">7 days (default)</option>
+                          <option value="14">14 days</option>
+                          <option value="30">30 days</option>
+                          <option value="custom">Custom date</option>
+                        </select>
+                      </label>
+                      <label>
+                        Future review date (applied to all selected)
+                        <input type="date" value={bulkDeferDate} onChange={(event) => setBulkDeferDate(event.target.value)} required />
+                      </label>
+                      <Btn size="sm" variant="primary" type="submit">Defer Selected</Btn>
+                      <Btn size="sm" type="button" onClick={() => setBulkDeferOpen(false)}>Cancel</Btn>
+                    </form>
+                  )}
                 </div>
 
                 {/* The seven former always-visible side panels, folded into one tabbed panel so
                     the working surface is the queue plus exactly one context view at a time. */}
-                <div className="dashboard-column-secondary">
-                  <Panel title="Case Insight">
-                    <div className="segmented-tabs compact-segments">
-                      {([
-                        { key: 'docket', label: 'Docket' },
-                        { key: 'discovery', label: 'Discovery' },
-                        { key: 'momentum', label: 'Momentum' },
-                        { key: 'pipeline', label: 'Pipeline' },
-                        { key: 'trial', label: 'Trials' },
-                        { key: 'projects', label: 'Projects' },
-                      ] as const).map((tab) => (
-                        <button key={tab.key} className={dashboardPanelTab === tab.key ? 'segment active' : 'segment'} onClick={() => setDashboardPanelTab(tab.key)}>
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
+                <Panel title="Case Insight">
+                  <div className="segmented-tabs compact-segments">
+                    {([
+                      { key: 'docket', label: 'Docket' },
+                      { key: 'discovery', label: 'Discovery' },
+                      { key: 'momentum', label: 'Momentum' },
+                      { key: 'pipeline', label: 'Pipeline' },
+                      { key: 'trial', label: 'Trials' },
+                      { key: 'projects', label: 'Projects' },
+                    ] as const).map((tab) => (
+                      <button key={tab.key} className={dashboardPanelTab === tab.key ? 'segment active' : 'segment'} onClick={() => setDashboardPanelTab(tab.key)}>
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
 
-                    <div className="top-gap-small">
-                      {dashboardPanelTab === 'discovery' && (
-                        <DiscoveryControlPanel summary={attorneyDashboard.discoveryControl} onOpenCase={(id) => openCase(id, 'discovery')} />
-                      )}
+                  <div className="top-gap-small">
+                    {dashboardPanelTab === 'discovery' && (
+                      <DiscoveryControlPanel summary={attorneyDashboard.discoveryControl} onOpenCase={(id) => openCase(id, 'discovery')} />
+                    )}
 
-                      {dashboardPanelTab === 'momentum' && (
-                        <MomentumReviewPanel entries={attorneyDashboard.momentumReview} onOpenCase={(id) => openCase(id, 'overview')} />
-                      )}
+                    {dashboardPanelTab === 'momentum' && (
+                      <MomentumReviewPanel entries={attorneyDashboard.momentumReview} onOpenCase={(id) => openCase(id, 'overview')} />
+                    )}
 
-                      {dashboardPanelTab === 'pipeline' && (
-                        <FilingPipelinePanel pipeline={attorneyDashboard.filingPipeline} onOpenCase={(id) => openCase(id, 'overview')} onHandoff={openHandoffDialog} onNote={(id) => void pipelineNote(id)} onHolder={(id) => void pipelineHolder(id)} onReview={(id) => void pipelineReview(id)} onAdvance={(id) => void advancePipelineCase(id)} />
-                      )}
+                    {dashboardPanelTab === 'pipeline' && (
+                      <FilingPipelinePanel pipeline={attorneyDashboard.filingPipeline} onOpenCase={(id) => openCase(id, 'overview')} onHandoff={openHandoffDialog} onNote={(id) => void pipelineNote(id)} onHolder={(id) => void pipelineHolder(id)} onReview={(id) => void pipelineReview(id)} onAdvance={(id) => void advancePipelineCase(id)} />
+                    )}
 
-                      {dashboardPanelTab === 'trial' && (
-                        attorneyDashboard.trialWatch.length === 0 ? (
-                          <EmptyState title="No trial-track cases" description="Cases on the trial track will appear here." />
-                        ) : (
-                          <TrialWatchTable entries={attorneyDashboard.trialWatch} onOpenCase={(id) => openCase(id, 'trialNotebook')} />
-                        )
-                      )}
+                    {dashboardPanelTab === 'trial' && (
+                      attorneyDashboard.trialWatch.length === 0 ? (
+                        <EmptyState title="No trial-track cases" description="Cases on the trial track will appear here." />
+                      ) : (
+                        <TrialWatchTable entries={attorneyDashboard.trialWatch} onOpenCase={(id) => openCase(id, 'trialNotebook')} />
+                      )
+                    )}
 
-                      {dashboardPanelTab === 'projects' && (
-                        !attorneyDashboard.projectWatch.some((p) => p.sharedIssue) ? (
-                          <EmptyState title="No project-wide issues" description="Projects with a shared issue across tracts will appear here." />
-                        ) : (
-                          <div className="project-watch-list">
-                            {attorneyDashboard.projectWatch.filter((p) => p.sharedIssue).map((p) => (
-                              <ProjectWatchRowCard key={p.projectName} project={p} />
-                            ))}
-                          </div>
-                        )
-                      )}
+                    {dashboardPanelTab === 'projects' && (
+                      !attorneyDashboard.projectWatch.some((p) => p.sharedIssue) ? (
+                        <EmptyState title="No project-wide issues" description="Projects with a shared issue across tracts will appear here." />
+                      ) : (
+                        <div className="project-watch-list">
+                          {attorneyDashboard.projectWatch.filter((p) => p.sharedIssue).map((p) => (
+                            <ProjectWatchRowCard key={p.projectName} project={p} />
+                          ))}
+                        </div>
+                      )
+                    )}
 
-                      {dashboardPanelTab === 'docket' && (
-                        <>
-                          <div className="docket-summary-grid">
-                            {([
-                              ['preFiling', 'Pre-filing matters', attorneyDashboard.docketSummary.preFilingMatters],
-                              ['filed', 'Filed matters', attorneyDashboard.docketSummary.filedMatters],
-                              ['trial', 'Trial-track matters', attorneyDashboard.docketSummary.trialTrackMatters],
-                              ['waiting', 'Waiting on others', attorneyDashboard.docketSummary.waitingAppropriately],
-                              ['desk', "On attorney's desk", attorneyDashboard.docketSummary.onAttorneysDesk],
-                              ['missingReview', 'Missing next review date', attorneyDashboard.docketSummary.missingNextReviewDate],
-                            ] as const).map(([key, label, value]) => <button key={key} className={docketMetricFilter === key ? 'docket-metric active' : 'docket-metric'} onClick={() => setDocketMetricFilter(docketMetricFilter === key ? null : key)}><span>{label}</span><strong>{value}</strong></button>)}
-                          </div>
-                          {docketMetricFilter && <div className="docket-filtered-list top-gap-small"><div className="button-row compact-actions"><strong>{docketCases.length} matching case{docketCases.length === 1 ? '' : 's'}</strong><button onClick={() => setDocketMetricFilter(null)}>Clear metric filter</button></div>{docketCases.length === 0 ? <p className="helper-text">No cases match this metric.</p> : <div className="table-wrap"><table className="compact-table"><thead><tr><th>Case</th><th>Status</th><th>Holder</th><th>Next review</th><th>Next action</th><th></th></tr></thead><tbody>{docketCases.map((c) => <tr key={c.id}><td>{c.caseName || c.caseNumber || ('Case ' + c.id)}</td><td>{c.caseStatus || 'Pipeline'}</td><td>{c.currentHolder || 'Not assigned'}</td><td>{displayDate(c.nextReviewDate)}</td><td>{c.nextAction || 'Not set'}</td><td><button onClick={() => openCase(c.id, 'overview')}>Open Case</button></td></tr>)}</tbody></table></div>}</div>}
-                        </>
-                      )}
-                    </div>
-                  </Panel>
-                </div>
+                    {dashboardPanelTab === 'docket' && (
+                      <>
+                        <div className="kv">
+                          {([
+                            ['preFiling', 'Pre-filing matters', attorneyDashboard.docketSummary.preFilingMatters, ''],
+                            ['filed', 'Filed matters', attorneyDashboard.docketSummary.filedMatters, ''],
+                            ['trial', 'Trial-track matters', attorneyDashboard.docketSummary.trialTrackMatters, ''],
+                            ['waiting', 'Waiting on others', attorneyDashboard.docketSummary.waitingAppropriately, ''],
+                            ['desk', "On attorney's desk", attorneyDashboard.docketSummary.onAttorneysDesk, 'warn'],
+                            ['missingReview', 'Missing next review date', attorneyDashboard.docketSummary.missingNextReviewDate, 'danger'],
+                          ] as const).map(([key, label, value, tone]) => (
+                            <button
+                              key={key}
+                              className={`kv-row${docketMetricFilter === key ? ' kv-row-active' : ''}`}
+                              onClick={() => setDocketMetricFilter(docketMetricFilter === key ? null : key)}
+                            >
+                              <span>{label}</span>
+                              <span className={`v${tone && value > 0 ? ` ui-cell-${tone}` : ''}`}>{value}</span>
+                            </button>
+                          ))}
+                        </div>
+                        {docketMetricFilter && <div className="docket-filtered-list top-gap-small"><div className="button-row compact-actions"><strong>{docketCases.length} matching case{docketCases.length === 1 ? '' : 's'}</strong><button onClick={() => setDocketMetricFilter(null)}>Clear metric filter</button></div>{docketCases.length === 0 ? <p className="helper-text">No cases match this metric.</p> : <div className="table-wrap"><table className="compact-table"><thead><tr><th>Case</th><th>Status</th><th>Holder</th><th>Next review</th><th>Next action</th><th></th></tr></thead><tbody>{docketCases.map((c) => <tr key={c.id}><td>{c.caseName || c.caseNumber || ('Case ' + c.id)}</td><td>{c.caseStatus || 'Pipeline'}</td><td>{c.currentHolder || 'Not assigned'}</td><td>{displayDate(c.nextReviewDate)}</td><td>{c.nextAction || 'Not set'}</td><td><button onClick={() => openCase(c.id, 'overview')}>Open Case</button></td></tr>)}</tbody></table></div>}</div>}
+                      </>
+                    )}
+                  </div>
+                </Panel>
               </div>
+
+              <div className="ui-table-panel" style={{ marginTop: '1rem' }}>
+                <div className="panel-hd">
+                  <h3>Due in the next 7 days</h3>
+                  <span className="count">{dashboardDueThisWeekItems.length} item{dashboardDueThisWeekItems.length === 1 ? '' : 's'}</span>
+                  <Btn size="sm" variant="ghost" onClick={() => setPage('queues')}>Full work queue ▸</Btn>
+                </div>
+                <div className="table-wrap">
+                  <table className="ui-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 90 }}>Type</th>
+                        <th>Item</th>
+                        <th>Case</th>
+                        <th style={{ width: 130 }}>Due</th>
+                        <th style={{ width: 170 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardDueThisWeekItems.length === 0 ? (
+                        <UiEmptyState colSpan={5} title="Nothing due in the next 7 days" hint="Deadlines, tasks, discovery, service, and hearings due soon will appear here." />
+                      ) : dashboardDueThisWeekItems.slice(0, 10).map((item) => (
+                        <tr key={item.key}>
+                          <td><TypeChip kind={item.type === 'hearing' ? 'event' : item.type} /></td>
+                          <td>{item.title}</td>
+                          <td className="ui-sub">{item.caseName}</td>
+                          <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}>{item.dueDate ? displayDate(item.dueDate) : '—'}</td>
+                          <td>
+                            <div className="ui-row-actions">
+                              {item.type === 'task' && <Btn size="sm" onClick={() => { const source = item.source as ChecklistItem | undefined ?? queueChecklist.find((candidate) => item.key === `task-${candidate.id}`); if (source) void persistChecklist({ ...source, status: 'Done' }, 'Task marked done.', false) }}>Mark done</Btn>}
+                              {item.type === 'deadline' && <Btn size="sm" onClick={() => { const source = item.source as DeadlineItem | undefined ?? queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`); if (source) void persistDeadline({ ...source, status: 'Done' }, 'Deadline marked done.', false) }}>Complete</Btn>}
+                              {item.type === 'service' && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Perfect Service</Btn>}
+                              {item.type === 'discovery' && <Btn size="sm" onClick={() => { const source = item.source as DiscoveryItem | undefined ?? queueDiscovery.find((candidate) => item.key === `discovery-${candidate.id}`); if (source) void recordDiscoveryResponse(source) }}>Record Response</Btn>}
+                              <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, item.tab)}>Open ▸</Btn>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {dashboardDueThisWeekItems.length > 10 && (
+                  <p className="footnote" style={{ padding: '0.5rem 0.9rem' }}>and {dashboardDueThisWeekItems.length - 10} more…</p>
+                )}
               </div>
             </>
           )}

@@ -225,14 +225,16 @@ export type PipelineHandoffRecord = {
   caseRowVersion?: string | null
 }
 
-// The 6 top summary-filter cards, in display order.
-export const SUMMARY_CARD_KEYS: { key: keyof AttorneyDashboardSummaryCounts; label: string }[] = [
-  { key: 'needsJudgment', label: 'Needs Judgment' },
-  { key: 'stalled', label: 'Stalled' },
-  { key: 'discoveryUnset', label: 'Discovery Unset' },
-  { key: 'onMyDesk', label: 'On My Desk' },
-  { key: 'trialTrack', label: 'Trial Track' },
-  { key: 'missingNextReview', label: 'Missing Next Review' },
+// The dashboard's metric-tile facet row: the Action Queue's 4 priority levels, in display order.
+// Replaces the old 6-key SUMMARY_CARD_KEYS/DashboardSummaryCard filter model - those six abstract
+// categories (needsJudgment/stalled/discoveryUnset/onMyDesk/trialTrack/missingNextReview) are
+// superseded by priority-level tile filtering here, with the same dimensions still reachable via
+// the Case Insight rail (Momentum tab, Discovery tab, Trial tab, and the clickable docket kv rows).
+export const PRIORITY_TILES: { level: number; label: string; tone: 'danger' | 'warn' | 'default' }[] = [
+  { level: 1, label: 'Immediate', tone: 'danger' },
+  { level: 2, label: 'Attorney decision', tone: 'warn' },
+  { level: 3, label: 'Momentum', tone: 'default' },
+  { level: 4, label: 'Planned work', tone: 'default' },
 ]
 
 export const DISCOVERY_STRATEGIES: DiscoveryStrategy[] = [

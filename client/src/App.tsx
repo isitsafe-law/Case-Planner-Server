@@ -25,6 +25,7 @@ import { EmptyState as UiEmptyState } from './ui/EmptyState'
 import { FilterBar, FilterChip, FilterSep, FilterSummary } from './ui/FilterBar'
 import { Btn } from './ui/Btn'
 import { MetricTile } from './ui/MetricTile'
+import { Drawer } from './ui/Drawer'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -917,6 +918,17 @@ const modalKindLabels: Record<ModalKind, string> = {
   event: 'Event',
 }
 
+// Section nav for the sectioned case editor drawer - order matches the visual section order below.
+type CaseEditorSectionKey = 'identity' | 'people' | 'dates' | 'financial' | 'service' | 'notes'
+const caseEditorSections: { key: CaseEditorSectionKey; label: string }[] = [
+  { key: 'identity', label: 'Identity' },
+  { key: 'people', label: 'People' },
+  { key: 'dates', label: 'Dates' },
+  { key: 'financial', label: 'Financial & Property' },
+  { key: 'service', label: 'Service' },
+  { key: 'notes', label: 'Notes' },
+]
+
 const discoveryStatuses = ['Waiting for Responses', 'Follow-Up Needed', 'Responses Received', 'Complete', 'Reopened']
 const subpoenaStatuses = ['Not Needed', 'Not Served', 'Served', 'Confirmed']
 const exhibitStatuses = ['Pre-Labeled', 'Offered', 'Admitted', 'Excluded']
@@ -1409,6 +1421,14 @@ function App() {
   const [workFromTemplateOpen, setWorkFromTemplateOpen] = useState(false)
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
   const caseMenuRef = useRef<HTMLDivElement | null>(null)
+  const caseEditorSectionRefs = useRef<Record<CaseEditorSectionKey, HTMLElement | null>>({
+    identity: null,
+    people: null,
+    dates: null,
+    financial: null,
+    service: null,
+    notes: null,
+  })
   const [selectedDeadlineIds, setSelectedDeadlineIds] = useState<number[]>([])
   const [selectedChecklistIds, setSelectedChecklistIds] = useState<number[]>([])
   const [bulkDeadlineDueDate, setBulkDeadlineDueDate] = useState('')
@@ -1956,6 +1976,13 @@ function App() {
     setCaseDraft((current) => ({ ...current, ...patch }))
     clearModalFeedback()
     setModalDirty(true)
+  }
+
+  function scrollToCaseEditorSection(key: CaseEditorSectionKey) {
+    const node = caseEditorSectionRefs.current[key]
+    if (!node) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   }
 
   function patchDeadlineDraft(patch: Partial<DeadlineItem>) {
@@ -5549,8 +5576,8 @@ function App() {
               <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
             </div>
 
-            <Panel title="Unified Document Platform (Preview)">
-              <p className="helper-text">Rebuilt generation pipeline (build-plan steps 4-6) - one checklist-driven flow for every registered template, with section toggles pre-checked from this case's issue tags and manual fields for anything not already on the case.</p>
+            <Panel title="Generate a Document">
+              <p className="helper-text">Pick a template, check the sections this case needs (issue-tag sections come pre-checked), fill in any per-document fields, and download the draft.</p>
               <div className="button-row top-gap-small">
                 <button className="compact-action-button" onClick={() => void loadDocumentPlatformCaseTemplates()}>Load Templates</button>
                 <select value={platformCaseTemplateKey} onChange={(event) => void loadPlatformChecklist(event.target.value)}>
@@ -5690,7 +5717,7 @@ function App() {
           <div className="workspace-sections">
             {riskAnalysisHistory.length > 0 && <Panel title="Saved Risk Analyses">
               <div className="table-wrap compact-table-wrap"><table className="compact-table"><thead><tr><th>Analysis date</th><th>Key scenario</th><th>Just compensation</th><th>Created</th><th>Actions</th></tr></thead><tbody>{riskAnalysisHistory.map((history) => <tr key={history.id}><td>{displayDate(history.analysisDate)}</td><td>{history.keyScenarioLabel || 'No populated scenario'}</td><td>{displayCurrency(history.keyScenarioValue)}</td><td>{displayDate(history.createdAt)}</td><td><div className="button-row compact-actions row-actions"><button onClick={() => void openRiskAnalysisHistory(history.id)}>Open</button><button onClick={() => void compareRiskAnalysisHistory(history)}>Compare</button><button className="danger-button" onClick={() => void deleteRiskAnalysisHistory(history)}>Delete</button></div></td></tr>)}</tbody></table></div>
-              <p className="helper-text top-gap-small">Each save retains an immutable snapshot with formula version <strong>risk-v1</strong>.</p>
+              <p className="helper-text top-gap-small">Each save retains an immutable snapshot of the analysis as of that date.</p>
               {riskAnalysisComparison && <div className="risk-comparison-card top-gap-small"><div><strong>Saved snapshot</strong><div>{displayDate(riskAnalysisComparison.left.analysisDate)} · {riskAnalysisComparison.left.keyScenarioLabel || 'No key scenario'} · {displayCurrency(riskAnalysisComparison.left.keyScenarioValue)}</div></div><div><strong>Rendered values</strong><div>Total deposited {displayCurrency(riskAnalysisComparison.right.totalDeposited)} · {riskAnalysisComparison.right.rows.filter((row) => !row.isSplit && row.justCompensation != null).length} populated scenarios</div></div><button onClick={() => setRiskAnalysisComparison(null)}>Close comparison</button></div>}
             </Panel>}
 
@@ -6680,9 +6707,10 @@ function App() {
 
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
 
-      {activeModal && (
-        <ModalShell
-          title={`${modalMode === 'create' ? 'Add' : 'Edit'} ${modalKindLabels[activeModal]}`}
+      {activeModal === 'case' && (
+        <Drawer
+          title={`${modalMode === 'create' ? 'Add' : 'Edit'} ${modalKindLabels.case}`}
+          width={720}
           onClose={() => {
             if (modalDirty) {
               setMessage('Save your changes or use Cancel to discard them before closing.')
@@ -6690,6 +6718,12 @@ function App() {
             }
             cancelModal()
           }}
+          footer={
+            <div className="button-row compact-actions">
+              <button className="primary" type="submit" form="case-editor-form">Save Case</button>
+              <button type="button" onClick={cancelModal}>Cancel</button>
+            </div>
+          }
         >
           {modalErrorSummary && (
             <div className="inline-message error modal-message" role="alert">
@@ -6697,94 +6731,135 @@ function App() {
             </div>
           )}
 
-          {activeModal === 'case' && (
-            <form className="form-grid modal-form" onSubmit={saveCase} noValidate>
-              <label>
-                <span>Case Name</span>
-                <input value={caseDraft.caseName} onChange={(event) => patchCaseDraft({ caseName: event.target.value })} placeholder="Case name" required />
-                {modalFieldErrors.caseName && <small className="field-error">{modalFieldErrors.caseName}</small>}
-              </label>
-              <label>
-                <span>Case Number</span>
-                <input value={caseDraft.caseNumber} onChange={(event) => patchCaseDraft({ caseNumber: event.target.value })} placeholder="Not assigned until filed" />
-                {modalFieldErrors.caseNumber && <small className="field-error">{modalFieldErrors.caseNumber}</small>}
-              </label>
-              <label><span>Job Number</span><input value={caseDraft.jobNumber} onChange={(event) => patchCaseDraft({ jobNumber: event.target.value })} placeholder="Job number" /></label>
-              <label><span>Tract</span><input value={caseDraft.tract} onChange={(event) => patchCaseDraft({ tract: event.target.value })} placeholder="Tract" /></label>
-              <label>
-                <span>County</span>
-                <select value={caseDraft.county || ''} onChange={(event) => patchCaseDraft({ county: event.target.value })}>
-                  <option value="">Select county</option>
-                  {countyOptions(caseDraft.county).map((county) => (
-                    <option key={county} value={county}>{county}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Case Status</span>
-                <select value={caseDraft.caseStatus || 'Pipeline'} onChange={(event) => patchCaseDraft({ caseStatus: event.target.value })}>
-                  {consolidatedCaseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>Filing Date</span>
-                <input type="date" value={caseDraft.filingDate || ''} onChange={(event) => patchCaseDraft({ filingDate: event.target.value })} onInput={(event) => patchCaseDraft({ filingDate: event.currentTarget.value })} />
-                {modalFieldErrors.filingDate && <small className="field-error">{modalFieldErrors.filingDate}</small>}
-              </label>
-              {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && <>
-                <label><span>Current Holder</span><select value={caseDraft.currentHolder || 'Legal Assistant'} onChange={(event) => patchCaseDraft({ currentHolder: event.target.value })}><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Other</option></select></label>
-                <label><span>Next Review Date</span><input type="date" value={caseDraft.nextReviewDate || ''} onChange={(event) => patchCaseDraft({ nextReviewDate: event.target.value })} /></label>
-                <label className="full-span"><span>Pipeline Note</span><textarea rows={2} value={caseDraft.shortPostureSummary || ''} onChange={(event) => patchCaseDraft({ shortPostureSummary: event.target.value })} placeholder="Optional pleading-preparation or handoff note" /></label>
-              </>}
-              <label>
-                <span>Date Opened</span>
-                <input type="date" value={caseDraft.dateOpened || ''} onChange={(event) => patchCaseDraft({ dateOpened: event.target.value })} onInput={(event) => patchCaseDraft({ dateOpened: event.currentTarget.value })} />
-              </label>
-              <label>
-                <span>Date of Taking</span>
-                <input type="date" value={caseDraft.dateOfTaking || ''} onChange={(event) => patchCaseDraft({ dateOfTaking: event.target.value })} onInput={(event) => patchCaseDraft({ dateOfTaking: event.currentTarget.value })} />
-                {modalFieldErrors.dateOfTaking && <small className="field-error">{modalFieldErrors.dateOfTaking}</small>}
-              </label>
-              {caseDraft.status === 'Closed' && (
+          <nav className="drawer-section-nav" aria-label="Jump to case editor section">
+            {caseEditorSections.map((section) => (
+              <button key={section.key} type="button" className="ui-chip" onClick={() => scrollToCaseEditorSection(section.key)}>
+                {section.label}
+              </button>
+            ))}
+          </nav>
+
+          <form id="case-editor-form" className="case-editor-form" onSubmit={saveCase} noValidate>
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.identity = node }}>
+              <h4 className="form-section-heading">Identity</h4>
+              <div className="form-section-grid">
                 <label>
-                  <span>Closed Date</span>
-                  <input type="date" value={caseDraft.closedDate || ''} onChange={(event) => patchCaseDraft({ closedDate: event.target.value })} onInput={(event) => patchCaseDraft({ closedDate: event.currentTarget.value })} />
-                  {modalFieldErrors.closedDate && <small className="field-error">{modalFieldErrors.closedDate}</small>}
+                  <span>Case Name</span>
+                  <input value={caseDraft.caseName} onChange={(event) => patchCaseDraft({ caseName: event.target.value })} placeholder="Case name" required />
+                  {modalFieldErrors.caseName && <small className="field-error">{modalFieldErrors.caseName}</small>}
                 </label>
-              )}
-              <label>
-                <span>Deposit Amount</span>
-                <NumericField money value={caseDraft.depositAmount} onCommit={(value) => patchCaseDraft({ depositAmount: value })} placeholder="Deposit amount" />
-                {modalFieldErrors.depositAmount && <small className="field-error">{modalFieldErrors.depositAmount}</small>}
-              </label>
-              <label><span>Landowner</span><input value={caseDraft.landowner || ''} onChange={(event) => patchCaseDraft({ landowner: event.target.value })} placeholder="Landowner" /></label>
-              <label><span>Opposing Counsel</span><input value={caseDraft.opposingCounsel || ''} onChange={(event) => patchCaseDraft({ opposingCounsel: event.target.value })} placeholder="Opposing counsel" /></label>
-              <label><span>Appraiser</span><input value={caseDraft.appraiser || ''} onChange={(event) => patchCaseDraft({ appraiser: event.target.value })} placeholder="Appraiser" /></label>
-              <label className="toggle-inline"><span>Taxes Owed</span><input type="checkbox" checked={isYesLike(caseDraft.taxesOwed)} onChange={(event) => patchCaseDraft({ taxesOwed: event.target.checked ? 'Yes' : '', taxOwedAmount: event.target.checked ? caseDraft.taxOwedAmount : null })} /></label>
-              <label className="toggle-inline"><span>Funds Withdrawn</span><input type="checkbox" checked={isYesLike(caseDraft.fundsWithdrawn)} onChange={(event) => patchCaseDraft({ fundsWithdrawn: event.target.checked ? 'Yes' : '', fundsWithdrawnDate: event.target.checked ? caseDraft.fundsWithdrawnDate : '' })} /></label>
-              {isYesLike(caseDraft.fundsWithdrawn) && (
                 <label>
-                  <span>Funds Withdrawn Date</span>
-                  <input type="date" value={caseDraft.fundsWithdrawnDate || ''} onChange={(event) => patchCaseDraft({ fundsWithdrawnDate: event.target.value })} onInput={(event) => patchCaseDraft({ fundsWithdrawnDate: event.currentTarget.value })} />
+                  <span>Case Number</span>
+                  <input value={caseDraft.caseNumber} onChange={(event) => patchCaseDraft({ caseNumber: event.target.value })} placeholder="Not assigned until filed" />
+                  {modalFieldErrors.caseNumber && <small className="field-error">{modalFieldErrors.caseNumber}</small>}
                 </label>
-              )}
-              <label><span>Project Name</span><input value={caseDraft.projectName || ''} onChange={(event) => patchCaseDraft({ projectName: event.target.value })} placeholder="e.g. Highway 5 Widening" /></label>
-              <label><span>Whole Property (acres)</span><NumericField value={caseDraft.wholePropertyAcres} onCommit={(value) => patchCaseDraft({ wholePropertyAcres: value })} placeholder="Whole property acres" /></label>
-              <label><span>Acquisition (acres)</span><NumericField value={caseDraft.acquisitionAcres} onCommit={(value) => patchCaseDraft({ acquisitionAcres: value })} placeholder="Acquisition acres" /></label>
-              {isYesLike(caseDraft.taxesOwed) && <label><span>Tax Amount Owed</span><NumericField money value={caseDraft.taxOwedAmount} onCommit={(value) => patchCaseDraft({ taxOwedAmount: value })} placeholder="Tax amount owed" /></label>}
-              <label><span>Landowner's Appraiser</span><input value={caseDraft.landownerAppraiserName || ''} onChange={(event) => patchCaseDraft({ landownerAppraiserName: event.target.value })} placeholder="Landowner's appraiser" /></label>
-              <label className="toggle-inline"><span>Additional Deposit</span><input type="checkbox" checked={caseDraft.additionalDepositAmount != null || Boolean(caseDraft.additionalDepositDate)} onChange={(event) => patchCaseDraft(event.target.checked ? { additionalDepositAmount: caseDraft.additionalDepositAmount ?? 0 } : { additionalDepositAmount: null, additionalDepositDate: '' })} /></label>
-              {((caseDraft.additionalDepositAmount != null) || Boolean(caseDraft.additionalDepositDate)) && (
-                <>
-                  <label><span>Additional Deposit Amount</span><NumericField money value={caseDraft.additionalDepositAmount} onCommit={(value) => patchCaseDraft({ additionalDepositAmount: value })} placeholder="Additional deposit amount" /></label>
+                <label><span>Job Number</span><input value={caseDraft.jobNumber} onChange={(event) => patchCaseDraft({ jobNumber: event.target.value })} placeholder="Job number" /></label>
+                <label><span>Tract</span><input value={caseDraft.tract} onChange={(event) => patchCaseDraft({ tract: event.target.value })} placeholder="Tract" /></label>
+                <label>
+                  <span>County</span>
+                  <select value={caseDraft.county || ''} onChange={(event) => patchCaseDraft({ county: event.target.value })}>
+                    <option value="">Select county</option>
+                    {countyOptions(caseDraft.county).map((county) => (
+                      <option key={county} value={county}>{county}</option>
+                    ))}
+                  </select>
+                </label>
+                <label><span>Project Name</span><input value={caseDraft.projectName || ''} onChange={(event) => patchCaseDraft({ projectName: event.target.value })} placeholder="e.g. Highway 5 Widening" /></label>
+                <label>
+                  <span>Case Status</span>
+                  <select value={caseDraft.caseStatus || 'Pipeline'} onChange={(event) => patchCaseDraft({ caseStatus: event.target.value })}>
+                    {consolidatedCaseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </label>
+                {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && (
+                  <label><span>Current Holder</span><select value={caseDraft.currentHolder || 'Legal Assistant'} onChange={(event) => patchCaseDraft({ currentHolder: event.target.value })}><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Other</option></select></label>
+                )}
+              </div>
+            </section>
+
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.people = node }}>
+              <h4 className="form-section-heading">People</h4>
+              <div className="form-section-grid">
+                <label><span>Landowner</span><input value={caseDraft.landowner || ''} onChange={(event) => patchCaseDraft({ landowner: event.target.value })} placeholder="Landowner" /></label>
+                <label><span>Opposing Counsel</span><input value={caseDraft.opposingCounsel || ''} onChange={(event) => patchCaseDraft({ opposingCounsel: event.target.value })} placeholder="Opposing counsel" /></label>
+                <label><span>Appraiser</span><input value={caseDraft.appraiser || ''} onChange={(event) => patchCaseDraft({ appraiser: event.target.value })} placeholder="Appraiser" /></label>
+                <label><span>Landowner's Appraiser</span><input value={caseDraft.landownerAppraiserName || ''} onChange={(event) => patchCaseDraft({ landownerAppraiserName: event.target.value })} placeholder="Landowner's appraiser" /></label>
+              </div>
+            </section>
+
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.dates = node }}>
+              <h4 className="form-section-heading">Dates</h4>
+              <div className="form-section-grid">
+                <label>
+                  <span>Filing Date</span>
+                  <input type="date" value={caseDraft.filingDate || ''} onChange={(event) => patchCaseDraft({ filingDate: event.target.value })} onInput={(event) => patchCaseDraft({ filingDate: event.currentTarget.value })} />
+                  {modalFieldErrors.filingDate && <small className="field-error">{modalFieldErrors.filingDate}</small>}
+                </label>
+                <label>
+                  <span>Date Opened</span>
+                  <input type="date" value={caseDraft.dateOpened || ''} onChange={(event) => patchCaseDraft({ dateOpened: event.target.value })} onInput={(event) => patchCaseDraft({ dateOpened: event.currentTarget.value })} />
+                </label>
+                <label>
+                  <span>Date of Taking</span>
+                  <input type="date" value={caseDraft.dateOfTaking || ''} onChange={(event) => patchCaseDraft({ dateOfTaking: event.target.value })} onInput={(event) => patchCaseDraft({ dateOfTaking: event.currentTarget.value })} />
+                  {modalFieldErrors.dateOfTaking && <small className="field-error">{modalFieldErrors.dateOfTaking}</small>}
+                </label>
+                {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && (
+                  <label><span>Next Review Date</span><input type="date" value={caseDraft.nextReviewDate || ''} onChange={(event) => patchCaseDraft({ nextReviewDate: event.target.value })} /></label>
+                )}
+                {caseDraft.status === 'Closed' && (
                   <label>
-                    <span>Additional Deposit Date</span>
-                    <input type="date" value={caseDraft.additionalDepositDate || ''} onChange={(event) => patchCaseDraft({ additionalDepositDate: event.target.value })} onInput={(event) => patchCaseDraft({ additionalDepositDate: event.currentTarget.value })} />
+                    <span>Closed Date</span>
+                    <input type="date" value={caseDraft.closedDate || ''} onChange={(event) => patchCaseDraft({ closedDate: event.target.value })} onInput={(event) => patchCaseDraft({ closedDate: event.currentTarget.value })} />
+                    {modalFieldErrors.closedDate && <small className="field-error">{modalFieldErrors.closedDate}</small>}
                   </label>
-                </>
+                )}
+              </div>
+            </section>
+
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.financial = node }}>
+              <h4 className="form-section-heading">Financial & Property</h4>
+              <div className="form-section-grid">
+                <label>
+                  <span>Deposit Amount</span>
+                  <NumericField money value={caseDraft.depositAmount} onCommit={(value) => patchCaseDraft({ depositAmount: value })} placeholder="Deposit amount" />
+                  {modalFieldErrors.depositAmount && <small className="field-error">{modalFieldErrors.depositAmount}</small>}
+                </label>
+                <label className="toggle-inline"><span>Additional Deposit</span><input type="checkbox" checked={caseDraft.additionalDepositAmount != null || Boolean(caseDraft.additionalDepositDate)} onChange={(event) => patchCaseDraft(event.target.checked ? { additionalDepositAmount: caseDraft.additionalDepositAmount ?? 0 } : { additionalDepositAmount: null, additionalDepositDate: '' })} /></label>
+                {((caseDraft.additionalDepositAmount != null) || Boolean(caseDraft.additionalDepositDate)) && (
+                  <>
+                    <label><span>Additional Deposit Amount</span><NumericField money value={caseDraft.additionalDepositAmount} onCommit={(value) => patchCaseDraft({ additionalDepositAmount: value })} placeholder="Additional deposit amount" /></label>
+                    <label>
+                      <span>Additional Deposit Date</span>
+                      <input type="date" value={caseDraft.additionalDepositDate || ''} onChange={(event) => patchCaseDraft({ additionalDepositDate: event.target.value })} onInput={(event) => patchCaseDraft({ additionalDepositDate: event.currentTarget.value })} />
+                    </label>
+                  </>
+                )}
+                <label><span>Whole Property (acres)</span><NumericField value={caseDraft.wholePropertyAcres} onCommit={(value) => patchCaseDraft({ wholePropertyAcres: value })} placeholder="Whole property acres" /></label>
+                <label><span>Acquisition (acres)</span><NumericField value={caseDraft.acquisitionAcres} onCommit={(value) => patchCaseDraft({ acquisitionAcres: value })} placeholder="Acquisition acres" /></label>
+                <label className="toggle-inline"><span>Taxes Owed</span><input type="checkbox" checked={isYesLike(caseDraft.taxesOwed)} onChange={(event) => patchCaseDraft({ taxesOwed: event.target.checked ? 'Yes' : '', taxOwedAmount: event.target.checked ? caseDraft.taxOwedAmount : null })} /></label>
+                {isYesLike(caseDraft.taxesOwed) && <label><span>Tax Amount Owed</span><NumericField money value={caseDraft.taxOwedAmount} onCommit={(value) => patchCaseDraft({ taxOwedAmount: value })} placeholder="Tax amount owed" /></label>}
+                <label className="toggle-inline"><span>Funds Withdrawn</span><input type="checkbox" checked={isYesLike(caseDraft.fundsWithdrawn)} onChange={(event) => patchCaseDraft({ fundsWithdrawn: event.target.checked ? 'Yes' : '', fundsWithdrawnDate: event.target.checked ? caseDraft.fundsWithdrawnDate : '' })} /></label>
+                {isYesLike(caseDraft.fundsWithdrawn) && (
+                  <label>
+                    <span>Funds Withdrawn Date</span>
+                    <input type="date" value={caseDraft.fundsWithdrawnDate || ''} onChange={(event) => patchCaseDraft({ fundsWithdrawnDate: event.target.value })} onInput={(event) => patchCaseDraft({ fundsWithdrawnDate: event.currentTarget.value })} />
+                  </label>
+                )}
+              </div>
+            </section>
+
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.service = node }}>
+              <h4 className="form-section-heading">Service</h4>
+              <p className="helper-text">Service perfection, deadlines, and publication entries are managed on the Status tab.</p>
+            </section>
+
+            <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.notes = node }}>
+              <h4 className="form-section-heading">Notes</h4>
+              {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && (
+                <label><span>Pipeline Note</span><textarea rows={2} value={caseDraft.shortPostureSummary || ''} onChange={(event) => patchCaseDraft({ shortPostureSummary: event.target.value })} placeholder="Optional pleading-preparation or handoff note" /></label>
               )}
-              <p className="helper-text full-span">Service perfection, deadlines, and publication entries are managed on the Status tab.</p>
-              <div className="full-span">
+              <div>
                 <h4>Issue Tags</h4>
                 <div className="button-row compact-actions top-gap-small">
                   <select value={selectedTagId} onChange={(event) => setSelectedTagId(Number(event.target.value))}>
@@ -6807,12 +6882,26 @@ function App() {
                   </ul>
                 ) : <p className="top-gap-small">No issue tags assigned.</p>}
               </div>
+            </section>
+          </form>
+        </Drawer>
+      )}
 
-              <div className="button-row compact-actions full-span modal-footer">
-                <button className="primary" type="submit">Save Case</button>
-                <button type="button" onClick={cancelModal}>Cancel</button>
-              </div>
-            </form>
+      {activeModal && activeModal !== 'case' && (
+        <ModalShell
+          title={`${modalMode === 'create' ? 'Add' : 'Edit'} ${modalKindLabels[activeModal]}`}
+          onClose={() => {
+            if (modalDirty) {
+              setMessage('Save your changes or use Cancel to discard them before closing.')
+              return
+            }
+            cancelModal()
+          }}
+        >
+          {modalErrorSummary && (
+            <div className="inline-message error modal-message" role="alert">
+              {modalErrorSummary}
+            </div>
           )}
 
           {activeModal === 'deadline' && (
@@ -8075,7 +8164,7 @@ function App() {
 
           {settingsSection === 'issueTags' && (
             <Panel title="Issue Tags">
-              <p className="helper-text">Create, rename, and retire the issue-tag vocabulary cases use, and see which document-template sections a tag drives (build-plan step 5 - this was the fixed, developer-only vocabulary the Phase 1 audit flagged). Retiring a tag is a soft-delete: its name becomes available again, but case history keeps the original assignment.</p>
+              <p className="helper-text">Create, rename, and retire the issue-tag vocabulary cases use, and see which document-template sections a tag drives. Retiring a tag is a soft-delete: its name becomes available again, but case history keeps the original assignment.</p>
               <p className="helper-text">Tagging a case with an issue (e.g. "Timber") automatically pulls in that tag's interrogatory and request-for-production questions when generating Interrogatories or Requests for Admission for that case - see the "Used By" column below for which templates a tag drives, and Document Templates for the actual section content each tag inserts.</p>
               <button className="compact-action-button" onClick={() => void loadIssueTagUsage()}>Load Usage</button>
 

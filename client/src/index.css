@@ -43,6 +43,9 @@
   --row-border: #E4EAF1;
   --table-stripe: #F7FAFC;
   --focus: #4C8FD6;
+  --appbar-bg: #0E2E4E;
+  --appbar-text: #E9F0F7;
+  --brand-crimson: #9E1B32;
 }
 
 :root[data-theme='dark'] {
@@ -79,6 +82,9 @@
   --row-border: #22303E;
   --table-stripe: #131D28;
   --focus: #7FB4E8;
+  --appbar-bg: #101C2A;
+  --appbar-text: #DCE7F2;
+  --brand-crimson: #C24B60;
 }
 
 * {
@@ -206,7 +212,7 @@ label span {
 }
 
 .app-shell {
-  width: min(1440px, calc(100vw - 24px));
+  width: min(1600px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 1.25rem;
 }
@@ -216,63 +222,107 @@ label span {
   box-shadow: var(--shadow);
 }
 
-.topbar,
-.nav-row,
 .panel,
 .stat-card,
 .hero-panel {
   box-shadow: none;
 }
 
-.topbar {
+/* App bar (mockup .appbar): 48px brand/search strip. Sits inside the boxed .app-shell rather
+   than full-bleed like the mockup, so it takes a subtle --r-panel top radius; the navtabs bar
+   below it squares off against it and carries the bottom border. */
+.appbar {
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.35rem 1.5rem;
-  background: var(--surface-strong);
-  color: var(--text-on-dark);
-  border-radius: var(--r-panel);
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--appbar-bg);
+  color: var(--appbar-text);
+  border-radius: var(--r-panel) var(--r-panel) 0 0;
 }
 
-.topbar h1,
 .hero-panel h2 {
   margin: 0;
 }
 
-.topbar h1 {
-  font-size: clamp(1.8rem, 3vw, 2.4rem);
+.brand-tick {
+  flex: none;
+  width: 10px;
+  height: 22px;
+  background: var(--brand-crimson);
+  border-radius: 2px;
 }
 
-.topbar-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.75rem;
-  min-height: 1px;
+.appbar .wordmark {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-.topbar-search {
+.appbar .wordmark span {
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+.appbar-spacer {
+  flex: 1;
+}
+
+.appbar-search {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 8px;
 }
 
-.topbar-search input {
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: var(--text-on-dark);
+.appbar-search input {
+  width: 280px;
+  height: 30px;
+  padding: 0 10px;
   border-radius: var(--r-ctl);
-  padding: 0.45rem 0.7rem;
-  min-width: 220px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--appbar-text);
 }
 
-.topbar-search input::placeholder {
-  color: rgba(255, 255, 255, 0.65);
+.appbar-search input::placeholder {
+  color: rgba(233, 240, 247, 0.55);
 }
 
-.topbar-search {
-  position: relative;
+.appbar-search button[type='submit'] {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--appbar-text);
+  border-radius: var(--r-ctl);
+}
+
+.appbar-search button[type='submit']:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.appbar .kbd {
+  font-family: var(--font-data);
+  font-size: 11px;
+  line-height: 16px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--appbar-text);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.appbar .kbd:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .search-suggestions {
@@ -353,12 +403,6 @@ label span {
   font-size: 0.82rem;
 }
 
-.theme-toggle {
-  background: transparent;
-  color: var(--text-on-dark);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
 .eyebrow {
   margin: 0 0 0.25rem;
   color: #9dc2ea;
@@ -371,48 +415,42 @@ label span {
   color: var(--text-muted);
 }
 
-.status-pill {
-  max-width: 360px;
-  padding: 0.7rem 1rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--text-on-dark);
-}
-
-.nav-row {
+/* Primary nav (mockup .navtabs): flat surface bar under the app bar, 2px bottom-border
+   active indicator. Squared corners so it reads as one block with the appbar above it. */
+.navtabs {
   display: flex;
-  gap: 0.75rem;
-  margin: 1rem 0 1.25rem;
-  padding: 0.75rem;
-  border-radius: var(--r-panel);
+  gap: 2px;
+  margin: 0 0 1rem;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  border: 1px solid var(--border);
-  /* Scroll-shadow trick: the two solid-to-transparent layers are attached "local" (they scroll
-     with the content and mask the shadow layers below except at the true start/end), so the
-     shadow at each edge only shows while there's more to scroll in that direction - it hides
-     itself automatically once the nav fits or the user scrolls all the way to that edge. */
-  background:
-    linear-gradient(to right, var(--surface) 30%, rgba(0, 0, 0, 0)) 0 0,
-    linear-gradient(to right, rgba(0, 0, 0, 0), var(--surface) 70%) 100% 0,
-    linear-gradient(to right, rgba(15, 23, 36, 0.16), rgba(0, 0, 0, 0)) 0 0,
-    linear-gradient(to right, rgba(0, 0, 0, 0), rgba(15, 23, 36, 0.16)) 100% 0;
-  background-repeat: no-repeat;
-  background-color: var(--surface);
-  background-size: 32px 100%, 32px 100%, 12px 100%, 12px 100%;
-  background-attachment: local, local, scroll, scroll;
 }
 
-.nav-button {
+.navtabs button {
   border: 0;
-  background: transparent;
+  background: none;
+  border-radius: 0;
+  color: var(--text-muted);
+  padding: 9px 14px 7px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
-  padding: 0.45rem 0.75rem;
-  font-size: 0.88rem;
+  border-bottom: 2px solid transparent;
 }
 
-.nav-button.active {
-  background: var(--primary-soft);
+.navtabs button:hover {
+  color: var(--text);
+  border-color: transparent;
+}
+
+.navtabs button.on {
   color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.navtabs button.on:hover {
+  border-bottom-color: var(--primary);
 }
 
 .error-banner {
@@ -450,6 +488,20 @@ label span {
   background: var(--surface);
   border-radius: var(--r-panel);
   border: 1px solid var(--border);
+}
+
+/* Compact page title row (replaces the old hero panel on Settings). */
+.page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.page-title-row h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
 }
 
 .subtle-text {
@@ -907,8 +959,11 @@ button.stat-card {
 
 .table-wrap {
   overflow-x: auto;
-  /* Same self-hiding scroll-shadow technique as .nav-row - assumes a --surface-colored parent
-     (true for every current usage: .panel, .stat-card, .hero-panel, .modal-shell all share it). */
+  /* Self-hiding scroll-shadow technique: the two solid-to-transparent layers are attached
+     "local" (they scroll with the content and mask the shadow layers below except at the true
+     start/end), so the shadow at each edge only shows while there's more to scroll in that
+     direction. Assumes a --surface-colored parent (true for every current usage: .panel,
+     .stat-card, .hero-panel, .modal-shell all share it). */
   background:
     linear-gradient(to right, var(--surface) 30%, rgba(0, 0, 0, 0)) 0 0,
     linear-gradient(to right, rgba(0, 0, 0, 0), var(--surface) 70%) 100% 0,
@@ -1437,7 +1492,6 @@ code {
     padding: 0.75rem;
   }
 
-  .topbar,
   .hero-panel,
   .quick-actions-toolbar,
   .workspace-header-cards,
@@ -1450,12 +1504,10 @@ code {
   .readonly-grid,
   .diagnostics-grid,
   .form-grid,
-  .compact-info-grid,
-  .topbar-actions {
+  .compact-info-grid {
     grid-template-columns: 1fr;
   }
 
-  .topbar,
   .hero-panel,
   .bulk-action-bar,
   .quick-actions-toolbar,
@@ -1464,7 +1516,6 @@ code {
   .path-field-row,
   .toolbar-row,
   .command-list-row,
-  .topbar-actions,
   .modal-header {
     flex-direction: column;
     align-items: stretch;
@@ -1474,8 +1525,16 @@ code {
     align-items: flex-start;
   }
 
-  .status-pill {
-    max-width: none;
+  /* The appbar keeps its single-row layout on small screens; let the search input shrink. */
+  .appbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 48px;
+    padding: 8px 12px;
+  }
+
+  .appbar-search input {
+    width: min(280px, 60vw);
   }
 }
 

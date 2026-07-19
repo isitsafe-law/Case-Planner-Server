@@ -1468,6 +1468,7 @@ function App() {
   const [workQueueSearch, setWorkQueueSearch] = useState('')
   const [caseSearch, setCaseSearch] = useState('')
   const [topbarSearch, setTopbarSearch] = useState('')
+  const globalSearchInputRef = useRef<HTMLInputElement>(null)
   const [statusFilter, setStatusFilter] = useState('')
   const [caseStatusFilter, setCaseStatusFilter] = useState('')
   const [countyFilter, setCountyFilter] = useState('')
@@ -6696,48 +6697,49 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">ARDOT Legal Division</p>
-          <h1>ARDOT Case Planner</h1>
-        </div>
-        <div className="topbar-actions">
-          <form className="topbar-search" onSubmit={(event) => { setSearchDropdownOpen(false); submitGlobalSearch(event) }}>
-            <input
-              value={topbarSearch}
-              onChange={(event) => setTopbarSearch(event.target.value)}
-              onFocus={() => { if (searchSuggestions.length > 0) setSearchDropdownOpen(true) }}
-              onBlur={() => window.setTimeout(() => setSearchDropdownOpen(false), 150)}
-              onKeyDown={(event) => { if (event.key === 'Escape') setSearchDropdownOpen(false) }}
-              placeholder="Search cases..."
-              aria-label="Search cases"
-            />
-            <button type="submit">Search</button>
-            {searchDropdownOpen && searchSuggestions.length > 0 && (
-              <div className="search-suggestions">
-                {searchSuggestions.map((match) => (
-                  <button
-                    key={match.id}
-                    type="button"
-                    className="search-suggestion"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => { setSearchDropdownOpen(false); setTopbarSearch(''); setSearchSuggestions([]); openCase(match.id, 'overview') }}
-                  >
-                    <strong>{match.caseName || match.caseNumber || `Case ${match.id}`}</strong>
-                    <span>{[match.caseNumber, match.jobNumber && `Job ${match.jobNumber}`, match.tract && `Tract ${match.tract}`].filter(Boolean).join(' · ')}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </form>
-        </div>
+      <header className="appbar">
+        <div className="brand-tick" aria-hidden="true" />
+        <h1 className="wordmark">ARDOT Case Planner <span>· Legal Division</span></h1>
+        <div className="appbar-spacer" />
+        <form className="appbar-search" onSubmit={(event) => { setSearchDropdownOpen(false); submitGlobalSearch(event) }}>
+          <input
+            ref={globalSearchInputRef}
+            value={topbarSearch}
+            onChange={(event) => setTopbarSearch(event.target.value)}
+            onFocus={() => { if (searchSuggestions.length > 0) setSearchDropdownOpen(true) }}
+            onBlur={() => window.setTimeout(() => setSearchDropdownOpen(false), 150)}
+            onKeyDown={(event) => { if (event.key === 'Escape') setSearchDropdownOpen(false) }}
+            placeholder="Search cases…"
+            aria-label="Search cases"
+          />
+          <button type="submit">Search</button>
+          {searchDropdownOpen && searchSuggestions.length > 0 && (
+            <div className="search-suggestions">
+              {searchSuggestions.map((match) => (
+                <button
+                  key={match.id}
+                  type="button"
+                  className="search-suggestion"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => { setSearchDropdownOpen(false); setTopbarSearch(''); setSearchSuggestions([]); openCase(match.id, 'overview') }}
+                >
+                  <strong>{match.caseName || match.caseNumber || `Case ${match.id}`}</strong>
+                  <span>{[match.caseNumber, match.jobNumber && `Job ${match.jobNumber}`, match.tract && `Tract ${match.tract}`].filter(Boolean).join(' · ')}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </form>
+        {/* TODO(step 7): wire the command palette here; for now this focuses the global search. */}
+        <button type="button" className="kbd" aria-label="Open command palette" onClick={() => globalSearchInputRef.current?.focus()}>Ctrl K</button>
       </header>
 
-      <nav className="nav-row">
+      <nav className="navtabs" aria-label="Primary">
         {navItems.map((item) => (
           <button
             key={item.key}
-            className={item.key === page ? 'nav-button active' : 'nav-button'}
+            className={item.key === page ? 'on' : undefined}
+            aria-current={item.key === page ? 'page' : undefined}
             onClick={() => {
               setPage(item.key)
               if (item.key === 'cases') goToCaseList()
@@ -7780,12 +7782,8 @@ function App() {
 
       {page === 'settings' && (
         <main className="page">
-          <section className="hero-panel">
-            <div>
-              <p className="eyebrow dark">Settings</p>
-              <h2>Settings, Import, and Diagnostics</h2>
-              <p className="subtle-text">Appearance, local storage paths, CSV import, diagnostics, and IT notes all live here so the top navigation stays focused on daily work.</p>
-            </div>
+          <section className="page-title-row">
+            <h2>Settings</h2>
           </section>
 
           <div className="settings-layout">
@@ -7885,8 +7883,8 @@ function App() {
                   <PathField label="Database path" value={diagnostics.databasePath} />
                   <label><span>Database architecture note</span><textarea readOnly value={diagnostics.databaseArchitectureNote} /></label>
                   <label><span>Write-safety details</span><textarea readOnly value={diagnostics.writeSafetyMessage} /></label>
-                  <label><span>Last import result</span><input readOnly value={diagnostics.lastImportResult || 'None'} /></label>
-                  <label><span>Last document generation result</span><input readOnly value={diagnostics.lastDocumentGenerationResult || 'None'} /></label>
+                  <label><span>Last import result</span><input readOnly value={diagnostics.lastImportResult || '—'} /></label>
+                  <label><span>Last document generation result</span><input readOnly value={diagnostics.lastDocumentGenerationResult || '—'} /></label>
                   <PathField label="Latest log path" value={diagnostics.latestLogPath || 'Not available'} />
                 </div>
               ) : <p>Diagnostics are loading.</p>}
@@ -7896,8 +7894,8 @@ function App() {
           {settingsSection === 'storage' && (
             <Panel title="Local Storage / Paths">
               <div className="settings-subpanel">
-                <div className="panel-header"><div><h3>Case Status Migration Review {statusMappingReviewCases.length > 0 && <span className="pill pill-warn">{statusMappingReviewCases.length} unresolved</span>}</h3><p className="helper-text">Administrative review for cases whose legacy stage, track, or status could not be mapped confidently.</p></div><button onClick={() => void loadStatusMappingReview()}>Refresh Review</button></div>
-                {statusMappingReviewCases.length > 0 ? <div className="table-wrap top-gap-small"><table className="compact-table"><thead><tr><th>Case</th><th>Legacy values</th><th>Projected status</th><th>Action</th></tr></thead><tbody>{statusMappingReviewCases.map((item) => <tr key={item.id}><td>{item.caseName || item.caseNumber || ('Case ' + item.id)}</td><td>{[item.status, item.stage, item.track].filter(Boolean).join(' · ')}</td><td>{item.caseStatus || 'Review needed'}</td><td><button onClick={() => { setSelectedCaseId(item.id); setCasesView('workspace'); setPage('cases') }}>Open Case</button></td></tr>)}</tbody></table></div> : <p className="helper-text top-gap-small">No ambiguous mappings loaded. Select Refresh Review to check.</p>}
+                <div className="panel-header"><div><h3>Case Status Migration Review {statusMappingReviewCases.length > 0 && <StatusChip tone="warn">{statusMappingReviewCases.length} unresolved</StatusChip>}</h3><p className="helper-text">Administrative review for cases whose legacy stage, track, or status could not be mapped confidently.</p></div><button onClick={() => void loadStatusMappingReview()}>Refresh Review</button></div>
+                {statusMappingReviewCases.length > 0 ? <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Case</th><th>Legacy values</th><th>Projected status</th><th>Action</th></tr></thead><tbody>{statusMappingReviewCases.map((item) => <tr key={item.id}><td>{item.caseName || item.caseNumber || ('Case ' + item.id)}</td><td>{[item.status, item.stage, item.track].filter(Boolean).join(' · ')}</td><td>{item.caseStatus || 'Review needed'}</td><td><button onClick={() => { setSelectedCaseId(item.id); setCasesView('workspace'); setPage('cases') }}>Open Case</button></td></tr>)}</tbody></table></div> : <p className="helper-text top-gap-small">No ambiguous mappings loaded. Select Refresh Review to check.</p>}
               </div>
               <p className="helper-text">These local folder paths are read-only in the browser build. Browse selection is offered where the browser can safely pick a file, such as CSV import.</p>
               <div className="readonly-grid top-gap-small">
@@ -8014,11 +8012,11 @@ function App() {
                 {checklistTemplates.length === 0 ? <p>No checklist templates yet.</p> : checklistTemplates.map((template) => (
                   <div key={template.id} className="panel reference-doc">
                     <div className="panel-header">
-                      <h3>{template.name}{!template.active && <span className="pill pill-neutral inline-pill">Inactive</span>}</h3>
+                      <h3>{template.name}{!template.active && <> <StatusChip tone="neutral">Inactive</StatusChip></>}</h3>
                     </div>
                     <div className="panel-body">
                       <p className="helper-text">
-                        {template.triggerType === 'Stage' ? `Workflow Status: ${template.stage || 'Not set'}` : `Issue Tag: ${template.issueTagName || 'Not set'}${template.stage ? ` | Status filter: ${template.stage}` : ''}`}
+                        {template.triggerType === 'Stage' ? `Workflow Status: ${template.stage || '—'}` : `Issue Tag: ${template.issueTagName || '—'}${template.stage ? ` | Status filter: ${template.stage}` : ''}`}
                         {' | '}Track: {template.track}{' | '}{template.items.length} item{template.items.length === 1 ? '' : 's'}
                       </p>
                       <div className="button-row compact-actions">
@@ -8031,17 +8029,17 @@ function App() {
                       {expandedTemplateId === template.id && (
                         <div className="top-gap-small">
                           <div className="table-wrap">
-                            <table className="compact-table">
+                            <table className="ui-table">
                               <thead>
                                 <tr><th>Order</th><th>Task</th><th>Workflow Status</th><th>Due Offset (days)</th><th>Actions</th></tr>
                               </thead>
                               <tbody>
                                 {template.items.length === 0 ? <tr><td colSpan={5}>No items yet.</td></tr> : template.items.map((item) => (
                                   <tr key={item.id}>
-                                    <td>{item.sortOrder}</td>
+                                    <td className="ui-data">{item.sortOrder}</td>
                                     <td>{item.task}</td>
-                                    <td>{item.phase || 'Not set'}</td>
-                                    <td>{item.dueOffsetDays ?? 'Not set'}</td>
+                                    <td>{item.phase || <span className="ui-cell-faint">—</span>}</td>
+                                    <td className="ui-data">{item.dueOffsetDays ?? <span className="ui-cell-faint">—</span>}</td>
                                     <td>
                                       <div className="button-row compact-actions row-actions">
                                         <button onClick={() => startEditTemplateItem(item)}>Edit</button>
@@ -8072,16 +8070,16 @@ function App() {
                 <button className="primary" onClick={() => void createBackupNow()}>Backup Now</button>
               </div>
               <div className="table-wrap top-gap-small">
-                <table className="compact-table">
+                <table className="ui-table">
                   <thead>
                     <tr><th>Created</th><th>File</th><th>Size</th><th>Actions</th></tr>
                   </thead>
                   <tbody>
                     {backups.length === 0 ? <tr><td colSpan={4}>No backups yet.</td></tr> : backups.map((backup) => (
                       <tr key={backup.fileName}>
-                        <td>{displayDateTime(backup.createdAt)}</td>
-                        <td>{backup.fileName}</td>
-                        <td>{formatFileSize(backup.sizeBytes)}</td>
+                        <td className="ui-data">{displayDateTime(backup.createdAt)}</td>
+                        <td className="ui-data">{backup.fileName}</td>
+                        <td className="ui-data">{formatFileSize(backup.sizeBytes)}</td>
                         <td><button onClick={() => void restoreFromBackup(backup)}>Restore</button></td>
                       </tr>
                     ))}
@@ -8320,7 +8318,7 @@ function App() {
               <p className="helper-text">Configure calculated deadlines by anchor, offset, track, and severity. Generated deadlines retain structured source provenance and manual overrides.</p>
               <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',track:'Any',active:true})}>Add Deadline Template</button>
               {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Track</span><select value={deadlineTemplateDraft.track} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,track:e.target.value})}><option>Any</option>{caseTracks.map(x=><option key={x}>{x}</option>)}</select></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
-              <div className="table-wrap top-gap-small"><table className="compact-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Track</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td>{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td>{t.track}</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
+              <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Track</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td>{t.track}</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
             </Panel>
           )}
 

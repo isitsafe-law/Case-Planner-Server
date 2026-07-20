@@ -1620,6 +1620,7 @@ function App() {
   const [referenceEditKey, setReferenceEditKey] = useState<string | null>(null)
   const [referenceEditDraft, setReferenceEditDraft] = useState<ReferenceDocument | null>(null)
   const [noteDraft, setNoteDraft] = useState<CaseNote>({ id: 0, caseId: 0, title: '', body: '', createdAt: '', updatedAt: '' })
+  const [noteModalOpen, setNoteModalOpen] = useState(false)
   const [hearingDraft, setHearingDraft] = useState<Hearing>({ id: 0, caseId: 0, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
   const [message, setMessage] = useState('Loading local workspace...')
   const [errorMessage, setErrorMessage] = useState('')
@@ -2426,6 +2427,7 @@ function App() {
 
   function startEditCaseNote(note: CaseNote) {
     setNoteDraft(note)
+    setNoteModalOpen(true)
   }
 
   function startNewHearing() {
@@ -3749,6 +3751,7 @@ function App() {
       })
       await refreshAll(caseId)
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
+      setNoteModalOpen(false)
       setMessage('Case note saved.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save the case note.')
@@ -5285,7 +5288,7 @@ function App() {
                 <button className="primary" onClick={() => startDeadlineModal()}>Add Deadline</button>
                 <button onClick={() => startChecklistModal()}>Add Task</button>
                 <button onClick={() => startDiscoveryModal()}>Add Discovery Item</button>
-                {!isNewCase && <button onClick={() => { startNewCaseNote(); setCaseTab('notes') }}>Add Note</button>}
+                {!isNewCase && <button onClick={() => { startNewCaseNote(); setCaseTab('notes'); setNoteModalOpen(true) }}>Add Note</button>}
                 {!isNewCase && (
                   <button onClick={() => void changeStatus(selectedCase.status === 'Closed' ? 'Active' : 'Closed')}>
                     {selectedCase.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
@@ -5770,23 +5773,14 @@ function App() {
         )}
 
         {caseTab === 'notes' && (
-          <div className="workspace-panel-grid two-col">
-            <Panel title={noteDraft.id === 0 ? 'New Note' : 'Edit Note'}>
-              <div className="form-grid">
-                <label><span>Title</span><input value={noteDraft.title} onChange={(event) => setNoteDraft({ ...noteDraft, title: event.target.value })} placeholder="Short note title" /></label>
-                <label className="full-span"><span>Note</span><textarea value={noteDraft.body} onChange={(event) => setNoteDraft({ ...noteDraft, body: event.target.value })} placeholder="Case notes, updates, strategy points, or follow-up reminders" /></label>
-              </div>
+          <div className="workspace-sections">
+            <Panel title="Case Notes">
               <div className="button-row compact-actions top-gap-small">
-                <button className="primary" onClick={() => void saveCaseNote()}>{noteDraft.id === 0 ? 'Save Note' : 'Update Note'}</button>
-                <button onClick={startNewCaseNote}>Clear</button>
+                <Btn variant="primary" onClick={() => { startNewCaseNote(); setNoteModalOpen(true) }}>Add Note</Btn>
                 <button onClick={() => void exportCaseNotes()}>Export Notes</button>
               </div>
-              {noteDraft.updatedAt && <p className="helper-text top-gap-small">Last edited {displayDateTime(noteDraft.updatedAt)}.</p>}
-            </Panel>
-
-            <Panel title="Case Notes">
               {workspace && workspace.caseNotes.length > 0 ? (
-                <div className="stacked-panels compact-stack">
+                <div className="stacked-panels compact-stack top-gap-small">
                   {workspace.caseNotes.map((note) => (
                     <article key={note.id} className="summary-card note-card">
                       <div className="button-row split-row">
@@ -5801,7 +5795,7 @@ function App() {
                     </article>
                   ))}
                 </div>
-              ) : <p>No case notes yet. Use this tab for timestamped case updates instead of burying notes inside the case editor.</p>}
+              ) : <p className="top-gap-small">No case notes yet. Use this tab for timestamped case updates instead of burying notes inside the case editor.</p>}
             </Panel>
           </div>
         )}
@@ -6968,7 +6962,7 @@ function App() {
               { id: 'action-add-deadline', label: 'Add deadline', action: () => { setCaseTab('work'); startDeadlineModal() } },
               { id: 'action-add-task', label: 'Add task', action: () => { setCaseTab('work'); startChecklistModal() } },
               { id: 'action-add-event', label: 'Add event', action: () => { setCaseTab('work'); startNewHearing() } },
-              { id: 'action-add-note', label: 'Add note', action: () => { startNewCaseNote(); setCaseTab('notes') } },
+              { id: 'action-add-note', label: 'Add note', action: () => { startNewCaseNote(); setCaseTab('notes'); setNoteModalOpen(true) } },
               { id: 'action-edit-case', label: 'Edit case record', action: startEditCase },
               { id: 'action-generate-document', label: 'Generate a document', action: () => setCaseTab('documents') },
             ]
@@ -7574,6 +7568,20 @@ function App() {
             <button onClick={() => navigator.clipboard.writeText(templateTags.map((tag) => `{{${tag.key}}}`).join('\n'))}>Copy Tag List</button>
             <a className="button-like" href="/api/document-platform/sample-template">Download Sample Template (.docx)</a>
             <button onClick={() => setShowMergeTagsModal(false)}>Close</button>
+          </div>
+        </ModalShell>
+      )}
+
+      {noteModalOpen && (
+        <ModalShell title={noteDraft.id === 0 ? 'New Note' : 'Edit Note'} onClose={() => { startNewCaseNote(); setNoteModalOpen(false) }}>
+          <div className="form-grid">
+            <label><span>Title</span><input value={noteDraft.title} onChange={(event) => setNoteDraft({ ...noteDraft, title: event.target.value })} placeholder="Short note title" /></label>
+            <label className="full-span"><span>Note</span><textarea value={noteDraft.body} onChange={(event) => setNoteDraft({ ...noteDraft, body: event.target.value })} placeholder="Case notes, updates, strategy points, or follow-up reminders" /></label>
+          </div>
+          {noteDraft.updatedAt && <p className="helper-text top-gap-small">Last edited {displayDateTime(noteDraft.updatedAt)}.</p>}
+          <div className="button-row compact-actions top-gap-small modal-footer">
+            <button className="primary" onClick={() => void saveCaseNote()}>{noteDraft.id === 0 ? 'Save Note' : 'Update Note'}</button>
+            <button type="button" onClick={() => { startNewCaseNote(); setNoteModalOpen(false) }}>Cancel</button>
           </div>
         </ModalShell>
       )}

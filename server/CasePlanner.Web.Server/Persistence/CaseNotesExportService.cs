@@ -31,5 +31,11 @@ public sealed class ProviderNeutralCaseNotesExportService(IOperationalWorkspaceQ
         var cleaned=new string((value??"Case").Select(ch=>invalid.Contains(ch)?'_':ch).ToArray()).Trim();
         return string.IsNullOrWhiteSpace(cleaned)?"Case":cleaned;
     }
-    private static string Display(string? value)=>string.IsNullOrWhiteSpace(value)?"Not recorded":value;
+    private static string Display(string? value)
+    {
+        if(string.IsNullOrWhiteSpace(value))return "Not recorded";
+        return DateTime.TryParse(value,null,System.Globalization.DateTimeStyles.RoundtripKind,out var parsed)
+            ?parsed.ToLocalTime().ToString("G")
+            :value;
+    }
 }

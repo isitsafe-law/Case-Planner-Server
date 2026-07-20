@@ -1531,6 +1531,7 @@ function App() {
   const [riskAnalysisDate, setRiskAnalysisDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [riskAnalysisInterestRate, setRiskAnalysisInterestRate] = useState(0.06)
   const [riskAnalysisContingencyPercent, setRiskAnalysisContingencyPercent] = useState(0.30)
+  const [valuationRatesLocked, setValuationRatesLocked] = useState(true)
   const [riskAnalysisRows, setRiskAnalysisRows] = useState<RiskAnalysisRowInput[]>(() => defaultRiskAnalysisRows())
   const [riskAnalysisPreview, setRiskAnalysisPreview] = useState<RiskAnalysisResult | null>(null)
   const [riskAnalysisHistory, setRiskAnalysisHistory] = useState<RiskAnalysisHistoryRecord[]>([])
@@ -1796,6 +1797,7 @@ function App() {
           setRiskAnalysisDate(result.analysisDate || new Date().toISOString().slice(0, 10))
           setRiskAnalysisInterestRate(result.interestRate || 0.06)
           setRiskAnalysisContingencyPercent(result.contingencyFeePercent || 0.30)
+          setValuationRatesLocked(true)
           setRiskAnalysisNarrative(result.narrative ?? '')
           setRiskAnalysisRows(rows)
           setValuationPositions(positions)
@@ -4072,6 +4074,7 @@ function App() {
       setRiskAnalysisDate(snapshot.analysisDate || new Date().toISOString().slice(0, 10))
       setRiskAnalysisInterestRate(snapshot.interestRate || 0.06)
       setRiskAnalysisContingencyPercent(snapshot.contingencyFeePercent || 0.30)
+      setValuationRatesLocked(true)
       setRiskAnalysisNarrative(snapshot.narrative ?? '')
       setRiskAnalysisRows(snapshot.rows.filter((row) => !row.isSplit).map((row) => ({ rowKey: row.rowKey, label: row.label, offerMaker: row.offerMaker, includeSplit: row.includeSplit, justCompensation: row.justCompensation, landownerFeesCosts: row.landownerFeesCosts, ashcCosts: row.ashcCosts, hourlyFeesRisk: row.hourlyFeesRisk })))
       setMessage('Historical risk analysis opened for review.')
@@ -5508,6 +5511,12 @@ function App() {
                       </Fragment>
                     ))}
                   </div>
+                  {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.propertyDescription)) && (
+                    <div className="record-kv-notes">
+                      <span className="record-kv-label">Property Description</span>
+                      <p className="preformatted-note">{selectedCase.propertyDescription || 'No property description yet.'}</p>
+                    </div>
+                  )}
                   {(showAllCaseRecordFields || shouldShowRecordValue(selectedCase.valuationNotes)) && (
                     <div className="record-kv-notes">
                       <span className="record-kv-label">Valuation Notes</span>
@@ -5961,8 +5970,32 @@ function App() {
               </div> : <>
               <div className="form-grid risk-analysis-inputs">
                 <label><span>Analysis Date</span><input type="date" value={riskAnalysisDate} onChange={(event) => setRiskAnalysisDate(event.target.value)} onBlur={() => void recomputeRiskAnalysis(riskAnalysisRows, riskAnalysisNarrative)} /></label>
-                <label><span>Interest Rate</span><input type="number" min="0" max="1" step="0.001" value={riskAnalysisInterestRate} onChange={(event) => setRiskAnalysisInterestRate(Number(event.target.value))} onBlur={() => void recomputeRiskAnalysis(riskAnalysisRows, riskAnalysisNarrative)} /></label>
-                <label><span>Contingency Fee %</span><input type="number" min="0" max="1" step="0.01" value={riskAnalysisContingencyPercent} onChange={(event) => setRiskAnalysisContingencyPercent(Number(event.target.value))} onBlur={() => void recomputeRiskAnalysis(riskAnalysisRows, riskAnalysisNarrative)} /></label>
+                <label>
+                  <span>Interest Rate</span>
+                  {valuationRatesLocked ? (
+                    <input readOnly value={`${Math.round(riskAnalysisInterestRate * 1000) / 10}%`} />
+                  ) : (
+                    <div className="percent-input">
+                      <input type="number" min="0" max="100" step="0.1" value={Math.round(riskAnalysisInterestRate * 1000) / 10} onChange={(event) => setRiskAnalysisInterestRate(Number(event.target.value) / 100)} onBlur={() => void recomputeRiskAnalysis(riskAnalysisRows, riskAnalysisNarrative)} />
+                      <span className="percent-input-suffix">%</span>
+                    </div>
+                  )}
+                </label>
+                <label>
+                  <span>Contingency Fee %</span>
+                  {valuationRatesLocked ? (
+                    <input readOnly value={`${Math.round(riskAnalysisContingencyPercent * 1000) / 10}%`} />
+                  ) : (
+                    <div className="percent-input">
+                      <input type="number" min="0" max="100" step="0.1" value={Math.round(riskAnalysisContingencyPercent * 1000) / 10} onChange={(event) => setRiskAnalysisContingencyPercent(Number(event.target.value) / 100)} onBlur={() => void recomputeRiskAnalysis(riskAnalysisRows, riskAnalysisNarrative)} />
+                      <span className="percent-input-suffix">%</span>
+                    </div>
+                  )}
+                </label>
+                <label>
+                  <span>&nbsp;</span>
+                  <Btn size="sm" variant="ghost" onClick={() => setValuationRatesLocked((locked) => !locked)}>{valuationRatesLocked ? 'Edit' : 'Done'}</Btn>
+                </label>
               </div>
               <div className="form-grid">
                 <label className="full-span">
@@ -7155,6 +7188,7 @@ function App() {
                     <input type="date" value={caseDraft.fundsWithdrawnDate || ''} onChange={(event) => patchCaseDraft({ fundsWithdrawnDate: event.target.value })} onInput={(event) => patchCaseDraft({ fundsWithdrawnDate: event.currentTarget.value })} />
                   </label>
                 )}
+                <label className="full-span"><span>Property Description</span><textarea value={caseDraft.propertyDescription || ''} onChange={(event) => patchCaseDraft({ propertyDescription: event.target.value })} placeholder="Full description of the property at issue" /></label>
               </div>
             </section>
 

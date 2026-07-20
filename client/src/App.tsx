@@ -2708,49 +2708,6 @@ function App() {
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load status mapping review.') }
   }
 
-  async function pipelineNote(caseId: number) {
-    const note = window.prompt('Optional pipeline note')
-    if (note === null) return
-    try { const saved = await api<{ id: number }>('/api/case-notes', { method: 'POST', body: JSON.stringify({ caseId, title: 'Pipeline Note', body: note }) }); await api(`/api/cases/${caseId}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'CaseNoteAdded', notes: `Case note added from Pipeline (note ${saved.id}).` }) }); await refreshAttorneyDashboard(); setMessage('Pipeline note added.') }
-    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to add pipeline note.') }
-  }
-
-  async function pipelineHolder(caseId: number) {
-    const holder = window.prompt('Current holder', 'Attorney')
-    if (!holder) return
-    try { const result = await api<{ rowVersion?: string | null }>(`/api/cases/${caseId}/holder`, { method: 'POST', body: JSON.stringify({ rowVersion: allCases.find((item) => item.id === caseId)?.rowVersion, currentHolder: holder }) }); applyCaseRowVersion(caseId, result.rowVersion); await refreshAttorneyDashboard(); setMessage('Pipeline holder updated.') }
-    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to update pipeline holder.') }
-  }
-
-  async function pipelineReview(caseId: number) {
-    const date = window.prompt('Next review date (YYYY-MM-DD)', new Date().toISOString().slice(0, 10))?.trim()
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return
-    try { const result = await api<{ rowVersion?: string | null }>(`/api/cases/${caseId}/next-action`, { method: 'POST', body: JSON.stringify({ rowVersion: allCases.find((item) => item.id === caseId)?.rowVersion, nextAction: 'Review pipeline readiness', nextReviewDate: date }) }); applyCaseRowVersion(caseId, result.rowVersion); await refreshAttorneyDashboard(); setMessage('Pipeline review date updated.') }
-    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to set the Pipeline review date.') }
-  }
-
-  async function advancePipelineCase(caseId: number) {
-    try {
-      const workspace = await api<WorkspaceResponse>(`/api/cases/${caseId}`)
-      const record = workspace.case
-      if (!(await confirmAction({ title: 'Advance case?', message: `Advance ${record.caseName} from Pipeline to Filed / Service Pending?`, confirmLabel: 'Advance' }))) return
-      const filingDate = window.prompt('Filing date (YYYY-MM-DD)', record.filingDate || new Date().toISOString().slice(0, 10))?.trim()
-      if (!filingDate || !/^\d{4}-\d{2}-\d{2}$/.test(filingDate)) { setErrorMessage('A valid filing date is required to leave Pipeline.'); return }
-      const saved = await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(serializeCaseDraft({ ...record, filingDate, caseStatus: 'Filed / Service Pending' })) })
-      await api(`/api/cases/${caseId}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'CaseStatusChanged', notes: 'Advanced from Pipeline to Filed / Service Pending.' }) })
-      const generationChoice = window.prompt('Generate applicable tasks and deadlines? Enter: all, review, or none', 'review')?.trim().toLowerCase()
-      if (generationChoice === 'all') {
-        await addFromTemplates(saved.id)
-      } else if (generationChoice === 'review') {
-        await refreshAll(saved.id)
-        await openWorkTemplatePicker('All', saved.id)
-      } else {
-        await refreshAll(saved.id)
-      }
-      await refreshAttorneyDashboard(); setMessage(generationChoice === 'review' ? 'Pipeline case filed. Review proposed tasks and deadlines.' : 'Pipeline case filed.')
-    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to advance pipeline case.') }
-  }
-
   async function addReviewedWorkTemplates() {
     if (!workTemplatePicker) return
     const chosen = workTemplatePicker.items.filter((x) => x.selected && (workTemplatePicker.kind === 'All' || x.kind === workTemplatePicker.kind))
@@ -7860,7 +7817,7 @@ function App() {
                     )}
 
                     {dashboardPanelTab === 'pipeline' && (
-                      <FilingPipelinePanel pipeline={attorneyDashboard.filingPipeline} onOpenCase={(id) => openCase(id, 'overview')} onHandoff={openHandoffDialog} onNote={(id) => void pipelineNote(id)} onHolder={(id) => void pipelineHolder(id)} onReview={(id) => void pipelineReview(id)} onAdvance={(id) => void advancePipelineCase(id)} />
+                      <FilingPipelinePanel pipeline={attorneyDashboard.filingPipeline} onOpenCase={(id) => openCase(id, 'overview')} onHandoff={openHandoffDialog} />
                     )}
 
                     {dashboardPanelTab === 'trial' && (

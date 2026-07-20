@@ -1464,6 +1464,14 @@ code {
 .trial-watch-primary div, .trial-watch-next { display: grid; gap: .15rem; }
 .trial-watch-primary span, .trial-watch-next span { color: var(--text-muted); font-size: .75rem; }
 .trial-watch-card > button { justify-self: start; }
+.pipeline-watch-list { display: grid; gap: .65rem; }
+.pipeline-watch-card { display: grid; gap: .65rem; padding: .8rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface); cursor: pointer; }
+.pipeline-watch-card:hover { border-color: var(--accent); }
+.pipeline-watch-card-header, .pipeline-watch-primary { display: flex; justify-content: space-between; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.pipeline-watch-primary { justify-content: flex-start; gap: 1.5rem; }
+.pipeline-watch-primary div { display: grid; gap: .15rem; }
+.pipeline-watch-primary span { color: var(--text-muted); font-size: .75rem; }
+.pipeline-watch-card > .button-row { justify-self: start; }
 .plan-next-step-menu { display: grid; gap: .5rem; padding: .6rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface-subtle); }
 .compact-empty-state { display: grid; gap: .55rem; justify-items: start; padding: .7rem; border: 1px dashed var(--border); border-radius: var(--r-panel); background: var(--surface-subtle); }
 .risk-analysis-ledger th, .risk-analysis-ledger td { padding: .5rem .6rem; vertical-align: middle; }
@@ -1483,11 +1491,6 @@ code {
 .activity-navigable::after { content: ' →'; color: var(--accent); font-weight: 700; }
 .trial-notebook-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 1rem; align-items: start; }
 .trial-materials-column, .trial-checklist-column { display: grid; gap: 1rem; min-width: 0; }
-.pipeline-more-actions { position: relative; }
-.pipeline-more-actions summary { list-style: none; cursor: pointer; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: var(--r-ctl); font-size: .8rem; }
-.pipeline-more-actions summary::-webkit-details-marker { display: none; }
-.pipeline-more-menu { position: absolute; right: 0; z-index: 4; display: grid; gap: .3rem; min-width: 145px; padding: .45rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface); box-shadow: 0 8px 22px var(--shadow); }
-.pipeline-more-menu button { width: 100%; text-align: left; }
 @media (max-width: 900px) { .trial-notebook-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {
   .settings-layout { grid-template-columns: 1fr; }
@@ -2015,10 +2018,6 @@ code {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-}
-
-.filing-pipeline-row.priority td:first-child {
-  font-weight: 600;
 }
 
 .project-watch-list {

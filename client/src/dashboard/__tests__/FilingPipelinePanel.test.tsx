@@ -23,47 +23,63 @@ function makeRow(overrides: Partial<PreFilingTractRow> = {}): PreFilingTractRow 
   }
 }
 
+function makePipeline(rows: PreFilingTractRow[]): FilingPipelineView {
+  return { myDesk: rows.filter((r) => r.currentHolder === 'Attorney'), waiting: rows.filter((r) => r.currentHolder !== 'Attorney'), allPipeline: rows }
+}
+
 describe('FilingPipelinePanel', () => {
-  it('defaults to the My Desk tab', () => {
-    const pipeline: FilingPipelineView = { myDesk: [makeRow({ currentHolder: 'Attorney' })], waiting: [], allPipeline: [] }
+  it('renders a card per pre-filing case from the full pipeline', () => {
+    const pipeline = makePipeline([makeRow()])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
-    expect(screen.getByRole('tab', { name: /My Desk/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Smith Tract 7')).toBeInTheDocument()
+    expect(screen.getByText('Legal Assistant')).toBeInTheDocument()
   })
 
-  it('shows an explanatory empty state on My Desk when nothing is there', () => {
-    const pipeline: FilingPipelineView = { myDesk: [], waiting: [makeRow()], allPipeline: [makeRow()] }
+  it('shows an empty state when there are no pre-filing matters', () => {
+    const pipeline = makePipeline([])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
-    expect(screen.getByText('Nothing on your desk right now')).toBeInTheDocument()
+    expect(screen.getByText('No pre-filing matters right now')).toBeInTheDocument()
   })
 
-  it('switches to the Waiting tab and shows its rows', async () => {
-    const pipeline: FilingPipelineView = { myDesk: [], waiting: [makeRow()], allPipeline: [makeRow()] }
+  it('shows Unassigned when there is no current holder', () => {
+    const pipeline = makePipeline([makeRow({ currentHolder: null })])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
-
-    await userEvent.click(screen.getByRole('tab', { name: /Waiting/ }))
-    expect(screen.getByRole('tab', { name: /Waiting/ })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('Smith Tract 7')).toBeInTheDocument()
+    expect(screen.getByText('Unassigned')).toBeInTheDocument()
   })
 
-  it('flags a missing current holder or stage visibly, not silently', async () => {
-    const pipeline: FilingPipelineView = {
-      myDesk: [],
-      waiting: [makeRow({ currentHolder: null, pipelineStage: null })],
-      allPipeline: [],
-    }
+  it('computes days with holder from dateSentToCurrentHolder', () => {
+    // Build the "10 days ago" date string using the same UTC-calendar-day arithmetic the
+    // component uses, so the assertion doesn't depend on the machine's local timezone offset.
+    const today = new Date()
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+    const tenDaysAgo = new Date(todayUtc - 10 * 86_400_000)
+    const dateStr = `${tenDaysAgo.getUTCFullYear()}-${String(tenDaysAgo.getUTCMonth() + 1).padStart(2, '0')}-${String(tenDaysAgo.getUTCDate()).padStart(2, '0')}`
+    const pipeline = makePipeline([makeRow({ dateSentToCurrentHolder: dateStr })])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
-    await userEvent.click(screen.getByRole('tab', { name: /Waiting/ }))
-    const missingLabels = screen.getAllByText('Missing')
-    expect(missingLabels.length).toBe(1)
+    expect(screen.getByText('10')).toBeInTheDocument()
+  })
+
+  it('invokes onOpenCase for the right case when "Open Case" is clicked', async () => {
+    const onOpenCase = vi.fn()
+    const pipeline = makePipeline([makeRow({ caseId: 42 })])
+    render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={onOpenCase} onHandoff={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Case' }))
+    expect(onOpenCase).toHaveBeenCalledWith(42)
   })
 
   it('invokes onHandoff for the right case when "Hand off" is clicked', async () => {
     const onHandoff = vi.fn()
-    const pipeline: FilingPipelineView = { myDesk: [makeRow({ currentHolder: 'Attorney', caseId: 42 })], waiting: [], allPipeline: [] }
+    const pipeline = makePipeline([makeRow({ caseId: 42 })])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={onHandoff} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Hand off' }))
     expect(onHandoff).toHaveBeenCalledWith(42)
+  })
+
+  it('shows a priority pill only when priority is not Normal', () => {
+    const pipeline = makePipeline([makeRow({ priority: 'Rushed' })])
+    render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
+    expect(screen.getByText('Rushed')).toBeInTheDocument()
   })
 })

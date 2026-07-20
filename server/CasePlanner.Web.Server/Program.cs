@@ -684,6 +684,12 @@ app.MapDelete("/api/deadlines/{id:long}", async (long id,IDeadlineStore deadline
 app.MapGet("/api/cases/{id:long}/discovery", async (long id, IDiscoveryTrackingStore discovery) => Results.Ok(await discovery.GetAsync(id)));
 app.MapPost("/api/discovery", async (DiscoveryItemRecord model, IDiscoveryTrackingStore discovery,CaseAccessService access,CancellationToken token) =>
     await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await discovery.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/discovery/{id:long}", async (long id,IDiscoveryTrackingStore discovery,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("discovery",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await discovery.DeleteAsync(id, token: token);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/valuation-positions", async (long id,IValuationPositionStore positions) => Results.Ok(await positions.GetAsync(id)));
 app.MapPost("/api/valuation-positions", async (ValuationPositionRecord model,IValuationPositionStore positions,CaseAccessService access,CancellationToken token) =>
     await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await positions.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());

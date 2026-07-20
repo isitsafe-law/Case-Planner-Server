@@ -24,6 +24,7 @@ public interface IDiscoveryTrackingStore
     string Provider { get; }
     Task<List<DiscoveryItemRecord>> GetAsync(long? caseId, CancellationToken token = default);
     Task<DiscoveryItemRecord> SaveAsync(DiscoveryItemRecord model, CancellationToken token = default);
+    Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default);
 }
 
 public sealed class SqliteDeadlineStore(CasePlannerRepository repository) : IDeadlineStore
@@ -47,4 +48,5 @@ public sealed class SqliteDiscoveryTrackingStore(CasePlannerRepository repositor
     public string Provider => "Sqlite";
     public Task<List<DiscoveryItemRecord>> GetAsync(long? caseId, CancellationToken token = default) => repository.GetDiscoveryItemsAsync(caseId);
     public Task<DiscoveryItemRecord> SaveAsync(DiscoveryItemRecord model, CancellationToken token = default) => repository.SaveDiscoveryItemAsync(model);
+    public Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default) => repository.DeleteDiscoveryItemAsync(id);
 }

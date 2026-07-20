@@ -1145,7 +1145,7 @@ public sealed partial class CasePlannerRepository
             "checklist"=>"checklist_items","comparable-sale"=>"comparable_sales","witness"=>"witnesses",
             "exhibit"=>"exhibits","trial-motion"=>"trial_motions","case-issue-tag"=>"case_issue_tags",
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
-            "service-log"=>"service_log_entries","publication-entry"=>"publication_dates",
+            "service-log"=>"service_log_entries","publication-entry"=>"publication_dates","discovery"=>"discovery_tracking",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -1648,6 +1648,20 @@ public sealed partial class CasePlannerRepository
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved discovery item {model.DiscoveryType} at {DateTime.Now:G}");
             return model;
+        });
+    }
+
+    public async Task DeleteDiscoveryItemAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM discovery_tracking WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted discovery item {id} at {DateTime.Now:G}");
+            return 0;
         });
     }
 
@@ -4641,7 +4655,7 @@ public sealed partial class CasePlannerRepository
             : ws.Case.CaseStatus;
         foreach (var template in await GetChecklistTemplatesAsync())
         {
-            if (!template.Active || (template.Track != "Any" && template.Track != ws.Case.Track)) continue;
+            if (!template.Active) continue;
             if (template.TriggerType == "Stage" && template.Stage != workflowStatus) continue;
             if (template.TriggerType == "IssueTag" && !ws.CaseIssueTags.Any(t => t.TagName.Equals(template.IssueTagName, StringComparison.OrdinalIgnoreCase))) continue;
             foreach (var item in template.Items)
@@ -4655,7 +4669,7 @@ public sealed partial class CasePlannerRepository
         }
         foreach (var template in await GetDeadlineTemplatesAsync())
         {
-            if (!template.Active || (template.Track!="Any" && template.Track!=ws.Case.Track)) continue;
+            if (!template.Active) continue;
             var anchor = template.TriggerField switch { "filing_date"=>ParseDate(ws.Case.FilingDate), "trial_date"=>ParseDate(ws.Case.TrialDate), "service_perfected_date"=>ParseDate(ws.Case.ServicePerfectedDate), _=>null };
             var duplicate=ws.Deadlines.FirstOrDefault(x=>x.SourceTemplateId==template.Id.ToString() || x.Title.Equals(template.Title,StringComparison.OrdinalIgnoreCase));
             result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Track=template.Track,Severity=template.Severity,
@@ -5635,12 +5649,11 @@ public sealed partial class CasePlannerRepository
         var caseCmd = connection.CreateCommand();
         caseCmd.Transaction = tx;
         caseCmd.CommandText = """
-            SELECT COALESCE(track,'Contested'), filing_date, trial_date, service_perfected, service_perfected_date,
+            SELECT filing_date, trial_date, service_perfected, service_perfected_date,
                    COALESCE(status,''), COALESCE(stage,'')
             FROM cases WHERE id=@id
             """;
         caseCmd.Parameters.AddWithValue("@id", caseId);
-        string track;
         DateOnly? filingDate;
         DateOnly? trialDate;
         bool servicePerfected;
@@ -5654,13 +5667,12 @@ public sealed partial class CasePlannerRepository
                 return (0, 0);
             }
 
-            track = caseReader.GetString(0);
-            filingDate = ParseDate(caseReader.IsDBNull(1) ? null : caseReader.GetString(1));
-            trialDate = ParseDate(caseReader.IsDBNull(2) ? null : caseReader.GetString(2));
-            servicePerfected = !caseReader.IsDBNull(3) && caseReader.GetInt64(3) == 1;
-            servicePerfectedDate = ParseDate(caseReader.IsDBNull(4) ? null : caseReader.GetString(4));
-            caseStatus = caseReader.GetString(5);
-            caseStage = caseReader.GetString(6);
+            filingDate = ParseDate(caseReader.IsDBNull(0) ? null : caseReader.GetString(0));
+            trialDate = ParseDate(caseReader.IsDBNull(1) ? null : caseReader.GetString(1));
+            servicePerfected = !caseReader.IsDBNull(2) && caseReader.GetInt64(2) == 1;
+            servicePerfectedDate = ParseDate(caseReader.IsDBNull(3) ? null : caseReader.GetString(3));
+            caseStatus = caseReader.GetString(4);
+            caseStage = caseReader.GetString(5);
         }
 
         // Triage cases (freshly imported, not yet confirmed through the triage wizard) generate
@@ -5681,9 +5693,7 @@ public sealed partial class CasePlannerRepository
             SELECT id, trigger_field, offset_days, title, severity
             FROM deadline_templates
             WHERE active = 1
-              AND (track = 'Any' OR track = @track)
             """;
-        templateCmd.Parameters.AddWithValue("@track", track);
 
         var templates = new List<(long Id, string TriggerField, int OffsetDays, string Title, string Severity)>();
         await using (var reader = await templateCmd.ExecuteReaderAsync())
@@ -5946,7 +5956,6 @@ public sealed partial class CasePlannerRepository
             FROM checklist_template_items ti
             JOIN checklist_templates t ON t.id = ti.template_id
             WHERE t.active = 1
-              AND (t.track = 'Any' OR t.track = @track)
               AND (
                     (t.trigger_type = 'Stage' AND t.stage = @stage)
                  OR ({tagFilter})
@@ -5954,7 +5963,6 @@ public sealed partial class CasePlannerRepository
             ORDER BY t.id, ti.sort_order, ti.id
             """;
             candidateCmd.Parameters.AddWithValue("@stage", workflowStatus);
-        candidateCmd.Parameters.AddWithValue("@track", track);
 
         // Keyed by template name + sort_order (stable across reseeds), not the DB row id -
         // checklist_template_items.id gets wiped and reassigned every time ChecklistTemplateVersion

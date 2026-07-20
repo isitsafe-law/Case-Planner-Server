@@ -21,7 +21,8 @@ public sealed class SqlServerCaseChildLookupStore(IDatabaseConnectionFactory con
     private static readonly IReadOnlyDictionary<string,string> Tables=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
     {
         ["case-note"]="case_notes",["hearing"]="hearings",["checklist"]="checklist_items",["deadline"]="deadlines",
-        ["comparable-sale"]="comparable_sales",["witness"]="witnesses",["exhibit"]="exhibits",["trial-motion"]="trial_motions"
+        ["comparable-sale"]="comparable_sales",["witness"]="witnesses",["exhibit"]="exhibits",["trial-motion"]="trial_motions",
+        ["discovery"]="discovery_tracking"
     };
     public string Provider=>"SqlServer";
     public async Task<long?> GetCaseIdAsync(string kind,long id,CancellationToken token=default)

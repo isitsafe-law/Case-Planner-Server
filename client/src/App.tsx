@@ -925,8 +925,7 @@ const caseStages = [
   'Trial Track',
   'Resolved',
 ]
-const caseTracks = ['Contested', 'Settlement', 'Default', 'Friendly']
-const consolidatedCaseStatuses = ['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation', 'Resolved / Closed', 'Triage']
+const consolidatedCaseStatuses =['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation', 'Resolved / Closed', 'Triage']
 const checklistWorkflowStatuses = consolidatedCaseStatuses
 const deadlineStatuses = ['Open', 'Done', 'Reopened']
 const checklistStatuses = ['Not Started', 'In Progress', 'Done', 'N/A', 'Reopened']
@@ -2355,12 +2354,19 @@ function App() {
     setHandoffTarget({ caseId, caseName: row?.tractOrOwnerName ?? `Case ${caseId}` })
   }
 
-  async function submitHandoff(payload: { newHolder: string; newStage: string; handoffDate: string; nextReviewDate: string; note: string }) {
+  async function submitHandoff(payload: { newHolder: string; handoffDate: string; followUpDate: string }) {
     if (!handoffTarget) return
     try {
       const saved = await api<PipelineHandoffRecord>(`/api/cases/${handoffTarget.caseId}/pipeline-handoff`, {
         method: 'POST',
-        body: JSON.stringify({ ...payload, rowVersion: allCases.find((item) => item.id === handoffTarget.caseId)?.rowVersion }),
+        body: JSON.stringify({
+          newHolder: payload.newHolder,
+          newStage: '',
+          handoffDate: payload.handoffDate,
+          nextReviewDate: payload.followUpDate,
+          note: null,
+          rowVersion: allCases.find((item) => item.id === handoffTarget.caseId)?.rowVersion,
+        }),
       })
       applyCaseRowVersion(handoffTarget.caseId, saved.caseRowVersion)
       setHandoffTarget(null)
@@ -2649,6 +2655,18 @@ function App() {
       setMessage('Deadline deleted.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to delete deadline.')
+    }
+  }
+
+  async function deleteDiscoveryItem(item: DiscoveryItem) {
+    if (!(await confirmAction({ title: 'Delete discovery item?', message: `"${item.requestTitle || item.discoveryType}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/discovery/${item.id}`, { method: 'DELETE' })
+      await refreshAll(item.caseId)
+      setMessage('Discovery item deleted.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete discovery item.')
     }
   }
 
@@ -5026,6 +5044,7 @@ function App() {
                 <div className="ui-row-actions">
                   <Btn size="sm" onClick={() => void recordDiscoveryResponse(item)}>Record response</Btn>
                   <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'discovery')}>Open case ▸</Btn>
+                  <Btn size="sm" variant="danger" onClick={() => void deleteDiscoveryItem(item)}>Delete</Btn>
                 </div>
               </td>
             </tr>
@@ -6829,6 +6848,7 @@ function App() {
                             {discoveryStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                           </select>
                           <button onClick={() => startDiscoveryModal(item)}>Edit</button>
+                          <button className="row-icon-button" aria-label={`Delete discovery item ${item.requestTitle || item.discoveryType}`} onClick={() => void deleteDiscoveryItem(item)}>✕</button>
                         </div>
                       </div>
                       {expandedDiscoveryItemId === item.id && (
@@ -7580,13 +7600,6 @@ function App() {
                 </label>
               </>
             )}
-            <label>
-              <span>Track</span>
-              <select value={templateDraft.track} onChange={(event) => setTemplateDraft({ ...templateDraft, track: event.target.value })}>
-                <option value="Any">Any</option>
-                {caseTracks.map((track) => <option key={track} value={track}>{track}</option>)}
-              </select>
-            </label>
             <label className="toggle-inline"><span>Active</span><input type="checkbox" checked={templateDraft.active} onChange={(event) => setTemplateDraft({ ...templateDraft, active: event.target.checked })} /></label>
           </div>
           <div className="button-row compact-actions modal-footer">
@@ -8323,7 +8336,7 @@ function App() {
                     <div className="panel-body">
                       <p className="helper-text">
                         {template.triggerType === 'Stage' ? `Workflow Status: ${template.stage || '—'}` : `Issue Tag: ${template.issueTagName || '—'}${template.stage ? ` | Status filter: ${template.stage}` : ''}`}
-                        {' | '}Track: {template.track}{' | '}{template.items.length} item{template.items.length === 1 ? '' : 's'}
+                        {' | '}{template.items.length} item{template.items.length === 1 ? '' : 's'}
                       </p>
                       <div className="button-row compact-actions">
                         <button onClick={() => setExpandedTemplateId(expandedTemplateId === template.id ? null : template.id)}>
@@ -8641,10 +8654,10 @@ function App() {
 
           {settingsSection === 'deadlineTemplates' && (
             <Panel title="Deadline Templates">
-              <p className="helper-text">Configure calculated deadlines by anchor, offset, track, and severity. Generated deadlines retain structured source provenance and manual overrides.</p>
+              <p className="helper-text">Configure calculated deadlines by anchor, offset, and severity. Generated deadlines retain structured source provenance and manual overrides.</p>
               <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',track:'Any',active:true})}>Add Deadline Template</button>
-              {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Track</span><select value={deadlineTemplateDraft.track} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,track:e.target.value})}><option>Any</option>{caseTracks.map(x=><option key={x}>{x}</option>)}</select></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
-              <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Track</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td>{t.track}</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
+              {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
+              <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
             </Panel>
           )}
 

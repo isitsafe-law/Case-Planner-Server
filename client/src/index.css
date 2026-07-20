@@ -2234,6 +2234,8 @@ select.ui-status-select {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: border-color 120ms ease-out, background-color 120ms ease-out, color 120ms ease-out;
 }
 
@@ -2522,7 +2524,8 @@ table.ui-table {
   text-decoration: underline;
 }
 
-.ui-row-actions-wrap {
+.ui-row-actions-wrap,
+.ui-table .ui-row-actions.ui-row-actions-wrap {
   flex-wrap: wrap;
   justify-content: flex-start;
 }

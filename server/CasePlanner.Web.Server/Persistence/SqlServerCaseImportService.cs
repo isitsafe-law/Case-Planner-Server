@@ -23,6 +23,7 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                 model.CaseNumber=caseNumber;model.CaseName=Field(row,map,"Case Name");model.JobNumber=job;model.Tract=tract;model.County=Field(row,map,"County");
                 model.Status=current is null?(status is "Closed" or "Complete"?status:"Triage"):(current.Status=="Triage"?"Triage":status);
                 model.FilingDate=Date(Field(row,map,"Filing Date"));model.DateOfTaking=Date(Field(row,map,"Date of Taking"));model.TrialDate=Date(Field(row,map,"Trial Date"));
+                model.TrialEndDate=Date(Field(row,map,"Trial End Date"));model.PropertyDescription=Blank(Field(row,map,"Property Description"));
                 model.NextAction=Blank(Field(row,map,"Next Action"));model.NextActionDue=Date(Field(row,map,"Next Action Due"));model.DepositAmount=Money(Field(row,map,"Deposit Amount"));
                 model.Owner=Blank(Field(row,map,"Owner"));model.Landowner=Blank(Field(row,map,"Landowner"));model.PublicationServiceNotes=Blank(Field(row,map,"Notes"));
                 model.ServiceRequired=Bool(Field(row,map,"Service Required"),true);model.ServicePerfected=Bool(Field(row,map,"Service Perfected"));
@@ -53,6 +54,7 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                     model.CaseNumber=caseNumber;model.CaseName=string.IsNullOrWhiteSpace(name)?caseNumber:name;model.JobNumber=job;model.Tract=tract;model.County=Cell(row,map,"COUNTY");
                     model.Status=closed?"Closed":current is null||current.Status=="Triage"?"Triage":"Active";model.FilingDate=CellDate(row,map,"DATE FILED");
                     model.DateOfTaking=CellDate(row,map,"DATE OF TAKING");model.TrialDate=CellDate(row,map,"TRIAL DATE");model.DateOpened=CellDate(row,map,"DATE OPENED");model.DepositAmount=CellMoney(row,map,"DEPOSIT");
+                    model.TrialEndDate=CellDate(row,map,"TRIAL END DATE");model.PropertyDescription=Blank(Cell(row,map,"PROPERTY DESCRIPTION"));
                     model.PublicationServiceNotes=Blank(Cell(row,map,"NOTES"));model.AssignedAttorney=Blank(Cell(row,map,"ATTY"));model.OpposingCounsel=Blank(Cell(row,map,"ATTORNEY"));
                     model.Appraiser=Blank(Cell(row,map,"APPR"));model.TaxesOwed=Blank(Cell(row,map,"TAXES OWED?"));model.FundsWithdrawn=Blank(Cell(row,map,"FUNDS W/D?"));
                     model.DiscoveryCompleted=Blank(Cell(row,map,"DISCOVERY COMPLETED?"));model.UpdatedAppraisal=Blank(Cell(row,map,"UPDATED APPRAISAL?"));

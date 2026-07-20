@@ -58,6 +58,7 @@ type CaseRecord = {
   filingDate?: string | null
   dateOfTaking?: string | null
   trialDate?: string | null
+  trialEndDate?: string | null
   depositAmount?: number | null
   owner?: string | null
   landowner?: string | null
@@ -87,6 +88,7 @@ type CaseRecord = {
   wholePropertyAcres?: number | null
   acquisitionAcres?: number | null
   landownerAppraiserName?: string | null
+  propertyDescription?: string | null
   additionalDepositAmount?: number | null
   additionalDepositDate?: string | null
   createdAt?: string | null
@@ -368,11 +370,14 @@ type CaseNote = {
 
 const eventTypes = ['Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Other'] as const
 
+const eventStatuses = ['Scheduled', 'Completed', 'Continued', 'Canceled'] as const
+
 type Hearing = {
   id: number
   caseId: number
   title: string
   eventType?: string | null
+  status?: string | null
   hearingDate?: string | null
   location?: string | null
   description?: string | null
@@ -1019,9 +1024,11 @@ function emptyCase(): CaseRecord {
     dateOpened: new Date().toISOString().slice(0, 10),
     dateOfTaking: '',
     trialDate: '',
+    trialEndDate: '',
     depositAmount: null,
     owner: '',
     landowner: '',
+    propertyDescription: '',
     valuationNotes: '',
     settlementNotes: '',
     publicationServiceNotes: '',
@@ -1112,7 +1119,7 @@ function emptyExhibit(caseId: number): Exhibit {
 }
 
 function emptyHearing(caseId: number): Hearing {
-  return { id: 0, caseId, title: '', eventType: 'Hearing', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' }
+  return { id: 0, caseId, title: '', eventType: 'Hearing', status: 'Scheduled', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' }
 }
 
 function emptyTrialMotion(caseId: number): TrialMotion {
@@ -1334,7 +1341,7 @@ function validateCaseDraft(draft: CaseRecord): { fieldErrors: FieldErrors; summa
   const fieldErrors: FieldErrors = {}
   if (!draft.caseName.trim()) fieldErrors.caseName = 'Case name is required.'
 
-  for (const field of ['filingDate', 'dateOpened', 'dateOfTaking', 'trialDate', 'closedDate', 'serviceDeadlineBasisDate', 'serviceDeadline120', 'servicePerfectedDate'] as const) {
+  for (const field of ['filingDate', 'dateOpened', 'dateOfTaking', 'trialDate', 'trialEndDate', 'closedDate', 'serviceDeadlineBasisDate', 'serviceDeadline120', 'servicePerfectedDate'] as const) {
     if (!isValidDateValue(draft[field])) {
       fieldErrors[field] = 'Enter a valid date in YYYY-MM-DD format.'
     }
@@ -2525,9 +2532,11 @@ function App() {
       filingDate: normalizeDateValue(draft.filingDate),
       dateOfTaking: normalizeDateValue(draft.dateOfTaking),
       trialDate: normalizeDateValue(draft.trialDate),
+      trialEndDate: normalizeDateValue(draft.trialEndDate),
       depositAmount: draft.depositAmount == null || Number.isNaN(draft.depositAmount) ? null : draft.depositAmount,
       owner: normalizeTextValue(draft.owner),
       landowner: normalizeTextValue(draft.landowner),
+      propertyDescription: normalizeTextValue(draft.propertyDescription),
       valuationNotes: normalizeTextValue(draft.valuationNotes),
       settlementNotes: normalizeTextValue(draft.settlementNotes),
       publicationServiceNotes: normalizeTextValue(draft.publicationServiceNotes),
@@ -3758,6 +3767,7 @@ function App() {
           caseId,
           title: hearingDraft.title.trim(),
           eventType: hearingDraft.eventType?.trim() || 'Hearing',
+          status: (eventStatuses as readonly string[]).includes(hearingDraft.status || '') ? hearingDraft.status : 'Scheduled',
           hearingDate: normalizeDateValue(hearingDraft.hearingDate),
           location: normalizeTextValue(hearingDraft.location),
           description: normalizeTextValue(hearingDraft.description),

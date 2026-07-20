@@ -20,6 +20,10 @@ public sealed class CaseRecord
     public string? FilingDate { get; set; }
     public string? DateOfTaking { get; set; }
     public string? TrialDate { get; set; }
+    // Optional end date for a multi-day jury trial. Purely descriptive/display - dashboard
+    // triage, the attorney dashboard engine, and the deadline-template trigger all correctly
+    // continue to key off TrialDate (the start date) only.
+    public string? TrialEndDate { get; set; }
     public string? NextAction { get; set; }
     public string? NextActionDue { get; set; }
     public decimal? DepositAmount { get; set; }
@@ -51,6 +55,7 @@ public sealed class CaseRecord
     public decimal? WholePropertyAcres { get; set; }
     public decimal? AcquisitionAcres { get; set; }
     public string? LandownerAppraiserName { get; set; }
+    public string? PropertyDescription { get; set; }
     public decimal? AdditionalDepositAmount { get; set; }
     public string? AdditionalDepositDate { get; set; }
     public string? CreatedAt { get; set; }
@@ -391,6 +396,9 @@ public sealed class HearingRecord
     // avoid a much larger mechanical rename across the dashboard/work-queue/SQL-pilot code that
     // reads this table - only the client-facing tab label and event-type vocabulary changed.
     public string EventType { get; set; } = "Hearing";
+    // Scheduled | Completed | Continued | Canceled (see migration 029). Existing rows default
+    // to "Scheduled".
+    public string Status { get; set; } = "Scheduled";
     public string? HearingDate { get; set; }
     public string? Location { get; set; }
     public string? Description { get; set; }

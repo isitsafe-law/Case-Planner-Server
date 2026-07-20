@@ -134,6 +134,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["assigned_attorney"] = Null(model.AssignedAttorney), ["opposing_counsel"] = Null(model.OpposingCounsel), ["appraiser"] = Null(model.Appraiser),
         ["taxes_owed"] = Null(model.TaxesOwed), ["funds_withdrawn"] = Null(model.FundsWithdrawn), ["funds_withdrawn_date"] = Null(model.FundsWithdrawnDate),
         ["discovery_completed"] = Null(model.DiscoveryCompleted), ["updated_appraisal"] = Null(model.UpdatedAppraisal), ["closed_date"] = Null(model.ClosedDate), ["date_opened"] = Null(model.DateOpened),
+        ["trial_end_date"] = Null(model.TrialEndDate), ["property_description"] = Null(model.PropertyDescription),
         ["project_name"] = Null(model.ProjectName), ["tax_owed_amount"] = model.TaxOwedAmount, ["whole_property_acres"] = model.WholePropertyAcres,
         ["acquisition_acres"] = model.AcquisitionAcres, ["landowner_appraiser_name"] = Null(model.LandownerAppraiserName),
         ["additional_deposit_amount"] = model.AdditionalDepositAmount, ["additional_deposit_date"] = Null(model.AdditionalDepositDate),
@@ -205,7 +206,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                (SELECT COUNT(*) FROM checklist_items ci WHERE ci.case_id = cases.id AND ci.status IN ('Done', 'Complete', 'N/A')) AS checklist_done,
                COALESCE(case_status, 'Pipeline') AS case_status,
                COALESCE(status_mapping_review, 0) AS status_mapping_review,
-               date_opened, row_version
+               date_opened, trial_end_date, property_description, row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0
           AND (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))

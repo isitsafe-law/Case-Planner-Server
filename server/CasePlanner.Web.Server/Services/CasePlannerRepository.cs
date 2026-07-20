@@ -957,7 +957,7 @@ public sealed partial class CasePlannerRepository
                    (SELECT COUNT(*) FROM checklist_items ci WHERE ci.case_id = cases.id AND ci.status IN ('Done', 'Complete', 'N/A')) AS checklist_done,
                    COALESCE(case_status, 'Pipeline') AS case_status,
                    COALESCE(status_mapping_review, 0) AS status_mapping_review,
-                   date_opened
+                   date_opened, trial_end_date, property_description
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -3012,7 +3012,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, title, hearing_date, location, description, created_at, updated_at, event_type
+            SELECT id, case_id, title, hearing_date, location, description, created_at, updated_at, event_type, status
             FROM hearings
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY COALESCE(hearing_date, '9999-12-31') DESC, id DESC
@@ -3032,6 +3032,7 @@ public sealed partial class CasePlannerRepository
                 CreatedAt = reader.IsDBNull(6) ? "" : reader.GetString(6),
                 UpdatedAt = reader.IsDBNull(7) ? "" : reader.GetString(7),
                 EventType = reader.IsDBNull(8) ? "Hearing" : reader.GetString(8),
+                Status = reader.IsDBNull(9) ? "Scheduled" : reader.GetString(9),
             });
         }
 
@@ -3048,8 +3049,8 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO hearings (case_id, title, hearing_date, location, description, created_at, updated_at, event_type)
-                    VALUES (@case_id, @title, @hearing_date, @location, @description, @created_at, @updated_at, @event_type);
+                    INSERT INTO hearings (case_id, title, hearing_date, location, description, created_at, updated_at, event_type, status)
+                    VALUES (@case_id, @title, @hearing_date, @location, @description, @created_at, @updated_at, @event_type, @status);
                     SELECT last_insert_rowid();
                     """;
                 cmd.Parameters.AddWithValue("@created_at", now);
@@ -3058,7 +3059,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE hearings
-                    SET title=@title, hearing_date=@hearing_date, location=@location, description=@description, updated_at=@updated_at, event_type=@event_type
+                    SET title=@title, hearing_date=@hearing_date, location=@location, description=@description, updated_at=@updated_at, event_type=@event_type, status=@status
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -3072,6 +3073,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@description", DbValue(model.Description));
             cmd.Parameters.AddWithValue("@updated_at", now);
             cmd.Parameters.AddWithValue("@event_type", DbValue(BlankToNull(model.EventType) ?? "Hearing"));
+            cmd.Parameters.AddWithValue("@status", DbValue(BlankToNull(model.Status) ?? "Scheduled"));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CreatedAt = string.IsNullOrWhiteSpace(model.CreatedAt) ? now : model.CreatedAt;
             model.UpdatedAt = now;
@@ -4032,6 +4034,8 @@ public sealed partial class CasePlannerRepository
                         FilingDate = NormalizeDate(GetField(row, map, "Filing Date")),
                         DateOfTaking = NormalizeDate(GetField(row, map, "Date of Taking")),
                         TrialDate = NormalizeDate(GetField(row, map, "Trial Date")),
+                        TrialEndDate = NormalizeDate(GetField(row, map, "Trial End Date")),
+                        PropertyDescription = BlankToNull(GetField(row, map, "Property Description")),
                         NextAction = BlankToNull(GetField(row, map, "Next Action")),
                         NextActionDue = NormalizeDate(GetField(row, map, "Next Action Due")),
                         DepositAmount = ParseMoney(GetField(row, map, "Deposit Amount")),
@@ -4134,6 +4138,8 @@ public sealed partial class CasePlannerRepository
                             FilingDate = CellDate(row, map, "DATE FILED"),
                             DateOfTaking = CellDate(row, map, "DATE OF TAKING"),
                             TrialDate = CellDate(row, map, "TRIAL DATE"),
+                            TrialEndDate = CellDate(row, map, "TRIAL END DATE"),
+                            PropertyDescription = BlankToNull(CellText(row, map, "PROPERTY DESCRIPTION")),
                             DateOpened = CellDate(row, map, "DATE OPENED"),
                             DepositAmount = CellMoney(row, map, "DEPOSIT"),
                             PublicationServiceNotes = BlankToNull(CellText(row, map, "NOTES")),
@@ -4483,6 +4489,7 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "discovery_tracking", "escalation_note", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analysis_offer_log", "updated_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "hearings", "event_type", "TEXT NOT NULL DEFAULT 'Hearing'");
+        await AddColumnIfMissingAsync(connection, "hearings", "status", "TEXT NOT NULL DEFAULT 'Scheduled'");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "analysis_date", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "interest_rate", "REAL NOT NULL DEFAULT 0.06");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "contingency_fee_percent", "REAL NOT NULL DEFAULT 0.30");
@@ -4528,6 +4535,8 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "current_issue", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_status", "TEXT DEFAULT 'Pipeline'");
         await AddColumnIfMissingAsync(connection, "cases", "status_mapping_review", "INTEGER DEFAULT 0");
+        await AddColumnIfMissingAsync(connection, "cases", "trial_end_date", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "property_description", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_by", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
@@ -6251,6 +6260,7 @@ public sealed partial class CasePlannerRepository
                     short_posture_summary, current_issue,
                     deferred_until, deferred_reason, deferred_at, deferred_by,
                     case_status, status_mapping_review,
+                    trial_end_date, property_description,
                     created_at, updated_at
                 ) VALUES (
                     @case_number, @case_name, @job_number, @tract, @county, @status, @stage, @track, @filing_date,
@@ -6268,6 +6278,7 @@ public sealed partial class CasePlannerRepository
                     @short_posture_summary, @current_issue,
                     @deferred_until, @deferred_reason, @deferred_at, @deferred_by,
                     @case_status, @status_mapping_review,
+                    @trial_end_date, @property_description,
                     @created_at, @updated_at
                 );
                 SELECT last_insert_rowid();
@@ -6343,6 +6354,8 @@ public sealed partial class CasePlannerRepository
                     deferred_by=@deferred_by,
                     case_status=@case_status,
                     status_mapping_review=@status_mapping_review,
+                    trial_end_date=@trial_end_date,
+                    property_description=@property_description,
                     updated_at=@updated_at
                 WHERE id=@id;
                 SELECT @id;
@@ -6433,6 +6446,8 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@deferred_by", DbValue(model.DeferredBy));
         cmd.Parameters.AddWithValue("@case_status", string.IsNullOrWhiteSpace(model.CaseStatus) ? "Pipeline" : model.CaseStatus.Trim());
         cmd.Parameters.AddWithValue("@status_mapping_review", model.StatusMappingReview ? 1 : 0);
+        cmd.Parameters.AddWithValue("@trial_end_date", DbValue(model.TrialEndDate));
+        cmd.Parameters.AddWithValue("@property_description", DbValue(model.PropertyDescription));
         cmd.Parameters.AddWithValue("@created_at", now);
         cmd.Parameters.AddWithValue("@updated_at", now);
     }
@@ -6959,7 +6974,8 @@ public sealed partial class CasePlannerRepository
             description TEXT,
             created_at TEXT,
             updated_at TEXT,
-            event_type TEXT NOT NULL DEFAULT 'Hearing'
+            event_type TEXT NOT NULL DEFAULT 'Hearing',
+            status TEXT NOT NULL DEFAULT 'Scheduled'
         );
         CREATE TABLE IF NOT EXISTS checklist_templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

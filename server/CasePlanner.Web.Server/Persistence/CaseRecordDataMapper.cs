@@ -81,8 +81,14 @@ internal static class CaseRecordDataMapper
             CaseStatus = String(reader, 69) ?? "Pipeline",
             StatusMappingReview = !reader.IsDBNull(70) && Bool(reader, 70),
             DateOpened = reader.FieldCount > 71 ? Date(reader, 71) : null,
-            RowVersion = reader.FieldCount > 72 && !reader.IsDBNull(72)
-                ? Convert.ToBase64String((byte[])reader.GetValue(72))
+            // trial_end_date / property_description were added after date_opened in both the
+            // SQLite and SQL Server SELECTs (see migration 029) - same FieldCount-guard pattern
+            // as DateOpened/RowVersion above, so this mapper keeps working against either store's
+            // column list regardless of whether row_version trails them.
+            TrialEndDate = reader.FieldCount > 72 ? Date(reader, 72) : null,
+            PropertyDescription = reader.FieldCount > 73 ? String(reader, 73) : null,
+            RowVersion = reader.FieldCount > 74 && !reader.IsDBNull(74)
+                ? Convert.ToBase64String((byte[])reader.GetValue(74))
                 : null
         };
     }

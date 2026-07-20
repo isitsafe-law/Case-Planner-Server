@@ -115,7 +115,7 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
         await using var connection = Connections.CreateConnection(); await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id,case_id,title,hearing_date,location,description,created_at,updated_at,row_version
+            SELECT id,case_id,title,hearing_date,location,description,created_at,updated_at,status,row_version
             FROM dbo.hearings WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId)
             ORDER BY COALESCE(hearing_date,'9999-12-31'),id
             """;
@@ -138,13 +138,13 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
         }
         var now = DateTime.UtcNow.ToString("O"); await using var command = connection.CreateCommand(); command.Transaction = transaction;
         if (isNew) command.CommandText = """
-            INSERT INTO dbo.hearings (case_id,title,hearing_date,location,description,created_at,updated_at)
-            OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at VALUES (@caseId,@title,@date,@location,@description,@now,@now)
+            INSERT INTO dbo.hearings (case_id,title,hearing_date,location,description,created_at,updated_at,status)
+            OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at VALUES (@caseId,@title,@date,@location,@description,@now,@now,@status)
             """;
         else
         {
             command.CommandText = """
-                UPDATE dbo.hearings SET title=@title,hearing_date=@date,location=@location,description=@description,updated_at=@now
+                UPDATE dbo.hearings SET title=@title,hearing_date=@date,location=@location,description=@description,updated_at=@now,status=@status
                 OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
@@ -152,6 +152,7 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
         }
         command.Parameters.Add(new SqlParameter("@caseId", model.CaseId)); command.Parameters.Add(new SqlParameter("@title", string.IsNullOrWhiteSpace(model.Title) ? "Hearing" : model.Title.Trim()));
         command.Parameters.Add(new SqlParameter("@date", Db(Date(model.HearingDate)))); command.Parameters.Add(new SqlParameter("@location", Db(model.Location))); command.Parameters.Add(new SqlParameter("@description", Db(model.Description))); command.Parameters.Add(new SqlParameter("@now", now));
+        command.Parameters.Add(new SqlParameter("@status", string.IsNullOrWhiteSpace(model.Status) ? "Scheduled" : model.Status.Trim()));
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
             if (!await reader.ReadAsync(token)) throw new WorkItemConcurrencyException("Hearing", model.Id);
@@ -173,6 +174,6 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
     private static HearingRecord Read(DbDataReader reader) => new()
     {
         Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),Title=Text(reader,2)??"",HearingDate=Date(Text(reader,3)),Location=Text(reader,4),Description=Text(reader,5),
-        CreatedAt=Text(reader,6)??"",UpdatedAt=Text(reader,7)??"",RowVersion=Convert.ToBase64String((byte[])reader.GetValue(8))
+        CreatedAt=Text(reader,6)??"",UpdatedAt=Text(reader,7)??"",Status=Text(reader,8)??"Scheduled",RowVersion=Convert.ToBase64String((byte[])reader.GetValue(9))
     };
 }

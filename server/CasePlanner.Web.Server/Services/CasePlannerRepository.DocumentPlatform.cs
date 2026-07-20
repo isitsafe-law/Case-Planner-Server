@@ -641,70 +641,237 @@ public sealed partial class CasePlannerRepository
         new Run(new Text($": {requestText}")));
 
     // ---- Build-plan step 7 (cleanup): the retired IssueTagDiscoveryContent.cs held real
-    // attorney-drafted interrogatory/RFP language for 14 issue tags beyond the Drainage section
+    // attorney-drafted interrogatory/RFP language for the issue tags beyond the Drainage section
     // step 4 already proved out - content this repo has no git history to recover if it were
-    // simply deleted. This ports all 14 into the platform template as real {{#Tag}} sections
+    // simply deleted. This ports all of it into the platform template as real {{#Tag}} sections
     // (exactly the mechanism Drainage already validated) as version 2, activated in place of
     // version 1, the same shape an attorney uploading a new version through the admin screen
-    // would produce - runs once per database, guarded by whether the "FullTaking" section already
-    // exists on the active version.
+    // would produce - runs once per database, guarded by whether the active version already
+    // carries the full section set (InterrogatoriesIssueTagSections).
+    //
+    // Historical bug (fixed here): the original version of this method issued its writes as bare,
+    // individually auto-committed statements - deactivate the old version(s), insert the
+    // replacement version row (already is_active = 1), then loop-insert its section rows - with no
+    // transaction wrapping the three steps together. The most plausible way that showed up on a
+    // live database: two overlapping runs of this method (e.g. a dev-server hot reload, or two
+    // processes momentarily pointed at the same SQLite file) racing each other. Both readers see
+    // the same pre-migration active version and compute the same nextVersion; whichever one's own
+    // "deactivate every version for this template" statement runs *after* the other's version
+    // insert wipes out that version's freshly-set is_active = 1 flag - durably, since it already
+    // committed on its own, no transaction to roll back. The second runner's own version insert
+    // then fails outright on the UNIQUE(template_id, version) constraint (both computed the same
+    // next version number), aborting its own loop before it ever ran. A plain transient failure
+    // (e.g. "database is locked") partway through the 15-row section-insert loop leaves the same
+    // shape by itself. End state either way: every version row for the template deactivated, the
+    // newest one carrying zero or only some of its section rows, and no active version anywhere.
+    // Because the old guard was `if (active is null) return;`, every subsequent startup then
+    // silently gave up rather than repairing it - the template stayed invisible in the generation
+    // picker forever.
+    //
+    // Fix: (1) the entire migration - including the fresh, never-yet-migrated case - now runs
+    // inside WithWriteAsync's transaction, so a mid-loop failure rolls every write back and the
+    // guard simply retries cleanly next startup; (2) when the guard finds no active version but
+    // the template *does* have version rows (the broken fingerprint above), it repairs instead of
+    // giving up: the newest version row is reactivated if it was already created by a migration
+    // attempt (version >= 2 - its .docx file on disk is always written before that row is
+    // inserted, so the file content is already correct there; only its section metadata rows might
+    // be missing or partial), and its sections are finished/repaired in place. If only the
+    // original pre-migration version (version 1) survived - the crash happened before any
+    // replacement version was ever created - there is nothing version-2-shaped to reactivate, so
+    // the method just runs the fresh-migration path forward from it, exactly as a pristine
+    // database would.
     private async Task EnsureInterrogatoriesAllIssueTagSectionsAsync(SqliteConnection connection)
     {
-        var active = await GetActiveTemplateVersionAsync(connection, "interrogatories_platform");
-        if (active is null) return;
+        const string templateKey = "interrogatories_platform";
 
-        var alreadyUpgradedCmd = connection.CreateCommand();
-        alreadyUpgradedCmd.CommandText = "SELECT COUNT(*) FROM document_template_sections WHERE template_version_id = @v AND section_key = 'FullTaking'";
-        alreadyUpgradedCmd.Parameters.AddWithValue("@v", active.Version.Id);
-        if (Convert.ToInt32(await alreadyUpgradedCmd.ExecuteScalarAsync()) > 0) return;
+        // Cheap read-only pre-check against the already-open startup connection, so the steady
+        // state (every startup after the first successful run) never pays for opening a write
+        // transaction - and the full-database backup WithWriteAsync takes before every write.
+        var active = await GetActiveTemplateVersionAsync(connection, templateKey);
+        if (active is not null && await HasAllInterrogatoriesIssueTagSectionsAsync(connection, active.Version.Id))
+        {
+            return;
+        }
 
+        var templateId = await GetDocumentTemplateIdAsync(connection, templateKey);
+        if (templateId is null) return; // Template not seeded yet (EnsureDocumentPlatformSeedAsync
+                                         // runs earlier in InitializeAsync) - stay defensive rather
+                                         // than assume it, same as the original guard's intent.
+
+        await WithWriteAsync(async (writeConnection, tx) =>
+        {
+            await MigrateInterrogatoriesTemplateAsync(writeConnection, tx, templateId.Value, templateKey);
+            return 0;
+        });
+    }
+
+    private static readonly (string Key, string Label, string Tag)[] InterrogatoriesIssueTagSections =
+    [
+        ("FullTaking", "Full Taking", "Full Taking"),
+        ("EasementOnly", "Easement Only", "Easement Only"),
+        ("TemporaryConstructionEasement", "Temporary Construction Easement", "Temporary Construction Easement"),
+        ("SeveranceDamages", "Severance Damages", "Severance Damages"),
+        ("AccessChangeOfAccess", "Access / Change of Access", "Access / Change of Access"),
+        ("Drainage", "Drainage", "Drainage"),
+        ("LandlockedRemainder", "Landlocked Remainder", "Landlocked Remainder"),
+        ("Minerals", "Minerals", "Minerals"),
+        ("Timber", "Timber", "Timber"),
+        ("BillboardSign", "Billboard / Sign", "Billboard / Sign"),
+        ("LeaseholdTenantInterest", "Leasehold / Tenant Interest", "Leasehold / Tenant Interest"),
+        ("LienholderMortgage", "Lienholder / Mortgage", "Lienholder / Mortgage"),
+        ("EstateProbate", "Estate / Probate", "Estate / Probate"),
+        ("UnknownHeirsOwners", "Unknown Heirs / Owners", "Unknown Heirs / Owners"),
+        ("UtilityConflict", "Utility Conflict", "Utility Conflict"),
+    ];
+
+    private static async Task<long?> GetDocumentTemplateIdAsync(SqliteConnection connection, string templateKey)
+    {
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id FROM document_templates WHERE template_key = @key AND is_deleted = 0";
+        cmd.Parameters.AddWithValue("@key", templateKey);
+        var result = await cmd.ExecuteScalarAsync();
+        return result is null ? null : Convert.ToInt64(result);
+    }
+
+    // "Fully upgraded" means every section key in InterrogatoriesIssueTagSections is present on
+    // this version - not just the first one (FullTaking), which the original guard checked and
+    // which a mid-loop failure could satisfy while later keys were still missing.
+    private static async Task<bool> HasAllInterrogatoriesIssueTagSectionsAsync(SqliteConnection connection, long templateVersionId)
+    {
+        var placeholders = string.Join(",", InterrogatoriesIssueTagSections.Select((_, i) => $"@k{i}"));
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = $"SELECT COUNT(*) FROM document_template_sections WHERE template_version_id = @v AND section_key IN ({placeholders})";
+        cmd.Parameters.AddWithValue("@v", templateVersionId);
+        for (var i = 0; i < InterrogatoriesIssueTagSections.Length; i++)
+        {
+            cmd.Parameters.AddWithValue($"@k{i}", InterrogatoriesIssueTagSections[i].Key);
+        }
+
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync()) == InterrogatoriesIssueTagSections.Length;
+    }
+
+    private async Task MigrateInterrogatoriesTemplateAsync(SqliteConnection connection, SqliteTransaction tx, long templateId, string templateKey)
+    {
+        // Re-resolve everything under the write transaction: the reads in the caller ran on a
+        // different connection, before the write gate was acquired, purely to decide whether
+        // opening this transaction (and its DB backup) was worth paying for at all.
+        var active = await GetActiveTemplateVersionAsync(connection, templateKey);
+        if (active is not null && await HasAllInterrogatoriesIssueTagSectionsAsync(connection, active.Version.Id))
+        {
+            return; // Already fully migrated/repaired by a previous attempt.
+        }
+
+        if (active is not null)
+        {
+            // Normal, never-yet-migrated case: replace the active (pre-upgrade) version with a
+            // fresh one carrying the full section set.
+            var versionId = await CreateNextTemplateVersionAsync(connection, tx, templateId, active.Version.Version);
+            await InsertAllIssueTagSectionsAsync(connection, tx, versionId);
+            return;
+        }
+
+        // Recovery: no active version, but the template exists (the caller only opens this
+        // transaction once it has confirmed that) - the broken fingerprint left by a pre-fix run
+        // of this same migration (see the root-cause note above EnsureInterrogatoriesAllIssueTagSectionsAsync).
+        var newest = await GetNewestTemplateVersionAsync(connection, templateId);
+        if (newest is null) return; // No version rows at all - not this migration's job to create v1.
+
+        if (newest.Value.Version >= 2)
+        {
+            // This row was created by a previous migration attempt, so its storage_path already
+            // points at the fully-tagged v2 .docx (the file is always written before the row is
+            // inserted) - only its section metadata rows might be missing or partial. Reactivate it
+            // and finish seeding sections rather than minting yet another version/docx file.
+            await ReactivateTemplateVersionAsync(connection, tx, templateId, newest.Value.Id);
+            if (!await HasAllInterrogatoriesIssueTagSectionsAsync(connection, newest.Value.Id))
+            {
+                await DeleteTemplateSectionsAsync(connection, tx, newest.Value.Id);
+                await InsertAllIssueTagSectionsAsync(connection, tx, newest.Value.Id);
+            }
+
+            return;
+        }
+
+        // Only the original (pre-migration) version 1 survived - the crash happened before any
+        // replacement version was ever created, so there is nothing version-2-shaped to reactivate
+        // in place (reusing v1's row would leave its section metadata pointing at tags that don't
+        // exist as {{#Tag}} markers in v1's actual .docx content). Run the migration forward
+        // exactly as a pristine database would.
+        var freshVersionId = await CreateNextTemplateVersionAsync(connection, tx, templateId, newest.Value.Version);
+        await InsertAllIssueTagSectionsAsync(connection, tx, freshVersionId);
+    }
+
+    private async Task<long> CreateNextTemplateVersionAsync(SqliteConnection connection, SqliteTransaction tx, long templateId, int currentVersion)
+    {
         var folder = Path.Combine(_paths.Config.DocumentTemplatesFolder, "platform");
         Directory.CreateDirectory(folder);
-        var nextVersion = active.Version.Version + 1;
+        var nextVersion = currentVersion + 1;
         var storagePath = Path.Combine(folder, $"interrogatories_platform_v{nextVersion}.docx");
         await File.WriteAllBytesAsync(storagePath, BuildSeedInterrogatoriesDocxV2());
 
         var now = DateTime.UtcNow.ToString("O");
         var deactivate = connection.CreateCommand();
+        deactivate.Transaction = tx;
         deactivate.CommandText = "UPDATE document_template_versions SET is_active = 0 WHERE template_id = @templateId";
-        deactivate.Parameters.AddWithValue("@templateId", active.Template.Id);
+        deactivate.Parameters.AddWithValue("@templateId", templateId);
         await deactivate.ExecuteNonQueryAsync();
 
         var versionCmd = connection.CreateCommand();
+        versionCmd.Transaction = tx;
         versionCmd.CommandText = """
             INSERT INTO document_template_versions (template_id, version, storage_path, tokens_json, is_active, created_at)
             VALUES (@templateId, @version, @path, @tokens, 1, @now);
             SELECT last_insert_rowid();
             """;
-        versionCmd.Parameters.AddWithValue("@templateId", active.Template.Id);
+        versionCmd.Parameters.AddWithValue("@templateId", templateId);
         versionCmd.Parameters.AddWithValue("@version", nextVersion);
         versionCmd.Parameters.AddWithValue("@path", storagePath);
         versionCmd.Parameters.AddWithValue("@tokens", JsonSerializer.Serialize(new[] { "County", "CaseNumber", "DefendantNames", "AttorneyName" }));
         versionCmd.Parameters.AddWithValue("@now", now);
-        var versionId = Convert.ToInt64(await versionCmd.ExecuteScalarAsync());
+        return Convert.ToInt64(await versionCmd.ExecuteScalarAsync());
+    }
 
-        var sections = new (string Key, string Label, string Tag)[]
+    private static async Task ReactivateTemplateVersionAsync(SqliteConnection connection, SqliteTransaction tx, long templateId, long versionId)
+    {
+        var deactivate = connection.CreateCommand();
+        deactivate.Transaction = tx;
+        deactivate.CommandText = "UPDATE document_template_versions SET is_active = 0 WHERE template_id = @templateId";
+        deactivate.Parameters.AddWithValue("@templateId", templateId);
+        await deactivate.ExecuteNonQueryAsync();
+
+        var activate = connection.CreateCommand();
+        activate.Transaction = tx;
+        activate.CommandText = "UPDATE document_template_versions SET is_active = 1 WHERE id = @versionId";
+        activate.Parameters.AddWithValue("@versionId", versionId);
+        await activate.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<(long Id, int Version)?> GetNewestTemplateVersionAsync(SqliteConnection connection, long templateId)
+    {
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id, version FROM document_template_versions WHERE template_id = @templateId ORDER BY version DESC LIMIT 1";
+        cmd.Parameters.AddWithValue("@templateId", templateId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return null;
+        return (reader.GetInt64(0), reader.GetInt32(1));
+    }
+
+    private static async Task DeleteTemplateSectionsAsync(SqliteConnection connection, SqliteTransaction tx, long templateVersionId)
+    {
+        var cmd = connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "DELETE FROM document_template_sections WHERE template_version_id = @v";
+        cmd.Parameters.AddWithValue("@v", templateVersionId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertAllIssueTagSectionsAsync(SqliteConnection connection, SqliteTransaction tx, long versionId)
+    {
+        for (var i = 0; i < InterrogatoriesIssueTagSections.Length; i++)
         {
-            ("FullTaking", "Full Taking", "Full Taking"),
-            ("EasementOnly", "Easement Only", "Easement Only"),
-            ("TemporaryConstructionEasement", "Temporary Construction Easement", "Temporary Construction Easement"),
-            ("SeveranceDamages", "Severance Damages", "Severance Damages"),
-            ("AccessChangeOfAccess", "Access / Change of Access", "Access / Change of Access"),
-            ("Drainage", "Drainage", "Drainage"),
-            ("LandlockedRemainder", "Landlocked Remainder", "Landlocked Remainder"),
-            ("Minerals", "Minerals", "Minerals"),
-            ("Timber", "Timber", "Timber"),
-            ("BillboardSign", "Billboard / Sign", "Billboard / Sign"),
-            ("LeaseholdTenantInterest", "Leasehold / Tenant Interest", "Leasehold / Tenant Interest"),
-            ("LienholderMortgage", "Lienholder / Mortgage", "Lienholder / Mortgage"),
-            ("EstateProbate", "Estate / Probate", "Estate / Probate"),
-            ("UnknownHeirsOwners", "Unknown Heirs / Owners", "Unknown Heirs / Owners"),
-            ("UtilityConflict", "Utility Conflict", "Utility Conflict"),
-        };
-        for (var i = 0; i < sections.Length; i++)
-        {
-            var (key, label, tag) = sections[i];
+            var (key, label, tag) = InterrogatoriesIssueTagSections[i];
             var insert = connection.CreateCommand();
+            insert.Transaction = tx;
             insert.CommandText = """
                 INSERT INTO document_template_sections (template_version_id, section_key, label, description, issue_tag_name, sort_order)
                 VALUES (@v, @key, @label, @description, @tag, @sort)

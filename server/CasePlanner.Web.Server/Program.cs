@@ -997,6 +997,11 @@ app.MapGet("/api/document-exports/{id:long}/download", async (long id,IGenerated
     var stream=await documents.OpenReadAsync(record.OutputPath,token);
     return stream is null?Results.NotFound():Results.File(stream,contentType,Path.GetFileName(record.OutputPath));
 });
+app.MapDelete("/api/document-exports/{id:long}", async (long id,IGeneratedDocumentService exports,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await exports.GetCaseIdAsync(id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    return await exports.DeleteAsync(id,token)?Results.Ok():Results.NotFound();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/document-platform/templates/{key}/checklist", async (long id,string key,IDocumentPlatformService platform,CaseAccessService access,CancellationToken token) =>
 {
     if(!await access.CanReadAsync(id,token))return Results.Forbid();
@@ -1028,6 +1033,13 @@ app.MapGet("/api/document-platform-generations/{id:long}/download", async (long 
     var stream=await documents.OpenReadAsync(record.OutputPath,token);
     return stream is null?Results.NotFound():Results.File(stream,"application/vnd.openxmlformats-officedocument.wordprocessingml.document",Path.GetFileName(record.OutputPath));
 });
+app.MapDelete("/api/document-platform-generations/{id:long}", async (long id,IDocumentPlatformService platform,CaseAccessService access,CancellationToken token) =>
+{
+    var record=await platform.GetGenerationByIdAsync(id,token);
+    if(record is null)return Results.NotFound();
+    if(!await access.CanWriteAsync(record.CaseId,token))return Results.Forbid();
+    return await platform.DeleteGenerationAsync(id,token)?Results.Ok():Results.NotFound();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/document-platform/templates", async (IDocumentPlatformService platform,CancellationToken token) =>
     Results.Ok(await platform.GetAllTemplatesAsync(token))).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/document-platform/templates/upload", async (HttpRequest request,IDocumentPlatformService platform,CancellationToken token) =>

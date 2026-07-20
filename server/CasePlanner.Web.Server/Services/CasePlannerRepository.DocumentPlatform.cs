@@ -1985,4 +1985,34 @@ public sealed partial class CasePlannerRepository
             return 0;
         });
     }
+
+    public async Task<bool> DeleteDocumentGenerationAsync(long id)
+    {
+        var outputPath = await WithWriteAsync(async (connection, tx) =>
+        {
+            var select = connection.CreateCommand();
+            select.Transaction = tx;
+            select.CommandText = "SELECT output_path FROM document_generations WHERE id = @id";
+            select.Parameters.AddWithValue("@id", id);
+            var result = await select.ExecuteScalarAsync();
+            if (result is null)
+            {
+                return null;
+            }
+
+            var delete = connection.CreateCommand();
+            delete.Transaction = tx;
+            delete.CommandText = "DELETE FROM document_generations WHERE id = @id";
+            delete.Parameters.AddWithValue("@id", id);
+            await delete.ExecuteNonQueryAsync();
+            return Convert.ToString(result);
+        });
+        if (outputPath is null)
+        {
+            return false;
+        }
+
+        await _documents.DeleteIfExistsAsync(outputPath);
+        return true;
+    }
 }

@@ -3440,6 +3440,20 @@ function App() {
     }
   }
 
+  async function deleteGeneratedDocument(source: 'Legacy' | 'Platform', id: number, title: string) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    if (!(await confirmAction({ title: 'Delete generated document?', message: `"${title}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(source === 'Legacy' ? `/api/document-exports/${id}` : `/api/document-platform-generations/${id}`, { method: 'DELETE' })
+      setMessage('Generated document deleted.')
+      await loadWorkspace(caseId)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete generated document.')
+    }
+  }
+
   // Build-plan step 5: Document Templates admin (upload, section/overlap/runtime-input
   // configuration, version activation) and Issue Tags admin (create/rename/retire, usage lookup).
   async function loadPlatformTemplates() {
@@ -3557,7 +3571,8 @@ function App() {
     }
   }
 
-  async function deletePlatformTemplate(templateKey: string) {
+  async function deletePlatformTemplate(templateKey: string, templateTitle: string) {
+    if (!(await confirmAction({ title: 'Delete template?', message: `"${templateTitle}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
     try {
       setErrorMessage('')
       await api(`/api/document-platform/templates/${templateKey}`, { method: 'DELETE' })
@@ -4412,20 +4427,21 @@ function App() {
     for (const item of attorneyDashboard?.actionQueue ?? []) counts[item.priorityLevel] = (counts[item.priorityLevel] ?? 0) + 1
     return counts
   }, [attorneyDashboard])
+  const notPerfectedServiceQueue = useMemo(() => queueService.filter((item) => !item.servicePerfected), [queueService])
   const filteredServiceQueue = useMemo(() => serviceConditionFilter === 'missingDeadline'
-    ? queueService.filter((item) => item.warningLevel === 'missing' || !item.serviceDeadline120)
+    ? notPerfectedServiceQueue.filter((item) => item.warningLevel === 'missing' || !item.serviceDeadline120)
     : serviceConditionFilter === 'notPerfected'
-      ? queueService.filter((item) => !item.servicePerfected)
+      ? notPerfectedServiceQueue
       : serviceConditionFilter === 'missingBasis'
-        ? queueService.filter((item) => !item.serviceDeadlineBasisDate && !item.filingDate)
-        : queueService, [queueService, serviceConditionFilter])
+        ? notPerfectedServiceQueue.filter((item) => !item.serviceDeadlineBasisDate && !item.filingDate)
+        : notPerfectedServiceQueue, [notPerfectedServiceQueue, serviceConditionFilter])
   const queueCaseName = (caseId: number) => allCases.find((item) => item.id === caseId)?.caseName || String(caseId)
   const queueSearchMatches = (caseId: number, extra = '') => { const query = workQueueSearch.trim().toLocaleLowerCase(); return !query || `${queueCaseName(caseId)} ${caseId} ${extra}`.toLocaleLowerCase().includes(query) }
   const visibleServiceQueue = useMemo(() => filteredServiceQueue.filter((item) => matchesUrgency(item.serviceDeadline120 || item.filingDate, workQueueUrgency) && queueSearchMatches(item.caseId, `${item.jobNumber || ''} ${item.tract || ''}`)), [filteredServiceQueue, workQueueUrgency, workQueueSearch, allCases])
   const sortedServiceQueue = useMemo(() => sortQueueItems(visibleServiceQueue, workQueueSort, (item) => item.caseName || item.caseNumber, (item) => item.serviceDeadline120 || item.filingDate), [visibleServiceQueue, workQueueSort])
   const sortedDeadlineQueue = useMemo(() => sortQueueItems(queueDeadlines.filter((item) => !isDeadlineDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueDeadlines, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedChecklistQueue = useMemo(() => sortQueueItems(queueChecklist.filter((item) => !isChecklistDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.task)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueChecklist, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
-  const sortedDiscoveryQueue = useMemo(() => sortQueueItems(queueDiscovery.filter((item) => matchesUrgency(item.followUpDate || item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.requestTitle || item.discoveryType)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.followUpDate || item.dueDate), [queueDiscovery, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
+  const sortedDiscoveryQueue = useMemo(() => sortQueueItems(queueDiscovery.filter((item) => item.status !== 'Complete' && matchesUrgency(item.followUpDate || item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.requestTitle || item.discoveryType)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.followUpDate || item.dueDate), [queueDiscovery, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedHearingQueue = useMemo(() => sortQueueItems(queueHearings.filter((item) => matchesUrgency(item.hearingDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.hearingDate), [queueHearings, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   // Raw eligible-work pipeline (all types, no urgency/limit narrowing) - the dashboard's "Due in the
   // next 7 days" panel and the Work Queue page both read from this; the Work Queue page owns its own
@@ -5804,6 +5820,7 @@ function App() {
               {(() => {
                 const legacyRows = (workspace?.documentExports ?? []).map((item) => ({
                   key: `legacy-${item.id}`,
+                  id: item.id,
                   createdAt: item.createdAt,
                   source: 'Legacy' as const,
                   documentType: item.documentType,
@@ -5814,6 +5831,7 @@ function App() {
                 }))
                 const platformRows = platformGenerationHistory.map((item) => ({
                   key: `platform-${item.id}`,
+                  id: item.id,
                   createdAt: item.renderedAt,
                   source: 'Platform' as const,
                   documentType: 'Document Platform',
@@ -5850,6 +5868,7 @@ function App() {
                             <td>
                               <div className="button-row compact-actions row-actions">
                                 <a className="button-like" href={row.downloadHref}>Download</a>
+                                <button className="danger-button" onClick={() => void deleteGeneratedDocument(row.source, row.id, row.title)}>Delete</button>
                               </div>
                             </td>
                           </tr>
@@ -8294,7 +8313,7 @@ function App() {
                           <div className="button-row compact-actions row-actions">
                             <button className="primary" onClick={() => startUploadNewVersion(t)}>Upload New Version</button>
                             <button onClick={() => selectPlatformTemplate(t)}>Advanced…</button>
-                            {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey)}>Delete</button>}
+                            {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey, t.template.title)}>Delete</button>}
                           </div>
                         </td>
                       </tr>

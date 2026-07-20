@@ -12,6 +12,7 @@ public interface IGeneratedDocumentService
     Task<string?> GetContentAsync(long id, CancellationToken token = default);
     Task<DocumentExportRecord> GenerateBasicAsync(long caseId, string kind, CancellationToken token = default);
     Task<DocumentExportRecord> SaveQaAsync(long id, DocumentExportRecord model, CancellationToken token = default);
+    Task<bool> DeleteAsync(long id, CancellationToken token = default);
 }
 
 public interface IBinaryGeneratedDocumentService
@@ -63,6 +64,11 @@ public sealed class SqliteGeneratedDocumentService(CasePlannerRepository reposit
     {
         token.ThrowIfCancellationRequested();model.Id=id;return repository.SaveDocumentQaAsync(model);
     }
+    public Task<bool> DeleteAsync(long id, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return repository.DeleteDocumentExportAsync(id);
+    }
 }
 
 public sealed class SqliteBinaryGeneratedDocumentService(CasePlannerRepository repository) : IBinaryGeneratedDocumentService
@@ -93,6 +99,14 @@ public sealed class SqlServerGeneratedDocumentService(
     }
     public Task<DocumentExportRecord> SaveQaAsync(long id,DocumentExportRecord model,CancellationToken token=default)=>store.SaveQaAsync(id,model.QaStatus,model.QaNotes,model.RowVersion,token);
 
+    public async Task<bool> DeleteAsync(long id, CancellationToken token = default)
+    {
+        var record = await GetByIdAsync(id, token);
+        if (record is null) return false;
+        await store.SoftDeleteAsync(id, record.RowVersion, token);
+        await documents.DeleteIfExistsAsync(record.OutputPath, token);
+        return true;
+    }
 }
 
 public sealed class SqlServerBinaryGeneratedDocumentService(SqlServerDocumentExportStore store, IDocumentStorage documents, IHttpContextAccessor httpContext) : IBinaryGeneratedDocumentService

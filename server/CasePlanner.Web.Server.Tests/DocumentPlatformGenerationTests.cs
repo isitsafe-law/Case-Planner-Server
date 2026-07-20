@@ -157,6 +157,29 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
         Assert.Empty(history);
     }
 
+    [Fact]
+    public async Task DeletingAGenerationRemovesTheRowAndTheStoredFile()
+    {
+        var caseRecord = await CreateCaseWithDrainageTagAsync();
+        var result = await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(
+            caseRecord.Id, "interrogatories_platform", ["Drainage"], new Dictionary<string, string>(), null);
+        Assert.True(File.Exists(result.OutputPath));
+
+        var deleted = await _fixture.Repository.DeleteDocumentGenerationAsync(result.GenerationId);
+
+        Assert.True(deleted);
+        Assert.Null(await _fixture.Repository.GetDocumentGenerationByIdAsync(result.GenerationId));
+        Assert.False(File.Exists(result.OutputPath));
+    }
+
+    [Fact]
+    public async Task DeletingAGenerationThatDoesNotExistReturnsFalse()
+    {
+        var deleted = await _fixture.Repository.DeleteDocumentGenerationAsync(999_999);
+
+        Assert.False(deleted);
+    }
+
     // Build-plan step 7 (cleanup): the retired IssueTagDiscoveryContent.cs held real drafted
     // interrogatory/RFP language for 14 issue tags beyond Drainage - ported into the platform
     // template as version 2 (EnsureInterrogatoriesAllIssueTagSectionsAsync) rather than lost when

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -1395,11 +1396,6 @@ public sealed partial class CasePlannerRepository
 
     public async Task<DocumentTemplateAdminSummary> UploadDocumentTemplateAsync(string templateKey, string title, string? description, string category, byte[] fileBytes)
     {
-        if (string.IsNullOrWhiteSpace(templateKey))
-        {
-            throw new ArgumentException("A template key is required.", nameof(templateKey));
-        }
-
         if (string.IsNullOrWhiteSpace(title))
         {
             throw new ArgumentException("A title is required.", nameof(title));
@@ -1413,13 +1409,31 @@ public sealed partial class CasePlannerRepository
         }
 
         var tokens = DocumentGenerationEngine.ExtractTokensFromDocx(fileBytes);
+        var detectedSectionKeys = DocxTemplateLinter.ExtractSectionKeys(fileBytes);
 
         return await WithWriteAsync(async (connection, tx) =>
         {
+            // "Title + category + file" only works as a fully self-sufficient upload if a blank key
+            // gets a real one without asking the attorney to invent one. Uniqueness has to be
+            // checked against every row regardless of is_deleted - template_key carries a plain
+            // UNIQUE constraint (see DocumentPlatformSchemaSql above), so a retired template's key
+            // is still off-limits and would otherwise fail the insert below with a raw SQLite error.
+            var resolvedKey = templateKey;
+            if (string.IsNullOrWhiteSpace(resolvedKey))
+            {
+                var slug = SlugifyTemplateKey(title);
+                if (slug.Length == 0)
+                {
+                    throw new ArgumentException("A template key is required.", nameof(templateKey));
+                }
+
+                resolvedKey = await GenerateUniqueTemplateKeyAsync(connection, tx, slug);
+            }
+
             var templateCmd = connection.CreateCommand();
             templateCmd.Transaction = tx;
             templateCmd.CommandText = "SELECT id, is_builtin FROM document_templates WHERE template_key = @key AND is_deleted = 0";
-            templateCmd.Parameters.AddWithValue("@key", templateKey);
+            templateCmd.Parameters.AddWithValue("@key", resolvedKey);
 
             long templateId;
             var now = DateTime.UtcNow.ToString("O");
@@ -1440,6 +1454,24 @@ public sealed partial class CasePlannerRepository
                 }
             }
 
+            // Snapshot the outgoing active version's configuration before it's superseded, so the
+            // new version can carry forward whatever still applies. Rows aren't deleted when a
+            // version is deactivated (only is_active flips), but there's no reason to look them up
+            // again once the new version exists, so this has to happen now.
+            var previousSections = new List<DocumentTemplateSectionRecord>();
+            var previousRuntimeInputs = new List<DocumentRuntimeInputRecord>();
+            var previousOverlaps = new List<DocumentSectionOverlapPair>();
+            if (templateId != -1)
+            {
+                var previousActive = await GetActiveTemplateVersionAsync(connection, resolvedKey);
+                if (previousActive is not null)
+                {
+                    previousSections = await GetTemplateSectionsAsync(connection, previousActive.Version.Id);
+                    previousRuntimeInputs = await GetRuntimeInputsAsync(connection, previousActive.Version.Id);
+                    previousOverlaps = await GetOverlapPairsAsync(connection, previousSections);
+                }
+            }
+
             if (templateId == -1)
             {
                 var insertTemplate = connection.CreateCommand();
@@ -1449,7 +1481,7 @@ public sealed partial class CasePlannerRepository
                     VALUES (@key, @title, @description, @category, 0, @now, @by);
                     SELECT last_insert_rowid();
                     """;
-                insertTemplate.Parameters.AddWithValue("@key", templateKey);
+                insertTemplate.Parameters.AddWithValue("@key", resolvedKey);
                 insertTemplate.Parameters.AddWithValue("@title", title);
                 insertTemplate.Parameters.AddWithValue("@description", (object?)description ?? DBNull.Value);
                 insertTemplate.Parameters.AddWithValue("@category", string.IsNullOrWhiteSpace(category) ? "Other" : category);
@@ -1466,7 +1498,7 @@ public sealed partial class CasePlannerRepository
 
             var folder = Path.Combine(_paths.Config.DocumentTemplatesFolder, "platform");
             Directory.CreateDirectory(folder);
-            var storagePath = Path.Combine(folder, $"{templateKey}_v{nextVersion}.docx");
+            var storagePath = Path.Combine(folder, $"{resolvedKey}_v{nextVersion}.docx");
             await File.WriteAllBytesAsync(storagePath, fileBytes);
 
             var deactivate = connection.CreateCommand();
@@ -1479,7 +1511,8 @@ public sealed partial class CasePlannerRepository
             insertVersion.Transaction = tx;
             insertVersion.CommandText = """
                 INSERT INTO document_template_versions (template_id, version, storage_path, tokens_json, is_active, created_at, created_by)
-                VALUES (@templateId, @version, @path, @tokens, 1, @now, @by)
+                VALUES (@templateId, @version, @path, @tokens, 1, @now, @by);
+                SELECT last_insert_rowid();
                 """;
             insertVersion.Parameters.AddWithValue("@templateId", templateId);
             insertVersion.Parameters.AddWithValue("@version", nextVersion);
@@ -1487,10 +1520,147 @@ public sealed partial class CasePlannerRepository
             insertVersion.Parameters.AddWithValue("@tokens", JsonSerializer.Serialize(tokens));
             insertVersion.Parameters.AddWithValue("@now", now);
             insertVersion.Parameters.AddWithValue("@by", _actor.AuditLabel);
-            await insertVersion.ExecuteNonQueryAsync();
+            var newVersionId = Convert.ToInt64(await insertVersion.ExecuteScalarAsync());
 
-            return await GetDocumentTemplateAdminSummaryAsync(connection, templateKey, lintIssues);
+            await RegisterDetectedSectionsAsync(connection, tx, newVersionId, detectedSectionKeys, previousSections, previousOverlaps, previousRuntimeInputs, tokens);
+
+            return await GetDocumentTemplateAdminSummaryAsync(connection, resolvedKey, lintIssues);
         });
+    }
+
+    // Slugifies a title into a template_key shape: lowercase, non-alphanumeric runs collapsed to a
+    // single underscore, leading/trailing underscores trimmed. Mirrors the shape template keys
+    // already have across the codebase (e.g. "interrogatories_platform") without depending on any
+    // of them.
+    private static string SlugifyTemplateKey(string title)
+    {
+        var slug = Regex.Replace(title.Trim().ToLowerInvariant(), "[^a-z0-9]+", "_");
+        return slug.Trim('_');
+    }
+
+    // Appends _2, _3, ... until the key is free. template_key carries a plain UNIQUE constraint
+    // with no is_deleted exception, so "free" has to mean "no row at all", not just "no active row".
+    private static async Task<string> GenerateUniqueTemplateKeyAsync(SqliteConnection connection, SqliteTransaction tx, string baseSlug)
+    {
+        var candidate = baseSlug;
+        var suffix = 1;
+        while (await TemplateKeyExistsAsync(connection, tx, candidate))
+        {
+            suffix++;
+            candidate = $"{baseSlug}_{suffix}";
+        }
+
+        return candidate;
+
+        static async Task<bool> TemplateKeyExistsAsync(SqliteConnection connection, SqliteTransaction tx, string key)
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "SELECT COUNT(*) FROM document_templates WHERE template_key = @key";
+            cmd.Parameters.AddWithValue("@key", key);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
+        }
+    }
+
+    // Makes a section-block key readable as a label without any manual configuration: splits
+    // PascalCase/camelCase at case transitions and snake_case at underscores, then title-cases each
+    // word (an all-caps word, e.g. an acronym, is left alone rather than mangled to "Html").
+    // "FullTaking" -> "Full Taking", "partial_taking_damages" -> "Partial Taking Damages".
+    private static string HumanizeSectionKey(string key)
+    {
+        var spaced = Regex.Replace(key, "([a-z0-9])([A-Z])", "$1 $2");
+        spaced = Regex.Replace(spaced, "([A-Z]+)([A-Z][a-z])", "$1 $2");
+        spaced = spaced.Replace('_', ' ').Replace('-', ' ');
+
+        var words = spaced.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var titled = words.Select(w => w.Length > 1 && w.All(char.IsUpper)
+            ? w
+            : char.ToUpperInvariant(w[0]) + w[1..].ToLowerInvariant());
+        return string.Join(' ', titled);
+    }
+
+    // Registers a section row for every {{#Key}} block the upload's docx actually contains. A key
+    // that also existed in the previous active version keeps that version's label/description/
+    // issue-tag link/sort order verbatim (an attorney's earlier tagging work survives a re-upload);
+    // a brand-new key gets its humanized name and is sorted after the carried-forward ones, in the
+    // order it appears in the document. This is what makes a section-based template fully usable
+    // (working generation checkboxes) straight off an upload with zero manual configuration.
+    private static async Task RegisterDetectedSectionsAsync(
+        SqliteConnection connection,
+        SqliteTransaction tx,
+        long newVersionId,
+        IReadOnlyList<string> detectedSectionKeys,
+        List<DocumentTemplateSectionRecord> previousSections,
+        List<DocumentSectionOverlapPair> previousOverlaps,
+        List<DocumentRuntimeInputRecord> previousRuntimeInputs,
+        List<string> tokens)
+    {
+        var previousByKey = previousSections.ToDictionary(s => s.SectionKey, s => s, StringComparer.OrdinalIgnoreCase);
+        var keyToNewSectionId = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < detectedSectionKeys.Count; i++)
+        {
+            var key = detectedSectionKeys[i];
+            previousByKey.TryGetValue(key, out var previous);
+
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO document_template_sections (template_version_id, section_key, label, description, issue_tag_name, sort_order)
+                VALUES (@v, @key, @label, @description, @tag, @sort);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@v", newVersionId);
+            insert.Parameters.AddWithValue("@key", key);
+            insert.Parameters.AddWithValue("@label", previous?.Label ?? HumanizeSectionKey(key));
+            insert.Parameters.AddWithValue("@description", (object?)previous?.Description ?? DBNull.Value);
+            insert.Parameters.AddWithValue("@tag", (object?)previous?.IssueTagName ?? DBNull.Value);
+            insert.Parameters.AddWithValue("@sort", previous?.SortOrder ?? i);
+            keyToNewSectionId[key] = Convert.ToInt64(await insert.ExecuteScalarAsync());
+        }
+
+        // Overlaps only carry forward where BOTH endpoints survived into the new version - an
+        // overlap naming a section that no longer exists can't be expressed (the FK has nothing to
+        // point at) and wouldn't mean anything if it could.
+        foreach (var overlap in previousOverlaps)
+        {
+            if (!keyToNewSectionId.TryGetValue(overlap.SectionAKey, out var idA) || !keyToNewSectionId.TryGetValue(overlap.SectionBKey, out var idB)) continue;
+
+            var (smaller, larger) = idA < idB ? (idA, idB) : (idB, idA);
+            var insertOverlap = connection.CreateCommand();
+            insertOverlap.Transaction = tx;
+            insertOverlap.CommandText = "INSERT INTO document_section_overlaps (section_a_id, section_b_id, note) VALUES (@a, @b, @note)";
+            insertOverlap.Parameters.AddWithValue("@a", smaller);
+            insertOverlap.Parameters.AddWithValue("@b", larger);
+            insertOverlap.Parameters.AddWithValue("@note", (object?)overlap.Note ?? DBNull.Value);
+            await insertOverlap.ExecuteNonQueryAsync();
+        }
+
+        // Runtime inputs are token-based ({{FieldKey}} merge fields), not section-based, so they
+        // carry forward independent of which section keys survived - UNLESS the new version's
+        // extracted tokens no longer contain that field at all. Keeping a vanished one isn't
+        // actually harmless: GenerateDocumentPlatformDocumentAsync (above) hard-blocks generation
+        // when a required runtime input has no value, so a stale "required" input for a field the
+        // new document doesn't even reference would demand an answer that can never be used
+        // anywhere - a spurious block, not a quiet no-op. Dropping only the ones whose field
+        // disappeared is the safer choice.
+        var tokenSet = new HashSet<string>(tokens, StringComparer.OrdinalIgnoreCase);
+        foreach (var input in previousRuntimeInputs.Where(i => tokenSet.Contains(i.FieldKey)))
+        {
+            var insertInput = connection.CreateCommand();
+            insertInput.Transaction = tx;
+            insertInput.CommandText = """
+                INSERT INTO document_runtime_inputs (template_version_id, field_key, label, field_type, is_required, sort_order)
+                VALUES (@v, @key, @label, @type, @required, @sort)
+                """;
+            insertInput.Parameters.AddWithValue("@v", newVersionId);
+            insertInput.Parameters.AddWithValue("@key", input.FieldKey);
+            insertInput.Parameters.AddWithValue("@label", input.Label);
+            insertInput.Parameters.AddWithValue("@type", input.FieldType);
+            insertInput.Parameters.AddWithValue("@required", input.IsRequired ? 1 : 0);
+            insertInput.Parameters.AddWithValue("@sort", input.SortOrder);
+            await insertInput.ExecuteNonQueryAsync();
+        }
     }
 
     // Replace-all for a version's configuration in one transaction - simpler and safer for a small

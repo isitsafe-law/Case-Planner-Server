@@ -40,6 +40,29 @@ public sealed class DocumentTemplateAdminTests : IAsyncLifetime
         return stream.ToArray();
     }
 
+    // Builds a docx whose body opens/closes a well-formed {{#Key}}...{{/Key}} block for each key
+    // given, in that order - for exercising auto-section-registration on upload.
+    private static byte[] BuildDocxWithSections(params string[] sectionKeys)
+    {
+        using var stream = new MemoryStream();
+        using (var document = WordprocessingDocument.Create(stream, WordprocessingDocumentType.Document, true))
+        {
+            var main = document.AddMainDocumentPart();
+            var body = new Body(new Paragraph(new Run(new Text("Case No. {{CaseNumber}}."))));
+            foreach (var key in sectionKeys)
+            {
+                body.Append(new Paragraph(new Run(new Text($"{{{{#{key}}}}}"))));
+                body.Append(new Paragraph(new Run(new Text($"Some {key} content."))));
+                body.Append(new Paragraph(new Run(new Text($"{{{{/{key}}}}}"))));
+            }
+
+            main.Document = new Document(body);
+            main.Document.Save();
+        }
+
+        return stream.ToArray();
+    }
+
     [Fact]
     public async Task UploadingANewTemplateCreatesTemplateAndVersionOne()
     {
@@ -158,6 +181,67 @@ public sealed class DocumentTemplateAdminTests : IAsyncLifetime
         var all = await _fixture.Repository.GetAllDocumentTemplatesForAdminAsync();
 
         Assert.Contains(all, t => t.Template.TemplateKey == "interrogatories_platform" && t.Template.IsBuiltin);
+    }
+
+    [Fact]
+    public async Task UploadingWithSectionBlocksAutoCreatesSectionRowsWithHumanizedLabels()
+    {
+        var summary = await _fixture.Repository.UploadDocumentTemplateAsync(
+            "section_test", "Section Test", null, "Other", BuildDocxWithSections("FullTaking", "partial_taking_damages"));
+
+        Assert.Equal(2, summary.Sections.Count);
+
+        var full = summary.Sections.Single(s => s.SectionKey == "FullTaking");
+        Assert.Equal("Full Taking", full.Label);
+        Assert.Null(full.IssueTagName);
+
+        var partial = summary.Sections.Single(s => s.SectionKey == "partial_taking_damages");
+        Assert.Equal("Partial Taking Damages", partial.Label);
+    }
+
+    [Fact]
+    public async Task UploadingNewVersionCarriesForwardSurvivingSectionConfigAndAddsNewKey()
+    {
+        await _fixture.Repository.UploadDocumentTemplateAsync("carry_test", "Carry Test", null, "Other", BuildDocxWithSections("Access", "Drainage"));
+
+        await _fixture.Repository.SaveDocumentTemplateConfigurationAsync("carry_test", new DocumentTemplateConfigurationRequest
+        {
+            Sections =
+            [
+                new DocumentTemplateSectionRecord { SectionKey = "Access", Label = "Access to Property", Description = "Access desc", IssueTagName = "Access / Change of Access", SortOrder = 0 },
+                new DocumentTemplateSectionRecord { SectionKey = "Drainage", Label = "Drainage Issues", IssueTagName = "Drainage", SortOrder = 1 },
+            ],
+            Overlaps = [new DocumentSectionOverlapPair { SectionAKey = "Access", SectionBKey = "Drainage", Note = "both touch remainder use" }],
+        });
+
+        // New version drops the Drainage block and adds a brand-new one.
+        var second = await _fixture.Repository.UploadDocumentTemplateAsync("carry_test", "Carry Test", null, "Other", BuildDocxWithSections("Access", "NewNoise"));
+
+        Assert.Equal(2, second.Sections.Count);
+
+        var access = second.Sections.Single(s => s.SectionKey == "Access");
+        Assert.Equal("Access to Property", access.Label);
+        Assert.Equal("Access desc", access.Description);
+        Assert.Equal("Access / Change of Access", access.IssueTagName);
+
+        var newNoise = second.Sections.Single(s => s.SectionKey == "NewNoise");
+        Assert.Equal("New Noise", newNoise.Label);
+        Assert.Null(newNoise.IssueTagName);
+
+        Assert.DoesNotContain(second.Sections, s => s.SectionKey == "Drainage");
+        // The overlap named a section (Drainage) that no longer exists in the new version, so it
+        // can't carry forward either.
+        Assert.Empty(second.Overlaps);
+    }
+
+    [Fact]
+    public async Task BlankTemplateKeyGeneratesAUniqueSlugFromTitle()
+    {
+        var first = await _fixture.Repository.UploadDocumentTemplateAsync("", "My Cool Template!", null, "Other", BuildValidDocx());
+        Assert.Equal("my_cool_template", first.Template.TemplateKey);
+
+        var second = await _fixture.Repository.UploadDocumentTemplateAsync("", "My Cool Template!", null, "Other", BuildValidDocx("v2 content"));
+        Assert.Equal("my_cool_template_2", second.Template.TemplateKey);
     }
 
     [Fact]

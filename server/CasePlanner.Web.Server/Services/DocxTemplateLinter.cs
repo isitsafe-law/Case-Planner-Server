@@ -45,6 +45,52 @@ public static class DocxTemplateLinter
         return issues;
     }
 
+    // Upload-time auto-registration (see CasePlannerRepository.DocumentPlatform.UploadDocumentTemplateAsync)
+    // needs the same "what counts as a section" answer as CheckSectionBalance above, so this walks
+    // the exact same containers/top-level-paragraphs and reuses DocxSectionMerger.SectionOpen rather
+    // than re-deriving the marker shape. Keys are returned in first-appearance order, de-duplicated,
+    // regardless of whether the block is well-formed (a caller only wants "what block keys does this
+    // file mention" - balance problems are still reported separately by Validate above and block the
+    // upload before this would ever be consulted for a broken file).
+    public static IReadOnlyList<string> ExtractSectionKeys(byte[] templateBytes)
+    {
+        var keys = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var stream = new MemoryStream(templateBytes);
+        using var doc = WordprocessingDocument.Open(stream, false);
+        var main = doc.MainDocumentPart ?? throw new InvalidOperationException("Document has no main part.");
+
+        var containers = new List<OpenXmlCompositeElement>
+        {
+            main.Document.Body ?? throw new InvalidOperationException("Document has no body."),
+        };
+        if (main.HeaderParts is not null)
+        {
+            foreach (var header in main.HeaderParts) containers.Add(header.Header);
+        }
+
+        if (main.FooterParts is not null)
+        {
+            foreach (var footer in main.FooterParts) containers.Add(footer.Footer);
+        }
+
+        foreach (var container in containers)
+        {
+            foreach (var paragraph in container.ChildElements.OfType<Paragraph>())
+            {
+                var text = DocxSectionMerger.GetParagraphText(paragraph);
+                var openMatch = DocxSectionMerger.SectionOpen.Match(text);
+                if (!openMatch.Success) continue;
+
+                var name = openMatch.Groups[1].Value;
+                if (seen.Add(name)) keys.Add(name);
+            }
+        }
+
+        return keys;
+    }
+
     // Walks each container's own top-level paragraphs as a simple stack: an open marker pushes,
     // a close marker pops (or reports why it can't). Anything left on the stack at the end is
     // unclosed. Sections can't nest in this engine, so a push while something's already open is

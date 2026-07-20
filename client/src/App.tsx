@@ -250,7 +250,7 @@ const serviceMethods = ['Certified Mail', 'Process Server', 'Warning Order'] as 
 
 const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
 
-const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement'] as const
+const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement', 'Correspondence', 'Pleadings', 'Motions', 'Other'] as const
 
 type ServiceLogEntry = {
   id: number
@@ -1473,6 +1473,13 @@ function App() {
   const [platformUploadFile, setPlatformUploadFile] = useState<File | null>(null)
   const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
   const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
+  // Forces the Advanced disclosure below to mount fresh (see the CollapsiblePanel `key` at its
+  // render site): incremented whenever navigation should open it automatically (the Issue Tags
+  // "Used By" link), matched against platformAdvancedAutoOpenKey to decide defaultOpen for that
+  // one mount. A plain click on "Advanced…" in the table does not touch either of these, so it
+  // always mounts collapsed - the disclosure's resting state.
+  const [platformAdvancedNonce, setPlatformAdvancedNonce] = useState(0)
+  const [platformAdvancedAutoOpenKey, setPlatformAdvancedAutoOpenKey] = useState<string | null>(null)
   const [newSectionDraft, setNewSectionDraft] = useState({ sectionKey: '', label: '', description: '', issueTagName: '' })
   const [newOverlapDraft, setNewOverlapDraft] = useState({ sectionAKey: '', sectionBKey: '', note: '' })
   const [newRuntimeInputDraft, setNewRuntimeInputDraft] = useState({ fieldKey: '', label: '', fieldType: 'text', isRequired: true })
@@ -3452,6 +3459,28 @@ function App() {
   function selectPlatformTemplate(summary: DocumentTemplateAdminSummary) {
     setSelectedPlatformTemplateKey(summary.template.templateKey)
     setPlatformConfigDraft({ sections: summary.sections, overlaps: summary.overlaps, runtimeInputs: summary.runtimeInputs })
+  }
+
+  // Issue Tags' "Used By" column links a template title to its Advanced disclosure on the
+  // Document Templates settings screen. Titles (not keys) are what GetIssueTagUsageAsync returns,
+  // so this reloads the template catalog and matches by title - fine for an occasional admin
+  // click, and it means the Issue Tags screen never has to know a template's key.
+  async function navigateToTemplateAdvanced(templateTitle: string) {
+    try {
+      setErrorMessage('')
+      const templates = await api<DocumentTemplateAdminSummary[]>('/api/document-platform/templates')
+      setPlatformTemplates(templates)
+      const match = templates.find((t) => t.template.title.toLowerCase() === templateTitle.toLowerCase())
+      setPage('settings')
+      setSettingsSection('documentPlatformTemplates')
+      if (match) {
+        selectPlatformTemplate(match)
+        setPlatformAdvancedAutoOpenKey(match.template.templateKey)
+        setPlatformAdvancedNonce((n) => n + 1)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load document templates.')
+    }
   }
 
   async function uploadPlatformTemplate() {
@@ -8234,20 +8263,15 @@ function App() {
           {settingsSection === 'documentPlatformTemplates' && (
             <Panel title="Document Templates">
               <div className="settings-subpanel">
-                <h4>How this works</h4>
-                <p className="helper-text"><strong>Make content and formatting changes in Word, then upload the edited file as a new version.</strong> This settings area manages the metadata around a template - not its content - so there's normally no reason to change anything here after the initial setup.</p>
-                <p className="helper-text"><strong>Section key</strong>: a named block in the document, written as a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> pair around the text in Word. Labeling it here is what lets the case Documents tab show it as a checklist item (and pre-check it when the case carries a matching issue tag) - it doesn't create the block itself, that has to already exist in the uploaded .docx.</p>
-                <p className="helper-text"><strong>Runtime input / field key</strong>: tells the generator to prompt the attorney for a value at generation time (e.g. opposing counsel) instead of pulling it from the case record automatically. Like section keys, this only configures how an existing <code>{'{{FieldKey}}'}</code> token in the .docx gets its value - it doesn't add that token to the document.</p>
-                <p className="helper-text"><strong>Overlap warning</strong>: a note that two sections cover similar ground. When both are checked at generation time, the case checklist shows the note so the attorney can decide whether to drop one - it never blocks generation on its own.</p>
+                <p className="helper-text">Edit the document in Word, then upload it — merge fields and optional section blocks are read from the file automatically. Advanced configuration (issue-tag links, generation-time prompts) is available per template below.</p>
               </div>
               <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
 
               <h4 className="top-gap">{platformUploadKeyLocked ? `Upload New Version of "${platformUploadDraft.title}"` : 'Upload a New Template'}</h4>
               <div className="form-grid top-gap-small">
-                <label><span>Template Key</span><input value={platformUploadDraft.templateKey} disabled={platformUploadKeyLocked} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, templateKey: e.target.value })} placeholder="e.g. settlement_memo_platform" /></label>
                 <label><span>Title</span><input value={platformUploadDraft.title} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, title: e.target.value })} /></label>
                 <label><span>Category</span><select value={platformUploadDraft.category} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, category: e.target.value })}><option value="">Select category…</option>{documentTemplateCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
-                <label className="full-span"><span>Description</span><input value={platformUploadDraft.description} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, description: e.target.value })} /></label>
+                <label className="full-span"><span>Description (optional)</span><input value={platformUploadDraft.description} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, description: e.target.value })} /></label>
                 <label className="full-span"><span>File (.docx)</span><input type="file" accept=".docx" onChange={(e) => setPlatformUploadFile(e.target.files?.[0] ?? null)} /></label>
                 <div className="full-span button-row compact-actions">
                   <button className="primary" onClick={() => void uploadPlatformTemplate()}>{platformUploadKeyLocked ? 'Upload New Version' : 'Upload Template'}</button>
@@ -8258,25 +8282,24 @@ function App() {
               <h4 className="top-gap">Templates</h4>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
-                  <thead><tr><th>Title</th><th>Key</th><th>Category</th><th>Active Version</th><th>Type</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Title</th><th>Category</th><th>Active Version</th><th>Type</th><th>Actions</th></tr></thead>
                   <tbody>
                     {platformTemplates.map((t) => (
                       <tr key={t.template.templateKey}>
                         <td>{t.template.title}</td>
-                        <td>{t.template.templateKey}</td>
                         <td>{t.template.category}</td>
                         <td>{t.activeVersion ? `v${t.activeVersion.version}` : '—'}</td>
                         <td>{t.template.isBuiltin ? <span className="pill pill-neutral">Built-in</span> : <span className="pill pill-success">Custom</span>}</td>
                         <td>
                           <div className="button-row compact-actions row-actions">
                             <button className="primary" onClick={() => startUploadNewVersion(t)}>Upload New Version</button>
-                            <button onClick={() => selectPlatformTemplate(t)}>Configure</button>
+                            <button onClick={() => selectPlatformTemplate(t)}>Advanced…</button>
                             {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey)}>Delete</button>}
                           </div>
                         </td>
                       </tr>
                     ))}
-                    {platformTemplates.length === 0 && <tr><td colSpan={6} className="helper-text">Click "Load Templates" to see the catalog.</td></tr>}
+                    {platformTemplates.length === 0 && <tr><td colSpan={5} className="helper-text">Click "Load Templates" to see the catalog.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -8286,7 +8309,14 @@ function App() {
                 if (!selected) return null
                 return (
                   <div className="top-gap">
-                    <h4>{selected.template.title} — Configuration</h4>
+                    <CollapsiblePanel
+                      key={`advanced-${selected.template.templateKey}-${platformAdvancedNonce}`}
+                      title={`Advanced configuration — ${selected.template.title}`}
+                      defaultOpen={platformAdvancedAutoOpenKey === selected.template.templateKey}
+                    >
+                    <div className="inline-message warn"><p>Technical settings; most templates never need changes here. Sections and merge fields are detected automatically on upload.</p></div>
+                    <p className="helper-text">Template key: <code>{selected.template.templateKey}</code></p>
+                    <p className="helper-text">A <strong>section</strong> is a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> block in the .docx; new versions detect these automatically, but you can rename a section's label or link it to an issue tag here (linking pre-checks it on the case Documents tab when the case carries that tag). A <strong>runtime input</strong> makes an existing <code>{'{{FieldKey}}'}</code> token prompt the attorney for a value at generation time instead of pulling it from the case record. An <strong>overlap warning</strong> just flags two sections that cover similar ground — it never blocks generation.</p>
                     {selected.lintIssues.length > 0 && (
                       <div className="inline-message warn">{selected.lintIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>
                     )}
@@ -8389,6 +8419,7 @@ function App() {
                     </div>
 
                     <button className="primary top-gap" onClick={() => void savePlatformConfiguration()}>Save Configuration</button>
+                    </CollapsiblePanel>
                   </div>
                 )
               })()}
@@ -8397,8 +8428,8 @@ function App() {
 
           {settingsSection === 'issueTags' && (
             <Panel title="Issue Tags">
-              <p className="helper-text">Create, rename, and retire the issue-tag vocabulary cases use, and see which document-template sections a tag drives. Retiring a tag is a soft-delete: its name becomes available again, but case history keeps the original assignment.</p>
-              <p className="helper-text">Tagging a case with an issue (e.g. "Timber") automatically pulls in that tag's interrogatory and request-for-production questions when generating Interrogatories or Requests for Admission for that case - see the "Used By" column below for which templates a tag drives, and Document Templates for the actual section content each tag inserts.</p>
+              <p className="helper-text">Tags describe the issues a case involves (e.g. Timber, Access). Tagging a case automatically pre-checks that issue's questions when generating discovery documents.</p>
+              <p className="helper-text">Retiring a tag is a soft-delete: its name becomes available again, but case history keeps the original assignment.</p>
               <button className="compact-action-button" onClick={() => void loadIssueTagUsage()}>Load Usage</button>
 
               <h4 className="top-gap">Create a Tag</h4>
@@ -8424,7 +8455,16 @@ function App() {
                               <td><input value={issueTagEditDraft.name} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, name: e.target.value })} /></td>
                               <td><select value={issueTagEditDraft.category} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, category: e.target.value })}>{issueTagCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></td>
                               <td><input value={issueTagEditDraft.description} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, description: e.target.value })} /></td>
-                              <td>{usage ? usage.templateTitles.join(', ') : '—'}</td>
+                              <td>
+                                {usage && usage.templateTitles.length > 0
+                                  ? usage.templateTitles.map((title, idx) => (
+                                      <span key={title}>
+                                        {idx > 0 && ', '}
+                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
+                                      </span>
+                                    ))
+                                  : '—'}
+                              </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">
                                   <button className="primary" onClick={() => void saveIssueTagRename()}>Save</button>
@@ -8437,7 +8477,16 @@ function App() {
                               <td>{tag.name}</td>
                               <td>{tag.category}</td>
                               <td>{tag.description}</td>
-                              <td>{usage ? usage.templateTitles.join(', ') : '—'}</td>
+                              <td>
+                                {usage && usage.templateTitles.length > 0
+                                  ? usage.templateTitles.map((title, idx) => (
+                                      <span key={title}>
+                                        {idx > 0 && ', '}
+                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
+                                      </span>
+                                    ))
+                                  : '—'}
+                              </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">
                                   <button onClick={() => setIssueTagEditDraft({ id: tag.id, name: tag.name, description: tag.description ?? '', category: tag.category ?? '' })}>Rename</button>

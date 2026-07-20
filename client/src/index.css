@@ -1885,6 +1885,23 @@ code {
   gap: 0.45rem;
 }
 
+.report-column-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.report-column-row .toggle-inline {
+  flex: 1;
+  min-width: 0;
+}
+
+.report-column-order {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
 /* Reports page: 300px filter/column rail + 1fr metrics/preview column (design-system §8.6). */
 .rep-grid {
   display: grid;

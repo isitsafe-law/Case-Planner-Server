@@ -8018,7 +8018,7 @@ function App() {
 
           <div className="rep-grid">
             <div className="rep-rail">
-              <Panel title="Filters">
+              <CollapsiblePanel title="Filters">
                 <div className="rep-fields">
                   <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>
                   <label><span>County</span><select value={reportCountyFilter} onChange={(event) => setReportCountyFilter(event.target.value)}><option value="">All counties</option>{arkansasCounties.map((county) => <option key={county}>{county}</option>)}</select></label>
@@ -8033,9 +8033,38 @@ function App() {
                   <Btn size="sm" variant="ghost" onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset filters</Btn>
                 </div>
                 <p className="helper-text top-gap-small">Date boundaries are inclusive; presets populate the range automatically.</p>
-              </Panel>
+              </CollapsiblePanel>
               <CollapsiblePanel title={`Columns · ${reportColumns.length} of ${reportColumnOptions.length}`}>
-                <div className="report-column-picker">{reportColumnOptions.map((option) => <label className="toggle-inline" key={option.key}><span>{option.label}</span><input type="checkbox" checked={reportColumns.includes(option.key)} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} /></label>)}</div>
+                <div className="report-column-picker">{reportColumnOptions.map((option) => {
+                  const columnChecked = reportColumns.includes(option.key)
+                  const columnOrder = reportColumns.indexOf(option.key)
+                  return (
+                    <div className="report-column-row" key={option.key}>
+                      <label className="toggle-inline">
+                        <span>{columnChecked ? `${columnOrder + 1}. ` : ''}{option.label}</span>
+                        <input type="checkbox" checked={columnChecked} onChange={(event) => setReportColumns((current) => event.target.checked ? [...current, option.key] : current.filter((column) => column !== option.key))} />
+                      </label>
+                      {columnChecked && (
+                        <span className="report-column-order">
+                          <Btn size="sm" variant="ghost" className="ui-btn-icon" aria-label={`Move ${option.label} up`} disabled={columnOrder === 0} onClick={() => setReportColumns((current) => {
+                            const index = current.indexOf(option.key)
+                            if (index <= 0) return current
+                            const next = [...current]
+                            ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
+                            return next
+                          })}>▲</Btn>
+                          <Btn size="sm" variant="ghost" className="ui-btn-icon" aria-label={`Move ${option.label} down`} disabled={columnOrder === reportColumns.length - 1} onClick={() => setReportColumns((current) => {
+                            const index = current.indexOf(option.key)
+                            if (index === -1 || index >= current.length - 1) return current
+                            const next = [...current]
+                            ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
+                            return next
+                          })}>▼</Btn>
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}</div>
                 <div className="rep-fields top-gap-small">
                   <label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label>
                   <label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
@@ -8054,7 +8083,7 @@ function App() {
               {reportMetrics.closed > 0 && <p className="helper-text" style={{ marginBottom: '12px' }}>Duration metrics use {reportMetrics.closed - reportMetrics.missingDates} of {reportMetrics.closed} closed cases. Cases missing Date Opened or Date Closed are excluded.</p>}
 
               {reportMetrics.open > 0 && (
-                <Panel title="Open-case age" headerAction={<span className="pill pill-neutral">{reportMetrics.open} open case{reportMetrics.open === 1 ? '' : 's'}</span>} className="top-gap-small">
+                <CollapsiblePanel title={`Open-case age · ${reportMetrics.open} open case${reportMetrics.open === 1 ? '' : 's'}`} className="top-gap-small">
                   <div className="bars" role="img" aria-label={reportAgeBandBars.ariaLabel}>
                     {reportAgeBandBars.bands.map((band) => (
                       <Fragment key={band.key}>
@@ -8064,7 +8093,7 @@ function App() {
                       </Fragment>
                     ))}
                   </div>
-                </Panel>
+                </CollapsiblePanel>
               )}
 
               <Panel title="Preview" className="top-gap-small" headerAction={<span className="pill pill-neutral">{reportRows.length} matching case{reportRows.length === 1 ? '' : 's'}</span>}>
@@ -8745,10 +8774,10 @@ export function Panel({ title, headerAction, children, className }: { title: str
   )
 }
 
-export function CollapsiblePanel({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+export function CollapsiblePanel({ title, defaultOpen = true, className, children }: { title: string; defaultOpen?: boolean; className?: string; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <Panel title={title} headerAction={<button className="link-button" onClick={() => setOpen((current) => !current)}>{open ? 'Collapse' : 'Expand'}</button>}>
+    <Panel title={title} className={className} headerAction={<button className="link-button" onClick={() => setOpen((current) => !current)}>{open ? 'Collapse' : 'Expand'}</button>}>
       {open && children}
     </Panel>
   )

@@ -10,6 +10,14 @@ Date: 2026-07-20 · Status: **investigation only — nothing built, this is for 
 4. **Notifications: in-app AND email.** Both channels are the plan (email needs an SMTP relay or Graph API access from IT — a real external dependency, not just a build task).
 5. **"Region" = District, not County.** Multiple counties per district — this is a new field to capture, not derivable from existing data.
 
+## Decisions confirmed (2026-07-20, round 2)
+
+6. **No supervising-attorney hierarchy.** Correction to the "still needed" item below: `app_users` does not need a role/reporting-line concept. Assignment is purely per-case — managers add/remove/swap people directly on a case's assignment list at any time. A second attorney is just a second Attorney-tagged assignment on the same case, not a separate field or a roster relationship. (Superseded the schema addition originally described two paragraphs down — see Phase 1 for the actual, smaller addition: a `case_role` label on `case_assignments`, not on `app_users`.)
+7. **Case visibility is never restricted by role.** Non-admins can see all cases, unconditionally — "My Cases / All Cases" is a view preference, not an access gate. This is exactly how Phase 1 was scoped (an additive client-side filter, deliberately not touching the existing hard `GetVisibleCaseIdsAsync` restriction mechanism, which stays dormant).
+8. **Admins-only case deletion.** New, specific: delete-a-case must be gated to admins only, client AND server-side (client-side gating alone is bypassable). Not yet built — queued as the next fix after Phase 1 lands.
+9. **Case-opening/creation authority may be restricted — undecided.** Explicitly not a decision yet ("we'll see"). No action; flagged so it isn't lost.
+10. **A future general admin/permissions dashboard is anticipated.** Not building this now, but the Attorneys & Staff Settings screen (Phase 1) should be designed so it can grow into a broader permissions panel later rather than needing a rebuild — e.g. don't hard-code it as single-purpose-roster-only in a way that would make adding more permission controls awkward.
+
 ## Correction: the backend is further along than the first pass found
 
 A deeper trace turned up more than the first investigation caught. **The visibility-filtering mechanism is not just built, it's already wired into nearly every read endpoint in `Program.cs`** — dashboard, upcoming work, case list, workspace, service queue, deadlines, checklist, discovery, and more all already call `access.GetVisibleCaseIdsAsync(token)` and filter their results by it. Today this is a no-op (Entra disabled → always returns `null` → unrestricted) but the enforcement path is live code, not a gap.

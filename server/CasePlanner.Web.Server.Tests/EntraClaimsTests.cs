@@ -69,6 +69,16 @@ public sealed class EntraClaimsTests
         Assert.Equal(canWrite, CaseAccessEvaluator.CanWrite(role));
     }
 
+    [Theory]
+    [InlineData("Attorney", true)]
+    [InlineData("LegalAssistant", true)]
+    [InlineData("Other", true)]
+    [InlineData("Owner", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void CaseRolesAreClosedSet(string? role, bool expected) =>
+        Assert.Equal(expected, CaseAccessEvaluator.IsValidCaseRole(role));
+
     private static ClaimsPrincipal Principal(params Claim[] claims) =>
         new(new ClaimsIdentity(claims, "test"));
 }

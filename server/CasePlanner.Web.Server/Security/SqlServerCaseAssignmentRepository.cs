@@ -26,7 +26,7 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ca.case_id,ca.user_id,u.display_name,u.email,ca.assignment_role,ca.assigned_utc,ca.assigned_by_user_id,ca.row_version
+            SELECT ca.case_id,ca.user_id,u.display_name,u.email,ca.assignment_role,ca.case_role,ca.assigned_utc,ca.assigned_by_user_id,ca.row_version
             FROM dbo.case_assignments ca JOIN dbo.app_users u ON u.id=ca.user_id
             WHERE (@caseId IS NULL OR ca.case_id=@caseId) AND (@userId IS NULL OR ca.user_id=@userId)
             ORDER BY ca.case_id,u.display_name
@@ -35,7 +35,7 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         command.Parameters.Add(new SqlParameter("@userId", (object?)userId ?? DBNull.Value));
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
-            result.Add(new(reader.GetInt64(0), reader.GetGuid(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetDateTime(5), reader.IsDBNull(6) ? null : reader.GetGuid(6), Convert.ToBase64String((byte[])reader.GetValue(7))));
+            result.Add(new(reader.GetInt64(0), reader.GetGuid(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetDateTime(6), reader.IsDBNull(7) ? null : reader.GetGuid(7), Convert.ToBase64String((byte[])reader.GetValue(8))));
         return result;
     }
 
@@ -78,6 +78,8 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
     {
         if (!CaseAccessEvaluator.IsValidAssignmentRole(request.AssignmentRole))
             throw new ArgumentException("AssignmentRole must be Owner, Collaborator, or ReadOnly.");
+        if (!CaseAccessEvaluator.IsValidCaseRole(request.CaseRole))
+            throw new ArgumentException("CaseRole must be Attorney, LegalAssistant, or Other.");
 
         await using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync(token);
@@ -85,16 +87,16 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            UPDATE dbo.case_assignments SET assignment_role=@role,assigned_utc=SYSUTCDATETIME(),assigned_by_user_id=@actor
+            UPDATE dbo.case_assignments SET assignment_role=@role,case_role=@caseRole,assigned_utc=SYSUTCDATETIME(),assigned_by_user_id=@actor
             WHERE case_id=@caseId AND user_id=@userId;
             IF @@ROWCOUNT=0
-                INSERT INTO dbo.case_assignments (case_id,user_id,assignment_role,assigned_by_user_id)
-                SELECT @caseId,@userId,@role,@actor
+                INSERT INTO dbo.case_assignments (case_id,user_id,assignment_role,case_role,assigned_by_user_id)
+                SELECT @caseId,@userId,@role,@caseRole,@actor
                 WHERE EXISTS (SELECT 1 FROM dbo.app_users WHERE id=@userId AND is_active=1);
             """;
         AddAssignmentParameters(command, request, actorUserId);
         if (await command.ExecuteNonQueryAsync(token) == 0) throw new InvalidOperationException("The selected user is not active or the case does not exist.");
-        await AuditAsync(connection, transaction, request.CaseId, actorUserId, "CaseAssignmentSaved", request.UserId.ToString(), JsonSerializer.Serialize(new { request.AssignmentRole }), token);
+        await AuditAsync(connection, transaction, request.CaseId, actorUserId, "CaseAssignmentSaved", request.UserId.ToString(), JsonSerializer.Serialize(new { request.AssignmentRole, request.CaseRole }), token);
         await transaction.CommitAsync(token);
         return (await GetAssignmentsAsync(request.CaseId, request.UserId, token)).Single();
     }
@@ -137,6 +139,7 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         command.Parameters.Add(new SqlParameter("@caseId", request.CaseId));
         command.Parameters.Add(new SqlParameter("@userId", request.UserId));
         command.Parameters.Add(new SqlParameter("@role", request.AssignmentRole));
+        command.Parameters.Add(new SqlParameter("@caseRole", request.CaseRole));
         command.Parameters.Add(new SqlParameter("@actor", actor));
     }
 

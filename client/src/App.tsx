@@ -40,7 +40,7 @@ type ThemeMode = 'light' | 'dark' | 'system'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'developer'
 
 type CaseRecord = {
   id: number
@@ -608,6 +608,46 @@ type DocumentTemplateAdminSummary = {
 }
 type IssueTagUsage = { tagName: string; templateTitles: string[] }
 
+// Dormant multi-user foundation (Entra-provisioned identities, per-case assignments) surfaced
+// here for the first time. See server/CasePlanner.Web.Server/Security/EntraOptions.cs and
+// SqlServerCaseAssignmentRepository.cs for the backing records these mirror.
+type AuthenticatedUserProfile = {
+  id: string
+  tenantId: string
+  objectId: string
+  displayName: string
+  email?: string | null
+  roles: string[]
+  isAdmin: boolean
+}
+type AppUserSummary = {
+  id: string
+  displayName: string
+  email?: string | null
+  isActive: boolean
+  createdUtc: string
+  updatedUtc: string
+  lastLoginUtc?: string | null
+}
+type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
+type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
+type CaseAssignmentRecord = {
+  caseId: number
+  userId: string
+  displayName: string
+  email?: string | null
+  assignmentRole: AssignmentRoleValue
+  caseRole: CaseRoleValue
+  assignedUtc: string
+  assignedByUserId?: string | null
+  rowVersion: string
+}
+const caseRoleOptions: CaseRoleValue[] = ['Attorney', 'LegalAssistant', 'Other']
+const assignmentRoleOptions: AssignmentRoleValue[] = ['Owner', 'Collaborator', 'ReadOnly']
+function caseRoleLabel(role: string): string {
+  return role === 'LegalAssistant' ? 'Legal Assistant' : role
+}
+
 type UpcomingWorkType = 'task' | 'deadline' | 'discovery' | 'service' | 'hearing'
 type UpcomingWorkItem = {
   key: string
@@ -902,6 +942,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'issueTags', label: 'Issue Tags' },
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
+  { key: 'staff', label: 'Attorneys & Staff' },
   { key: 'about', label: 'About / IT Notes' },
   // Dev-only - strip this section (and the Developer settings category below) before a real release.
   { key: 'developer', label: 'Developer' },
@@ -913,6 +954,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Tasks and Deadlines', sections: ['checklistTemplates', 'deadlineTemplates'] },
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
+  { label: 'Staff', sections: ['staff'] },
   { label: 'Diagnostics and Help', sections: ['diagnostics', 'about'] },
   // Dev-only category - strip before a real release.
   { label: 'Developer', sections: ['developer'] },
@@ -1458,6 +1500,12 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
   const [cases, setCases] = useState<CaseRecord[]>([])
   const [allCases, setAllCases] = useState<CaseRecord[]>([])
+  const [currentUser, setCurrentUser] = useState<AuthenticatedUserProfile | null>(null)
+  const [myAssignedCaseIds, setMyAssignedCaseIds] = useState<Set<number> | null>(null)
+  const [caseListScope, setCaseListScope] = useState<'mine' | 'all'>('mine')
+  const [staffRoster, setStaffRoster] = useState<AppUserSummary[]>([])
+  const [caseAssignments, setCaseAssignments] = useState<CaseAssignmentRecord[]>([])
+  const [newAssignmentDraft, setNewAssignmentDraft] = useState({ userId: '', caseRole: 'Attorney' as CaseRoleValue, assignmentRole: 'Collaborator' as AssignmentRoleValue })
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null)
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null)
   const [queueDeadlines, setQueueDeadlines] = useState<DeadlineItem[]>([])
@@ -1642,6 +1690,7 @@ function App() {
 
   useEffect(() => {
     void loadInitial()
+    void loadCurrentUser()
   }, [])
 
   useEffect(() => {
@@ -1884,6 +1933,26 @@ function App() {
     }
   }, [caseMenuOpen])
 
+  // /api/auth/me returns 401 whenever there is no authenticated identity - the normal state for
+  // local/SQLite dev, where Entra is disabled entirely. That is not an error; it just means the
+  // My/All Cases toggle and admin-only actions have nothing to key off and degrade accordingly.
+  // Kept separate from loadInitial's Promise.all so a 401 here never blocks the rest of the app.
+  async function loadCurrentUser() {
+    try {
+      const profile = await api<AuthenticatedUserProfile>('/api/auth/me')
+      setCurrentUser(profile)
+      try {
+        const mine = await api<CaseAssignmentRecord[]>(`/api/admin/case-assignments?userId=${encodeURIComponent(profile.id)}`)
+        setMyAssignedCaseIds(new Set(mine.map((a) => a.caseId)))
+      } catch {
+        setMyAssignedCaseIds(new Set())
+      }
+    } catch {
+      setCurrentUser(null)
+      setMyAssignedCaseIds(null)
+    }
+  }
+
   async function loadInitial() {
     try {
       setErrorMessage('')
@@ -1970,6 +2039,7 @@ function App() {
       setCaseDraft(data.case)
       setTrialRangeOpen(Boolean(data.case.trialEndDate))
       void loadPlatformGenerationHistory(caseId)
+      void loadCaseAssignments(caseId)
       setDeadlineDraft(emptyDeadline(caseId))
       setChecklistDraft(emptyChecklist(caseId))
       setDiscoveryDraft(emptyDiscovery(caseId))
@@ -1998,6 +2068,69 @@ function App() {
     await loadInitial()
     if (caseId) {
       await loadWorkspace(caseId)
+    }
+  }
+
+  // Staff & Case Assignments admin (dormant multi-user foundation - app_users / case_assignments
+  // - surfaced for the first time). /api/admin/* is Entra-only and returns 404 whenever Entra is
+  // disabled (the normal local/SQLite state), which the shared api() helper reports as a clear
+  // error rather than a crash; there is no live SQL Server in this sandbox to verify data against.
+  async function loadStaffRoster() {
+    try {
+      setErrorMessage('')
+      setStaffRoster(await api<AppUserSummary[]>('/api/admin/users'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load staff.')
+    }
+  }
+
+  async function toggleUserActive(user: AppUserSummary) {
+    if (user.isActive && !(await confirmAction({ title: 'Deactivate staff member?', message: `${user.displayName} will no longer be assignable to cases.`, confirmLabel: 'Deactivate', danger: true }))) return
+    try {
+      await api(`/api/admin/users/${user.id}/active`, { method: 'PUT', body: JSON.stringify({ isActive: !user.isActive }) })
+      await loadStaffRoster()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update staff status.')
+    }
+  }
+
+  async function loadCaseAssignments(caseId: number) {
+    try {
+      setCaseAssignments(await api<CaseAssignmentRecord[]>(`/api/admin/case-assignments?caseId=${caseId}`))
+    } catch {
+      setCaseAssignments([])
+    }
+    if (staffRoster.length === 0) void loadStaffRoster()
+  }
+
+  async function addCaseAssignment(caseId: number) {
+    if (!newAssignmentDraft.userId) return
+    try {
+      setErrorMessage('')
+      await api('/api/admin/case-assignments', {
+        method: 'POST',
+        body: JSON.stringify({
+          caseId,
+          userId: newAssignmentDraft.userId,
+          assignmentRole: newAssignmentDraft.assignmentRole,
+          caseRole: newAssignmentDraft.caseRole,
+        }),
+      })
+      setNewAssignmentDraft({ userId: '', caseRole: 'Attorney', assignmentRole: 'Collaborator' })
+      await loadCaseAssignments(caseId)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to add assignment.')
+    }
+  }
+
+  async function removeCaseAssignment(assignment: CaseAssignmentRecord) {
+    if (!(await confirmAction({ title: 'Remove assignment?', message: `${assignment.displayName} (${caseRoleLabel(assignment.caseRole)}) will no longer be assigned to this case.`, confirmLabel: 'Remove', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/admin/case-assignments/${assignment.caseId}/${assignment.userId}`, { method: 'DELETE' })
+      await loadCaseAssignments(assignment.caseId)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove assignment.')
     }
   }
 
@@ -4567,7 +4700,13 @@ function App() {
       { key: 'attentionStatus', label: 'Status' },
       ...(caseListShowLifecycle ? [{ key: 'dateOpened', label: 'Date Opened' }, { key: 'closedDate', label: 'Date Closed' }] : []),
     ] as { key: CaseSortColumn; label: string }[])
-    const rows = caseSortColumn ? sortCases(cases, caseSortColumn, caseSortDirection) : cases
+    // Additive client-side view filter only - does not touch the server's access.GetVisibleCaseIdsAsync
+    // gate (that mechanism stays dormant on purpose). With no authenticated identity (Entra disabled,
+    // the normal local/SQLite state) there is nothing to scope by, so the toggle is hidden entirely.
+    const scopedCases = currentUser && caseListScope === 'mine'
+      ? cases.filter((c) => (myAssignedCaseIds ?? new Set<number>()).has(c.id))
+      : cases
+    const rows = caseSortColumn ? sortCases(scopedCases, caseSortColumn, caseSortDirection) : scopedCases
 
     return (
       <main className="page">
@@ -4605,6 +4744,13 @@ function App() {
               {status === 'Triage' && triageCount > 0 && <b className="ui-chip-count">{triageCount}</b>}
             </FilterChip>
           ))}
+          {currentUser && (
+            <>
+              <FilterSep />
+              <FilterChip active={caseListScope === 'mine'} onClick={() => setCaseListScope('mine')}>My Cases</FilterChip>
+              <FilterChip active={caseListScope === 'all'} onClick={() => setCaseListScope('all')}>All Cases</FilterChip>
+            </>
+          )}
           <FilterSep />
           <select aria-label="County" value={countyFilter} onChange={(event) => { setCountyFilter(event.target.value); void loadCasesWithOverride({ county: event.target.value }) }}>
             <option value="">All counties</option>
@@ -4623,7 +4769,7 @@ function App() {
           <Btn size="sm" variant="ghost" onClick={() => { setCaseSearch(''); setStatusFilter(''); setCaseStatusFilter(''); setCountyFilter(''); setIncludeClosed(false); void loadInitial() }}>
             Clear
           </Btn>
-          <FilterSummary>{cases.length} case{cases.length === 1 ? '' : 's'}</FilterSummary>
+          <FilterSummary>{scopedCases.length} case{scopedCases.length === 1 ? '' : 's'}</FilterSummary>
         </FilterBar>
 
         <div className="ui-table-panel">
@@ -5440,6 +5586,55 @@ function App() {
                 )}
               </Panel>
             </div>
+
+            <Panel title="Assigned Staff">
+              <p className="helper-text">Who is working this case - attorneys, legal assistants, and anyone else. Add or remove people any time; a second attorney is just another entry with the Attorney role.</p>
+              {caseAssignments.length === 0 ? <p>No one is assigned to this case yet.</p> : (
+                <div className="command-list">
+                  {caseAssignments.map((assignment) => (
+                    <div key={assignment.userId} className="command-list-row-compact">
+                      <div>
+                        <strong>{assignment.displayName}</strong>
+                        <div className="flag-text muted">{assignment.email || 'No email on file'}</div>
+                      </div>
+                      <StatusChip tone="neutral">{caseRoleLabel(assignment.caseRole)}</StatusChip>
+                      {currentUser?.isAdmin && (
+                        <button onClick={() => void removeCaseAssignment(assignment)} aria-label={`Remove ${assignment.displayName} from this case`}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {currentUser?.isAdmin && (
+                <div className="form-grid top-gap-small">
+                  <label>
+                    <span>Person</span>
+                    <select value={newAssignmentDraft.userId} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, userId: event.target.value })}>
+                      <option value="">Select person…</option>
+                      {staffRoster.filter((user) => user.isActive).map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Case Role</span>
+                    <select value={newAssignmentDraft.caseRole} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, caseRole: event.target.value as CaseRoleValue })}>
+                      {caseRoleOptions.map((role) => <option key={role} value={role}>{caseRoleLabel(role)}</option>)}
+                    </select>
+                  </label>
+                  <details className="full-span">
+                    <summary className="helper-text">Advanced: access level</summary>
+                    <label className="top-gap-small">
+                      <span>Access Level</span>
+                      <select value={newAssignmentDraft.assignmentRole} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, assignmentRole: event.target.value as AssignmentRoleValue })}>
+                        {assignmentRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+                      </select>
+                    </label>
+                  </details>
+                  <div className="full-span button-row compact-actions">
+                    <button className="primary" disabled={!newAssignmentDraft.userId} onClick={() => void addCaseAssignment(selectedCase.id)}>Add</button>
+                  </div>
+                </div>
+              )}
+            </Panel>
 
             <CollapsiblePanel title="Case record" defaultOpen={false}>
               <div className="button-row compact-actions">
@@ -8658,6 +8853,35 @@ function App() {
               <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',track:'Any',active:true})}>Add Deadline Template</button>
               {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
               <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
+            </Panel>
+          )}
+
+          {settingsSection === 'staff' && (
+            <Panel title="Attorneys & Staff">
+              <p className="helper-text">Everyone who works on cases here — attorneys, legal assistants, and anyone else added on a case. People are created automatically the first time they sign in; this screen just controls whether someone can still be assigned to cases.</p>
+              <button className="compact-action-button" onClick={() => void loadStaffRoster()}>Load Staff</button>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>Name</th><th>Email</th><th>Active</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {staffRoster.map((user) => (
+                      <tr key={user.id}>
+                        <td>{user.displayName}</td>
+                        <td>{user.email || '—'}</td>
+                        <td><span className={`pill pill-${user.isActive ? 'success' : 'neutral'}`}>{user.isActive ? 'Active' : 'Inactive'}</span></td>
+                        <td>
+                          {currentUser?.isAdmin ? (
+                            <button onClick={() => void toggleUserActive(user)}>{user.isActive ? 'Deactivate' : 'Activate'}</button>
+                          ) : (
+                            <span className="helper-text">Admin only</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {staffRoster.length === 0 && <tr><td colSpan={4} className="helper-text">Click "Load Staff" to see everyone on the roster.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </Panel>
           )}
 

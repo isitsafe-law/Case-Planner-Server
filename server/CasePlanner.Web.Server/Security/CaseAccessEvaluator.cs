@@ -15,6 +15,9 @@ public static class CaseAccessEvaluator
     public static bool IsValidAssignmentRole(string? role) =>
         role is "Owner" or "Collaborator" or "ReadOnly";
 
+    public static bool IsValidCaseRole(string? role) =>
+        role is "Attorney" or "LegalAssistant" or "Other";
+
     public static bool CanRead(string? assignmentRole) => IsValidAssignmentRole(assignmentRole);
 
     public static bool CanWrite(string? assignmentRole) => assignmentRole is "Owner" or "Collaborator";

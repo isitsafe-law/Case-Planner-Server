@@ -400,21 +400,21 @@ app.MapGet("/api/auth/config", () => Results.Ok(new EntraPublicConfiguration(
     entraOptions.Enabled ? entraOptions.SpaClientId : "",
     entraOptions.Enabled ? publicApiScope : "")));
 app.MapGet("/api/auth/me", (HttpContext context) =>
-    context.Items.TryGetValue(EntraUserProvisioningMiddleware.ProfileItemKey, out var profile)
-        ? Results.Ok(profile)
+    context.Items.TryGetValue(EntraUserProvisioningMiddleware.ProfileItemKey, out var profile) && profile is AuthenticatedUserProfile authenticated
+        ? Results.Ok(new { authenticated.Id, authenticated.TenantId, authenticated.ObjectId, authenticated.DisplayName, authenticated.Email, authenticated.Roles, IsAdmin = CaseAccessEvaluator.IsAdministrator(context.User, entraOptions) })
         : Results.Unauthorized()).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Read-only: any signed-in user can see who's on staff / who's assigned to a case (it's a
+// staff directory, not sensitive data). Only mutation (below) is admin-gated.
 app.MapGet("/api/admin/users", async (HttpContext context, SqlServerCaseAssignmentRepository assignments, CancellationToken token) =>
 {
     if (!entraOptions.Enabled) return Results.NotFound();
-    if (!CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
     return Results.Ok(await assignments.GetUsersAsync(token));
-});
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/admin/case-assignments", async (long? caseId, Guid? userId, HttpContext context, SqlServerCaseAssignmentRepository assignments, CancellationToken token) =>
 {
     if (!entraOptions.Enabled) return Results.NotFound();
-    if (!CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
     return Results.Ok(await assignments.GetAssignmentsAsync(caseId, userId, token));
-});
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/admin/case-assignments", async (SaveCaseAssignmentRequest request, HttpContext context, SqlServerCaseAssignmentRepository assignments, CancellationToken token) =>
 {
     if (!entraOptions.Enabled) return Results.NotFound();

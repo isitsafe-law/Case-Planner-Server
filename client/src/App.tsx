@@ -19,6 +19,7 @@ import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
 import { ErrorState } from './dashboard/ErrorState'
 import { getApiAccessToken } from './auth'
 import { StatusChip, type StatusTone } from './ui/StatusChip'
+import { HolderChip } from './ui/HolderChip'
 import { StatusSelect } from './ui/StatusSelect'
 import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
@@ -244,6 +245,8 @@ type PublicationEntry = {
 }
 
 const serviceLogStatuses = ['Served', 'Not Served', 'Attempted', 'Refused'] as const
+
+const serviceMethods = ['Certified Mail', 'Process Server', 'Warning Order'] as const
 
 const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
 
@@ -5114,6 +5117,7 @@ function App() {
                   here (quietly) when Closed; the actual toggle lives on the Status tab. */}
               {selectedCase.status === 'Closed' && <StatusChip tone="neutral">Closed</StatusChip>}
               {selectedCase.statusMappingReview && <StatusChip tone="warn">Status mapping review</StatusChip>}
+              {(selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && selectedCase.currentHolder && <HolderChip holder={selectedCase.currentHolder} />}
               {!isNewCase && <Btn onClick={startEditCase}>Edit Case</Btn>}
               {!isNewCase && (
                 <div className="case-menu" ref={caseMenuRef}>
@@ -5445,7 +5449,19 @@ function App() {
                 <form className="form-grid top-gap-small" onSubmit={(event) => { event.preventDefault(); void saveServiceLogEntry() }}>
                   <label><span>Party Name</span><input value={serviceLogDraft.partyName} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, partyName: event.target.value })} placeholder="Defendant name" required /></label>
                   <label><span>Status</span><select value={serviceLogDraft.status} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, status: event.target.value })}>{serviceLogStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-                  <label><span>Method</span><input value={serviceLogDraft.method || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, method: event.target.value })} placeholder="e.g. Certified mail, Sheriff, Publication" /></label>
+                  <label>
+                    <span>Method</span>
+                    <select
+                      value={(serviceMethods as readonly string[]).includes(serviceLogDraft.method || '') ? serviceLogDraft.method || serviceMethods[0] : '__custom'}
+                      onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, method: event.target.value === '__custom' ? '' : event.target.value })}
+                    >
+                      {serviceMethods.map((method) => <option key={method} value={method}>{method}</option>)}
+                      <option value="__custom">Custom…</option>
+                    </select>
+                  </label>
+                  {!(serviceMethods as readonly string[]).includes(serviceLogDraft.method || '') && (
+                    <label><span>Custom Method</span><input value={serviceLogDraft.method || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, method: event.target.value })} placeholder="e.g. Publication" /></label>
+                  )}
                   <label><span>Date</span><input type="date" value={serviceLogDraft.eventDate || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, eventDate: event.target.value })} /></label>
                   <label className="full-span"><span>Notes</span><textarea value={serviceLogDraft.notes || ''} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, notes: event.target.value })} placeholder="Attempt details, wrangling notes" /></label>
                   <div className="button-row compact-actions full-span">
@@ -7572,12 +7588,11 @@ function App() {
                           <th>Case</th>
                           <th>Why it's here</th>
                           <th style={{ width: 130 }}>Review by</th>
-                          <th style={{ width: 260 }}></th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredActionQueue.length === 0 ? (
-                          <UiEmptyState colSpan={5} title="Nothing needs attorney judgment right now" hint="Cases needing a decision, action, review, escalation, or trial preparation will appear here." />
+                          <UiEmptyState colSpan={4} title="Nothing needs attorney judgment right now" hint="Cases needing a decision, action, review, escalation, or trial preparation will appear here." />
                         ) : filteredActionQueue.map((item) => (
                           <ActionQueueRow
                             key={item.caseId}

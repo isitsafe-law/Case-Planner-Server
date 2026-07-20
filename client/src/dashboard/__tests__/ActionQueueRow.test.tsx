@@ -55,17 +55,46 @@ function renderRow(item: ActionQueueItem, handlers: ActionQueueHandlers, extra: 
 }
 
 describe('ActionQueueRow', () => {
-  it('shows the required row hierarchy: case, case number, county, reason, posture, next action, review date, days inactive', () => {
+  it('shows the required row hierarchy: case, case number, county, category badge, reason, posture, next action, review date, days inactive', () => {
     const item = makeItem()
     renderRow(item, makeHandlers(), { county: 'Craighead' })
 
     expect(screen.getByText('Johnson - Tract 14')).toBeInTheDocument()
     expect(screen.getByText('27CV-24-100 · Craighead')).toBeInTheDocument()
+    expect(screen.getByText('Decide')).toBeInTheDocument()
     expect(screen.getByText('Discovery strategy not selected')).toBeInTheDocument()
     expect(screen.getByText(/Answer filed 42 days ago/)).toBeInTheDocument()
     expect(screen.getByText(/Recommended: Decide whether to serve written discovery/)).toBeInTheDocument()
-    expect(screen.getByText(/42 days since meaningful activity/)).toBeInTheDocument()
+    expect(screen.getByText(/42 days inactive/)).toBeInTheDocument()
     expect(screen.getByText('July 15, 2026')).toBeInTheDocument()
+  })
+
+  it('renders the category badge with a tone matching the action category', () => {
+    const { rerender } = renderRow(makeItem({ actionCategory: 'Escalate' }), makeHandlers())
+    expect(screen.getByText('Escalate').closest('.ui-status')).toHaveClass('ui-status-danger')
+
+    rerender(
+      <table>
+        <tbody>
+          <ActionQueueRow item={makeItem({ actionCategory: 'Act' })} handlers={makeHandlers()} selected={false} onToggleSelect={vi.fn()} />
+        </tbody>
+      </table>,
+    )
+    expect(screen.getByText('Act').closest('.ui-status')).toHaveClass('ui-status-primary')
+  })
+
+  it('shows a holder chip in the detail row when the case has a current holder', () => {
+    const { rerender } = renderRow(makeItem({ currentHolder: null }), makeHandlers())
+    expect(screen.queryByText(/Holder:/)).not.toBeInTheDocument()
+
+    rerender(
+      <table>
+        <tbody>
+          <ActionQueueRow item={makeItem({ currentHolder: 'Attorney' })} handlers={makeHandlers()} selected={false} onToggleSelect={vi.fn()} />
+        </tbody>
+      </table>,
+    )
+    expect(screen.getByText('Holder: Attorney')).toBeInTheDocument()
   })
 
   it('only shows the related-warning count when there is more than one', () => {

@@ -1,7 +1,17 @@
 import { useState } from 'react'
-import type { ActionQueueItem } from './types'
+import type { ActionCategory, ActionQueueItem } from './types'
 import { Btn } from '../ui/Btn'
+import { StatusChip, type StatusTone } from '../ui/StatusChip'
+import { HolderChip } from '../ui/HolderChip'
 import { formatDate as displayDate } from '../ui/format'
+
+const CATEGORY_TONE: Record<ActionCategory, StatusTone> = {
+  Decide: 'warn',
+  Act: 'primary',
+  Review: 'neutral',
+  Escalate: 'danger',
+  Prepare: 'neutral',
+}
 
 export type ActionQueueHandlers = {
   onOpenCase: (caseId: number) => void
@@ -64,13 +74,6 @@ export function ActionQueueRow({
     }
   }
 
-  const subParts: string[] = []
-  if (item.postureSummary) subParts.push(item.postureSummary)
-  if (item.recommendedNextAction) subParts.push(`Recommended: ${item.recommendedNextAction}`)
-  if (item.daysSinceMeaningfulActivity !== null) subParts.push(`${item.daysSinceMeaningfulActivity} days since meaningful activity`)
-  if (item.currentHolder) subParts.push(`On ${item.currentHolder}'s desk`)
-  if (item.relatedWarningCount > 1) subParts.push(`${item.relatedWarningCount} related warnings`)
-
   return (
     <>
       <tr className={selected ? 'ui-row-sel' : ''}>
@@ -82,11 +85,26 @@ export function ActionQueueRow({
           <div className="ui-sub ui-data">{[item.caseNumber, county].filter(Boolean).join(' · ') || '—'}</div>
         </td>
         <td>
-          {item.reason}
-          {subParts.length > 0 && <div className="ui-sub">{subParts.join(' · ')}</div>}
+          <div className="ui-queue-reason">
+            <StatusChip tone={CATEGORY_TONE[item.actionCategory]}>{item.actionCategory}</StatusChip>
+            <span>{item.reason}</span>
+          </div>
         </td>
         <td className="ui-data">{item.reviewDate ? displayDate(item.reviewDate) : <span className="ui-cell-faint">—</span>}</td>
-        <td>
+      </tr>
+
+      <tr className="ui-queue-detail-row">
+        <td></td>
+        <td colSpan={3}>
+          {item.postureSummary && <div className="ui-sub">{item.postureSummary}</div>}
+          {item.recommendedNextAction && <div className="ui-sub ui-sub-recommend">Recommended: {item.recommendedNextAction}</div>}
+          {(item.currentHolder || item.daysSinceMeaningfulActivity !== null || item.relatedWarningCount > 1) && (
+            <div className="ui-row-actions ui-row-actions-wrap ui-queue-meta">
+              {item.currentHolder && <HolderChip holder={item.currentHolder} />}
+              {item.daysSinceMeaningfulActivity !== null && <StatusChip tone="neutral">{item.daysSinceMeaningfulActivity} days inactive</StatusChip>}
+              {item.relatedWarningCount > 1 && <StatusChip tone="warn">{item.relatedWarningCount} related warnings</StatusChip>}
+            </div>
+          )}
           <div className="ui-row-actions ui-row-actions-wrap">
             <Btn size="sm" onClick={() => handlers.onOpenCase(item.caseId)}>Open case</Btn>
             {item.relatedDeadlineId != null && handlers.onCompleteDeadline && item.reason.toLowerCase().includes('deadline') && (
@@ -110,7 +128,7 @@ export function ActionQueueRow({
       {openForm && (
         <tr className="ui-expand-row">
           <td></td>
-          <td colSpan={4}>
+          <td colSpan={3}>
             {openForm === 'plan' && (
               <div className="inline-quick-form plan-next-step-menu">
                 <strong>Plan next step</strong>

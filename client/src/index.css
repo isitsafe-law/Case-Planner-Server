@@ -2696,6 +2696,27 @@ button.ui-tile.ui-tile-on .ui-tile-label {
   background: var(--surface-subtle);
 }
 
+.ui-queue-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ui-queue-detail-row td {
+  background: var(--surface-subtle);
+  padding: 6px 10px 10px;
+}
+
+.ui-sub-recommend {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.ui-queue-meta {
+  margin: 4px 0;
+}
+
 /* Case Insight docket key/value rail (replaces .docket-summary-grid) */
 .kv {
   display: grid;

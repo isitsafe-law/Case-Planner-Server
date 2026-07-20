@@ -828,7 +828,7 @@ const reportColumnOptions = [
   { key: 'currentHolder', label: 'Current holder' },
   { key: 'nextAction', label: 'Next action' },
   { key: 'nextReviewDate', label: 'Next review' },
-  { key: 'trialDate', label: 'Trial date' },
+  { key: 'trialDate', label: 'Jury Trial' },
   { key: 'dateOpened', label: 'Date opened' },
   { key: 'closedDate', label: 'Date closed' },
   { key: 'caseAgeDays', label: 'Age / duration (days)' },
@@ -1274,6 +1274,22 @@ function isQueueDateOverdue(dateValue?: string | null): boolean {
   return matchesUrgency(dateValue, 'Overdue')
 }
 
+function eventStatusTone(status?: string | null): StatusTone {
+  if (status === 'Completed') return 'ok'
+  if (status === 'Continued') return 'warn'
+  if (status === 'Canceled') return 'danger'
+  return 'neutral'
+}
+
+// Events have no "done" checkbox like deadlines/tasks; "resolved" means the status was explicitly
+// set to Completed/Canceled, and "past" means the date has slipped by without either of those
+// (still worth hiding from the Work Queue's forward-looking list, unlike deadlines/tasks which
+// intentionally surface "Overdue" on request via matchesUrgency).
+function isEventPastOrResolved(item: Hearing): boolean {
+  if (item.status === 'Completed' || item.status === 'Canceled') return true
+  return isQueueDateOverdue(item.hearingDate)
+}
+
 function serviceWarningTone(warningLevel: string): StatusTone {
   if (warningLevel === 'overdue' || warningLevel === 'missing') return 'danger'
   if (warningLevel === 'urgent' || warningLevel === 'upcoming') return 'warn'
@@ -1420,6 +1436,10 @@ function App() {
   // type; 'events' shows all events (no done-ness); 'done' shows done deadlines + done tasks.
   const [workFacet, setWorkFacet] = useState<'open' | 'deadlines' | 'tasks' | 'events' | 'done'>('open')
   const [workFromTemplateOpen, setWorkFromTemplateOpen] = useState(false)
+  // Whether the Jury Trial "Through" (end date) input is revealed. Reset per-case in loadWorkspace
+  // (auto-open when the loaded case already has a trialEndDate) rather than derived from
+  // selectedCase inline, since this is a top-level hook and selectedCase isn't defined yet here.
+  const [trialRangeOpen, setTrialRangeOpen] = useState(false)
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
   const caseMenuRef = useRef<HTMLDivElement | null>(null)
   const caseEditorSectionRefs = useRef<Record<CaseEditorSectionKey, HTMLElement | null>>({
@@ -1946,6 +1966,7 @@ function App() {
       const data = await api<WorkspaceResponse>(`/api/cases/${caseId}`)
       setWorkspace(data)
       setCaseDraft(data.case)
+      setTrialRangeOpen(Boolean(data.case.trialEndDate))
       void loadPlatformGenerationHistory(caseId)
       setDeadlineDraft(emptyDeadline(caseId))
       setChecklistDraft(emptyChecklist(caseId))
@@ -3783,6 +3804,21 @@ function App() {
     }
   }
 
+  // Inline status update from a Work/Work Queue row's StatusSelect, mirroring
+  // updateServiceLogStatus's pattern: POST the existing record with the new status, then reload.
+  async function updateHearingStatus(hearing: Hearing, status: string) {
+    const caseId = hearing.caseId || selectedCaseId || caseDraft.id
+    if (!caseId) return
+    try {
+      setErrorMessage('')
+      await api('/api/hearings', { method: 'POST', body: JSON.stringify({ ...hearing, status, caseId }) })
+      await refreshAll(caseId)
+      setMessage('Event status updated.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the event status.')
+    }
+  }
+
   async function deleteHearing(hearing: Hearing) {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
@@ -4390,6 +4426,16 @@ function App() {
 
   const openChecklistCount = workspace?.checklistItems.filter((item) => !isChecklistDone(item)).length ?? 0
   const openDiscoveryCount = workspace?.discoveryItems.filter((item) => item.status.includes('Waiting') || item.status.includes('Follow-Up')).length ?? 0
+  // Soonest upcoming event (excluding Completed/Canceled and past dates) for the workspace header's
+  // "Next event" tile and the Overview summary pill. Kept as a top-level useMemo (not computed
+  // inside renderCaseWorkspace) so hook call order stays stable whether or not that render
+  // function runs this pass — see the other queue useMemos above for the same convention.
+  const nextUpcomingEvent = useMemo(() => {
+    if (!workspace) return null
+    const upcoming = workspace.hearings.filter((item) => item.hearingDate && !isEventPastOrResolved(item))
+    upcoming.sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || ''))
+    return upcoming[0] ?? null
+  }, [workspace])
   const ashcValue = valuationPositions.find((p) => p.side === 'ASHC')?.appraisedValue ?? null
   const landownerValue = valuationPositions.find((p) => p.side === 'Landowner')?.appraisedValue ?? null
   const valuationGap = ashcValue != null && landownerValue != null ? landownerValue - ashcValue : null
@@ -4452,7 +4498,7 @@ function App() {
   const sortedDeadlineQueue = useMemo(() => sortQueueItems(queueDeadlines.filter((item) => !isDeadlineDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueDeadlines, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedChecklistQueue = useMemo(() => sortQueueItems(queueChecklist.filter((item) => !isChecklistDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.task)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueChecklist, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedDiscoveryQueue = useMemo(() => sortQueueItems(queueDiscovery.filter((item) => item.status !== 'Complete' && matchesUrgency(item.followUpDate || item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.requestTitle || item.discoveryType)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.followUpDate || item.dueDate), [queueDiscovery, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
-  const sortedHearingQueue = useMemo(() => sortQueueItems(queueHearings.filter((item) => matchesUrgency(item.hearingDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.hearingDate), [queueHearings, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
+  const sortedHearingQueue = useMemo(() => sortQueueItems(queueHearings.filter((item) => !isEventPastOrResolved(item) && matchesUrgency(item.hearingDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.hearingDate), [queueHearings, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   // Raw eligible-work pipeline (all types, no urgency/limit narrowing) - the dashboard's "Due in the
   // next 7 days" panel and the Work Queue page both read from this; the Work Queue page owns its own
   // type/urgency/search filtering separately (workQueueFilter etc.), so this stays unfiltered here.
@@ -5033,7 +5079,9 @@ function App() {
               </td>
               {renderCaseCell(item.caseId, 'work')}
               <td className="ui-data">{displayDate(item.hearingDate)}</td>
-              <td><StatusChip tone="neutral">Scheduled</StatusChip></td>
+              <td>
+                <StatusSelect value={item.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(item.status)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void updateHearingStatus(item, value)} />
+              </td>
               <td>
                 <div className="ui-row-actions">
                   <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
@@ -5122,7 +5170,7 @@ function App() {
     const coreRecordFields = [
       { label: 'Filing Date', value: displayDate(selectedCase.filingDate), important: Boolean(selectedCase.filingDate), always: false },
       { label: 'Date of Taking', value: displayDate(selectedCase.dateOfTaking), important: Boolean(selectedCase.dateOfTaking), always: false },
-      { label: 'Trial / Hearing Date', value: displayDate(selectedCase.trialDate), important: true, always: false },
+      { label: 'Jury Trial', value: displayDate(selectedCase.trialDate), important: true, always: false },
       { label: 'Closed Date', value: displayDate(selectedCase.closedDate), important: Boolean(selectedCase.closedDate), always: false },
       { label: 'Project Name', value: selectedCase.projectName || '', important: Boolean(selectedCase.projectName), always: false },
     ]
@@ -5202,7 +5250,14 @@ function App() {
           <div className="ui-tiles keydates-row">
             {selectedCase.filingDate && <MetricTile label="Filing date" value={displayDate(selectedCase.filingDate)} />}
             {selectedCase.dateOfTaking && <MetricTile label="Date of taking" value={displayDate(selectedCase.dateOfTaking)} />}
-            {selectedCase.trialDate && <MetricTile label="Trial / hearing" value={displayDate(selectedCase.trialDate)} tone="warn" />}
+            {selectedCase.trialDate && (
+              <MetricTile
+                label="Jury Trial"
+                value={selectedCase.trialEndDate ? `${displayDate(selectedCase.trialDate)} – ${displayDate(selectedCase.trialEndDate)}` : displayDate(selectedCase.trialDate)}
+                tone="warn"
+              />
+            )}
+            {nextUpcomingEvent && <MetricTile label="Next event" value={`${nextUpcomingEvent.title} · ${displayDate(nextUpcomingEvent.hearingDate)}`} />}
             {((selectedCase.caseStatus || 'Pipeline') !== 'Pipeline' || selectedCase.depositAmount != null) && <MetricTile label="Deposit" value={displayCurrency(selectedCase.depositAmount)} />}
             {selectedCase.serviceRequired && !selectedCase.servicePerfected && selectedCase.serviceDeadline120 && <MetricTile label="Service deadline" value={displayDate(selectedCase.serviceDeadline120)} tone="danger" />}
           </div>
@@ -5272,7 +5327,7 @@ function App() {
               <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Open deadlines</span><strong>{String(workspace?.deadlines.filter((item) => !isDeadlineDone(item)).length ?? 0)}</strong></button>
               <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Open tasks</span><strong>{String(openChecklistCount)}</strong></button>
               <button className="summary-pill clickable" onClick={() => setCaseTab('discovery')}><span>{discoveryPosture?.isComplete ? 'Discovery Complete' : 'Discovery follow-up'}</span><strong>{discoveryPosture?.isComplete ? '✓' : String(openDiscoveryCount)}</strong></button>
-              <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next hearing</span><strong>{displayDate(selectedCase.trialDate)}</strong></button>
+              <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next event</span><strong>{nextUpcomingEvent ? `${nextUpcomingEvent.title} · ${displayDate(nextUpcomingEvent.hearingDate)}` : '—'}</strong></button>
             </div>
 
             <div className="workspace-panel-grid two-col">
@@ -6417,7 +6472,9 @@ function App() {
           {hearing.description && <div className="ui-sub work-event-desc" title={hearing.description}>{hearing.description}</div>}
         </td>
         <td className="ui-data">{displayDate(hearing.hearingDate)}</td>
-        <td><StatusChip tone="neutral">Scheduled</StatusChip></td>
+        <td>
+          <StatusSelect value={hearing.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(hearing.status)} ariaLabel={`Status for ${hearing.title}`} onChange={(value) => void updateHearingStatus(hearing, value)} />
+        </td>
         <td>
           <div className="ui-row-actions">
             <button className="row-icon-button" title="Edit event" aria-label={`Edit event ${hearing.title}`} onClick={() => startEditHearing(hearing)}>✎</button>
@@ -6494,13 +6551,34 @@ function App() {
             </FilterChip>
           ))}
           <label className="work-trial-date">
-            <span>Trial / hearing date</span>
+            <span>Jury Trial</span>
             <input
               type="date"
               value={selectedCase.trialDate || ''}
-              onChange={(event) => void persistCasePatch({ trialDate: event.target.value }, 'Trial / hearing date updated.')}
+              onChange={(event) => void persistCasePatch({ trialDate: event.target.value }, 'Jury trial date updated.')}
             />
           </label>
+          {trialRangeOpen ? (
+            <>
+              <label className="work-trial-date">
+                <span>Through</span>
+                <input
+                  type="date"
+                  value={selectedCase.trialEndDate || ''}
+                  onChange={(event) => void persistCasePatch({ trialEndDate: event.target.value }, 'Jury trial end date updated.')}
+                />
+              </label>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => { setTrialRangeOpen(false); void persistCasePatch({ trialEndDate: '' }, 'Jury trial end date removed.') }}
+              >
+                Remove end date
+              </button>
+            </>
+          ) : (
+            <button type="button" className="link-button" onClick={() => setTrialRangeOpen(true)}>+ Add end date</button>
+          )}
         </div>
 
         {selCount > 0 && (

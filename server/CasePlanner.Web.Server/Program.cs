@@ -630,11 +630,17 @@ app.MapPost("/api/cases",async(CaseRecord model,ICaseCatalogStore cases,CaseAcce
     var allowed=model.Id==0?access.CanCreateCases:await access.CanWriteAsync(model.Id,token);
     return allowed?Results.Ok(await cases.SaveCaseAsync(model,token)):Results.Forbid();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapDelete("/api/cases/{id:long}", async (long id, ICaseCatalogStore cases, CancellationToken token) =>
+app.MapDelete("/api/cases/{id:long}", async (long id, ICaseCatalogStore cases, HttpContext context, CancellationToken token) =>
 {
+    // Admin-only when Entra is enabled; unrestricted when Entra is disabled (local/SQLite default),
+    // matching the existing !options.Enabled-means-unrestricted convention used by
+    // CaseAccessService.IsUnrestricted/CanCreateCases. CaseAccessEvaluator.IsAdministrator itself
+    // has no such carve-out (it only checks role claims), so that check is applied here at the
+    // call site rather than inside the shared evaluator.
+    if (entraOptions.Enabled && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
     await cases.DeleteCaseAsync(id, cancellationToken: token);
     return Results.Ok();
-});
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/notes", async (long id, ICaseNoteStore notes) => Results.Ok(await notes.GetAsync(id)));
 app.MapPost("/api/case-notes", async (CaseNoteRecord model, ICaseNoteStore notes,CaseAccessService access,CancellationToken token) =>
     await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await notes.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());

@@ -5355,7 +5355,9 @@ function App() {
                   <Btn variant="ghost" size="sm" className="ui-btn-icon" aria-label="Case menu" aria-haspopup="true" aria-expanded={caseMenuOpen} onClick={() => setCaseMenuOpen((open) => !open)}>⋯</Btn>
                   {caseMenuOpen && (
                     <div className="case-menu-popover" role="menu">
-                      <button type="button" role="menuitem" className="case-menu-item case-menu-item-danger" onClick={() => { setCaseMenuOpen(false); void deleteSelectedCase() }}>Delete case…</button>
+                      {(!currentUser || currentUser.isAdmin) && (
+                        <button type="button" role="menuitem" className="case-menu-item case-menu-item-danger" onClick={() => { setCaseMenuOpen(false); void deleteSelectedCase() }}>Delete case…</button>
+                      )}
                     </div>
                   )}
                 </div>

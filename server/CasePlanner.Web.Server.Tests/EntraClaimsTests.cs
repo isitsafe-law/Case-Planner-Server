@@ -49,6 +49,21 @@ public sealed class EntraClaimsTests
         Assert.True(CaseAccessEvaluator.CanAccessCase(user, options, hasAssignment: true));
     }
 
+    [Fact]
+    public void IsAdministratorHasNoEntraDisabledCarveOut()
+    {
+        // CaseAccessEvaluator.IsAdministrator only checks role claims - unlike CaseAccessService.IsUnrestricted
+        // and CanCreateCases, it does NOT special-case options.Enabled == false as "everyone is an admin". A
+        // caller gating on IsAdministrator alone must OR in `!options.Enabled` itself if it wants the
+        // local/Entra-disabled default to remain unrestricted (see the /api/cases/{id} DELETE endpoint).
+        var options = new EntraOptions { AdministratorAppRole = "CasePlanner.Admin", Enabled = false };
+        var anonymous = Principal();
+        var nonAdmin = Principal(new Claim("roles", "CasePlanner.User"));
+
+        Assert.False(CaseAccessEvaluator.IsAdministrator(anonymous, options));
+        Assert.False(CaseAccessEvaluator.IsAdministrator(nonAdmin, options));
+    }
+
     [Theory]
     [InlineData("Owner", true)]
     [InlineData("Collaborator", true)]

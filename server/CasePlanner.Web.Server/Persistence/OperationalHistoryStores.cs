@@ -17,7 +17,10 @@ public interface IDiscoveryPostureStore
 public interface IPipelineHandoffStore
 {
     string Provider { get; }
-    Task<List<PipelineHandoffRecord>> GetAsync(long caseId, CancellationToken token = default);
+    // caseId is nullable so a single store method backs both the per-case handoff-history dialog
+    // (a concrete caseId) and the cross-case Report C (Cycle-Time) bulk fetch (null = every case) -
+    // same convention as IDeadlineStore.GetAsync above.
+    Task<List<PipelineHandoffRecord>> GetAsync(long? caseId, CancellationToken token = default);
     Task<PipelineHandoffRecord> SaveAsync(long caseId, PipelineHandoffRequest request, CancellationToken token = default);
 }
 
@@ -40,7 +43,7 @@ public sealed class SqliteDiscoveryPostureStore(CasePlannerRepository repository
 public sealed class SqlitePipelineHandoffStore(CasePlannerRepository repository) : IPipelineHandoffStore
 {
     public string Provider => "Sqlite";
-    public Task<List<PipelineHandoffRecord>> GetAsync(long caseId, CancellationToken token = default) => repository.GetPipelineHandoffsAsync(caseId);
+    public Task<List<PipelineHandoffRecord>> GetAsync(long? caseId, CancellationToken token = default) => repository.GetPipelineHandoffsAsync(caseId);
     public Task<PipelineHandoffRecord> SaveAsync(long caseId, PipelineHandoffRequest request, CancellationToken token = default) => repository.SavePipelineHandoffAsync(caseId, request);
 }
 
@@ -184,14 +187,14 @@ public sealed class SqlServerPipelineHandoffStore(
 {
     public string Provider => "SqlServer";
 
-    public async Task<List<PipelineHandoffRecord>> GetAsync(long caseId, CancellationToken token = default)
+    public async Task<List<PipelineHandoffRecord>> GetAsync(long? caseId, CancellationToken token = default)
     {
         var result=new List<PipelineHandoffRecord>();await using var connection=connections.CreateConnection();await connection.OpenAsync(token);
         await using var command=connection.CreateCommand();command.CommandText="""
             SELECT id,case_id,previous_holder,new_holder,previous_stage,new_stage,handoff_date,next_review_date,
                    note,created_at,created_by_display,row_version
-            FROM dbo.pipeline_handoffs WHERE case_id=@caseId ORDER BY created_at DESC,id DESC
-            """;command.Parameters.Add(new SqlParameter("@caseId",caseId));await using var reader=await command.ExecuteReaderAsync(token);
+            FROM dbo.pipeline_handoffs WHERE (@caseId IS NULL OR case_id=@caseId) ORDER BY created_at DESC,id DESC
+            """;command.Parameters.Add(new SqlParameter("@caseId",(object?)caseId??DBNull.Value));await using var reader=await command.ExecuteReaderAsync(token);
         while(await reader.ReadAsync(token))result.Add(new(){Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),PreviousHolder=Text(reader,2),
             NewHolder=Text(reader,3)??"",PreviousStage=Text(reader,4),NewStage=Text(reader,5)??"",HandoffDate=Date(Text(reader,6)),
             NextReviewDate=Date(Text(reader,7)),Note=Text(reader,8),CreatedAt=Text(reader,9),CreatedBy=Text(reader,10),

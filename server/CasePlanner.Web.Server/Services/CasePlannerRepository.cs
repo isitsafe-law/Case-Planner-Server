@@ -2158,7 +2158,10 @@ public sealed partial class CasePlannerRepository
         return result;
     }
 
-    public async Task<List<PipelineHandoffRecord>> GetPipelineHandoffsAsync(long caseId)
+    // caseId is nullable so this same method backs both the per-case handoff-history dialog (a
+    // concrete caseId) and the cross-case Report C (Cycle-Time) bulk fetch (null = every case) -
+    // same nullable-caseId convention as GetDeadlinesAsync above.
+    public async Task<List<PipelineHandoffRecord>> GetPipelineHandoffsAsync(long? caseId)
     {
         var list = new List<PipelineHandoffRecord>();
         await using var connection = new SqliteConnection(ConnectionString);
@@ -2167,10 +2170,10 @@ public sealed partial class CasePlannerRepository
         cmd.CommandText = """
             SELECT id, case_id, previous_holder, new_holder, previous_stage, new_stage, handoff_date, next_review_date, note, created_at
             FROM pipeline_handoffs
-            WHERE case_id = @caseId
+            WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY created_at DESC
             """;
-        cmd.Parameters.AddWithValue("@caseId", caseId);
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {

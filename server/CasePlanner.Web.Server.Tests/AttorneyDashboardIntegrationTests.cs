@@ -412,6 +412,50 @@ public class AttorneyDashboardIntegrationTests : IAsyncLifetime
         Assert.Empty(history);
     }
 
+    // GetPipelineHandoffsAsync(null) is the new nullable-caseId path backing the cross-case
+    // Report C (Cycle-Time) bulk fetch (GET /api/work-queues/pipeline-handoffs). This proves it
+    // returns transitions across MULTIPLE cases, while GetPipelineHandoffsAsync(someCaseId) still
+    // correctly scopes to just one - i.e. the new bulk path doesn't regress the pre-existing
+    // single-case behavior the per-case Handoff-history dialog depends on.
+    [Fact]
+    public async Task GetPipelineHandoffsAsync_NullCaseId_ReturnsAcrossMultipleCases_WhileConcreteCaseIdStaysScoped()
+    {
+        var caseA = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "Cycle Time Case A";
+            x.CurrentHolder = "Legal Assistant";
+            x.PipelineStage = "With Legal Assistant";
+        });
+        var caseB = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "Cycle Time Case B";
+            x.CurrentHolder = "Legal Assistant";
+            x.PipelineStage = "With Legal Assistant";
+        });
+
+        await _fixture.Repository.SavePipelineHandoffAsync(caseA.Id, new PipelineHandoffRequest
+        {
+            NewHolder = "Attorney",
+            NewStage = "With Attorney",
+            HandoffDate = "2026-07-10",
+        });
+        await _fixture.Repository.SavePipelineHandoffAsync(caseB.Id, new PipelineHandoffRequest
+        {
+            NewHolder = "Attorney",
+            NewStage = "With Attorney",
+            HandoffDate = "2026-07-12",
+        });
+
+        var scopedToA = await _fixture.Repository.GetPipelineHandoffsAsync(caseA.Id);
+        Assert.Single(scopedToA);
+        Assert.All(scopedToA, entry => Assert.Equal(caseA.Id, entry.CaseId));
+
+        var all = await _fixture.Repository.GetPipelineHandoffsAsync(null);
+        Assert.Contains(all, entry => entry.CaseId == caseA.Id);
+        Assert.Contains(all, entry => entry.CaseId == caseB.Id);
+        Assert.True(all.Count >= 2);
+    }
+
     // --- Priority sorting ---
 
     [Fact]

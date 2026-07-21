@@ -1213,6 +1213,117 @@ export function aggregateOutcomesByAttorney<T extends {
   })
 }
 
+// ---- Report C: Cycle-Time Reporting (reportView === 'cycleTime') -------------------------------
+// Section 1, Time-to-Resolution: a closed case only participates once it has both a filing date
+// and a closed date - the same "historical data predates the field this depends on" situation as
+// Report B's isOutcomeEligible (deposit/final judgment), just for filingDate/closedDate. isOpenCase
+// (Report A) is reused rather than re-derived, per this file's existing precedent.
+export type ResolutionEligibleRecord = {
+  caseStatus?: string | null
+  status?: string | null
+  filingDate?: string | null
+  closedDate?: string | null
+}
+
+export function isResolutionEligible(record: ResolutionEligibleRecord): boolean {
+  if (isOpenCase(record)) return false
+  return Boolean(record.filingDate) && Boolean(record.closedDate)
+}
+
+// Only ever call on a record that has already passed isResolutionEligible - assumes filingDate and
+// closedDate are both present. Reuses lifecycleDays' exact day-math idiom (whole days via
+// midnight-to-midnight Date subtraction) rather than inventing a second one; a filing date after
+// the closed date (bad data) yields null from lifecycleDays and is treated the same way callers
+// already treat a missing date - falling out of the average rather than contributing a negative
+// number.
+export function resolutionDays(record: { filingDate?: string | null; closedDate?: string | null }): number | null {
+  return lifecycleDays(record.filingDate, record.closedDate)
+}
+
+export type DurationAggregateRow = { key: string; count: number; avgDays: number }
+
+// Shared by all three Report C breakdowns (resolution-by-disposition-type, time-in-phase,
+// time-in-holder) - simpler than Report B's aggregateOutcomes since there are no dollar fields to
+// average, just a single days number per input row. Records where keyFn returns null/empty are
+// dropped from every group (not folded into an "Unknown" bucket), matching aggregateOutcomes'
+// same choice for its own generic breakdowns.
+export function aggregateDurations<T extends { days: number }>(
+  items: T[],
+  keyFn: (item: T) => string | null | undefined,
+): DurationAggregateRow[] {
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const key = keyFn(item)
+    if (!key) continue
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(item)
+  }
+  return [...groups.entries()].map(([key, rows]) => ({
+    key,
+    count: rows.length,
+    avgDays: rows.reduce((sum, row) => sum + row.days, 0) / rows.length,
+  }))
+}
+
+export type HandoffSegment = {
+  caseId: number
+  fromStage: string
+  toStage: string
+  fromHolder: string
+  toHolder: string
+  days: number
+}
+
+// Sections 2 & 3, Time-in-Phase and Time-in-Holder: walks each case's pipeline_handoffs rows in
+// chronological (handoffDate ascending) order and computes, for each transition, how many days the
+// case spent in the state it's transitioning OUT of - the gap between this transition's handoffDate
+// and the immediately preceding reference point for that case (the previous transition's
+// handoffDate, or that case's dateOpened if this is the case's first-ever recorded transition).
+// previousStage/previousHolder are read directly off each handoff row (captured at record time),
+// not re-derived from the prior row's new-stage/new-holder, so a gap in what got logged never
+// produces a mismatched "from" value.
+//
+// A case's CURRENT (most recent, still-ongoing) stage/holder has no completed segment and is
+// correctly excluded here - this only measures COMPLETED dwell time, not right-censored ongoing
+// dwell, which would require guessing an end date this function deliberately does not attempt.
+//
+// A negative gap (handoffDate earlier than the reference point - out-of-order/bad data) is skipped
+// entirely rather than clamped to zero or flipped positive: lifecycleDays already returns null for
+// a negative span, and a skipped segment shows up as a visible gap in the coverage count below
+// rather than a clamped value silently misrepresenting bad data as a real same-day transition.
+export function computeHandoffSegments(
+  handoffs: PipelineHandoffRecord[],
+  dateOpenedByCaseId: Map<number, string | null | undefined>,
+): HandoffSegment[] {
+  const byCase = new Map<number, PipelineHandoffRecord[]>()
+  for (const handoff of handoffs) {
+    if (!byCase.has(handoff.caseId)) byCase.set(handoff.caseId, [])
+    byCase.get(handoff.caseId)!.push(handoff)
+  }
+  const segments: HandoffSegment[] = []
+  for (const [caseId, caseHandoffs] of byCase) {
+    const sorted = [...caseHandoffs].sort((a, b) => (a.handoffDate || '').localeCompare(b.handoffDate || ''))
+    let previousDate: string | null | undefined = dateOpenedByCaseId.get(caseId)
+    for (const handoff of sorted) {
+      if (previousDate && handoff.handoffDate) {
+        const days = lifecycleDays(previousDate, handoff.handoffDate)
+        if (days != null) {
+          segments.push({
+            caseId,
+            fromStage: handoff.previousStage || '',
+            toStage: handoff.newStage,
+            fromHolder: handoff.previousHolder || '',
+            toHolder: handoff.newHolder,
+            days,
+          })
+        }
+      }
+      if (handoff.handoffDate) previousDate = handoff.handoffDate
+    }
+  }
+  return segments
+}
+
 const caseTabs: { key: CaseTabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'work', label: 'Work' },
@@ -1869,9 +1980,9 @@ function App() {
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
   // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
-  // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting).
-  // Deliberately no stub key yet for the later cycle-time report family (Report C).
-  const [reportView, setReportView] = useState<'export' | 'caseload' | 'outcomes'>('export')
+  // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting),
+  // 'cycleTime' is Report C (Cycle-Time Reporting).
+  const [reportView, setReportView] = useState<'export' | 'caseload' | 'outcomes' | 'cycleTime'>('export')
   // '' = Division-wide (every open case, attorney as a breakdown dimension); otherwise scoped to
   // one attorney's open cases via assignedAttorney match. Manual stand-in for per-login scoping
   // until Entra is live - a display filter only, no access restriction.
@@ -1943,6 +2054,10 @@ function App() {
   const [queueDiscovery, setQueueDiscovery] = useState<DiscoveryItem[]>([])
   const [queueService, setQueueService] = useState<ServiceQueueItem[]>([])
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
+  // Bulk cross-case pipeline-handoff fetch (GET /api/work-queues/pipeline-handoffs) - used only by
+  // Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections, not wired into the work queues,
+  // the per-case Handoff-history dialog, or anything else.
+  const [pipelineHandoffs, setPipelineHandoffs] = useState<PipelineHandoffRecord[]>([])
   const [workQueueFilter, setWorkQueueFilter] = useState<'all' | 'service' | 'deadlines' | 'checklist' | 'discovery' | 'hearings'>('all')
   const [workQueueUrgency, setWorkQueueUrgency] = useState('All Open')
   const [serverUpcomingWorkItems, setServerUpcomingWorkItems] = useState<UpcomingWorkItem[]>([])
@@ -2464,7 +2579,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2474,6 +2589,7 @@ function App() {
         api<DiscoveryItem[]>('/api/work-queues/discovery'),
         api<ServiceQueueItem[]>('/api/work-queues/service'),
         api<Hearing[]>('/api/work-queues/hearings'),
+        api<PipelineHandoffRecord[]>('/api/work-queues/pipeline-handoffs'),
         api<OrgDefaults>('/api/org-defaults'),
         api<TemplateTag[]>('/api/template-tags'),
         api<ChecklistTemplate[]>('/api/checklist-templates'),
@@ -2493,6 +2609,7 @@ function App() {
       setQueueDiscovery(discoveryData)
       setQueueService(serviceData)
       setQueueHearings(hearingsData)
+      setPipelineHandoffs(pipelineHandoffsData)
       setOrgDefaults(orgDefaultsData)
       setTemplateTags(templateTagsData)
       setChecklistTemplates(checklistTemplatesData)
@@ -5467,6 +5584,45 @@ function App() {
   // full active-attorney roster) - same "who actually has data" judgment Report A's status matrix
   // uses for its extra/legacy attorney rows, just without force-zero-padding anyone with zero.
   const outcomeByAttorney = useMemo(() => [...aggregateOutcomesByAttorney(outcomeEligibleCases)].sort((a, b) => a.key.localeCompare(b.key)), [outcomeEligibleCases])
+
+  // ---- Report C: Cycle-Time Reporting (reportView === 'cycleTime') ----------------------------
+  // Section 1, Time-to-Resolution.
+  const cycleTimeClosedCases = useMemo(() => allCases.filter((record) => !isOpenCase(record)), [allCases])
+  const cycleTimeEligibleCases = useMemo(() => cycleTimeClosedCases.filter(isResolutionEligible), [cycleTimeClosedCases])
+  const cycleTimeCoverage = useMemo(() => ({ eligible: cycleTimeEligibleCases.length, closed: cycleTimeClosedCases.length }), [cycleTimeEligibleCases, cycleTimeClosedCases])
+  const cycleTimeResolutionDays = useMemo(
+    () => cycleTimeEligibleCases.map((record) => resolutionDays(record)).filter((value): value is number => value != null),
+    [cycleTimeEligibleCases],
+  )
+  const cycleTimeHeadline = useMemo(() => {
+    if (cycleTimeResolutionDays.length === 0) return { count: 0, avgDays: null as number | null }
+    return { count: cycleTimeResolutionDays.length, avgDays: cycleTimeResolutionDays.reduce((sum, value) => sum + value, 0) / cycleTimeResolutionDays.length }
+  }, [cycleTimeResolutionDays])
+  // Disposition type is the same small fixed 3-value enumeration Report B zero-pads for its own
+  // disposition breakdown - always show all 3 rows so "does settled/mediated close faster than
+  // tried" reads as a complete comparison even when one type has no eligible cases yet.
+  const cycleTimeByDisposition = useMemo(() => {
+    const withDays = cycleTimeEligibleCases
+      .map((record) => ({ dispositionType: record.dispositionType, days: resolutionDays(record) }))
+      .filter((row): row is { dispositionType: string | null | undefined; days: number } => row.days != null)
+    const rows = aggregateDurations(withDays, (row) => row.dispositionType || null)
+    return dispositionTypeOptions.map((type) => rows.find((row) => row.key === type) ?? { key: type, count: 0, avgDays: 0 })
+  }, [cycleTimeEligibleCases])
+
+  // Sections 2 & 3, Time-in-Phase / Time-in-Holder: both derived from one shared handoff-segment
+  // walk over the bulk-loaded pipelineHandoffs (GET /api/work-queues/pipeline-handoffs).
+  const cycleTimeDateOpenedByCaseId = useMemo(() => {
+    const map = new Map<number, string | null | undefined>()
+    for (const record of allCases) map.set(record.id, record.dateOpened)
+    return map
+  }, [allCases])
+  const cycleTimeSegments = useMemo(() => computeHandoffSegments(pipelineHandoffs, cycleTimeDateOpenedByCaseId), [pipelineHandoffs, cycleTimeDateOpenedByCaseId])
+  const cycleTimeCasesWithSegments = useMemo(() => new Set(cycleTimeSegments.map((segment) => segment.caseId)).size, [cycleTimeSegments])
+  // Sorted worst-first (descending avgDays) rather than alphabetically by stage/holder name - this
+  // section's own purpose ("surface bottlenecks") is best served by putting the slowest stage/
+  // holder in the first row rather than requiring a scan down an alphabetical list to find it.
+  const cycleTimeByPhase = useMemo(() => [...aggregateDurations(cycleTimeSegments, (segment) => segment.fromStage)].sort((a, b) => b.avgDays - a.avgDays), [cycleTimeSegments])
+  const cycleTimeByHolder = useMemo(() => [...aggregateDurations(cycleTimeSegments, (segment) => segment.fromHolder)].sort((a, b) => b.avgDays - a.avgDays), [cycleTimeSegments])
 
   function exportReportCsv() {
     const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
@@ -9320,6 +9476,7 @@ function App() {
             <button className={reportView === 'export' ? 'segment active' : 'segment'} onClick={() => setReportView('export')}>Case List Export</button>
             <button className={reportView === 'caseload' ? 'segment active' : 'segment'} onClick={() => setReportView('caseload')}>Caseload &amp; Workload</button>
             <button className={reportView === 'outcomes' ? 'segment active' : 'segment'} onClick={() => setReportView('outcomes')}>Outcomes</button>
+            <button className={reportView === 'cycleTime' ? 'segment active' : 'segment'} onClick={() => setReportView('cycleTime')}>Cycle Time</button>
           </div>
 
           {reportView === 'export' && (
@@ -9716,6 +9873,82 @@ function App() {
                           <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgFinal)}</td>
                           <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgDelta)}</td>
                           <td className="ui-data">{row.count === 0 ? '—' : formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </div>
+          )}
+
+          {reportView === 'cycleTime' && (
+            <div className="top-gap-small">
+              <Panel title="Time-to-Resolution — Data Coverage">
+                <p>{cycleTimeCoverage.eligible} of {cycleTimeCoverage.closed} closed case{cycleTimeCoverage.closed === 1 ? '' : 's'} have both a filing date and a closed date.</p>
+                <p className="helper-text top-gap-small">The metrics and breakdown below use only these {cycleTimeCoverage.eligible} resolution-eligible cases, not all {cycleTimeCoverage.closed} closed cases - many historical closed cases are missing one or both dates, so this gap is expected rather than a data problem to chase down.</p>
+              </Panel>
+
+              <Panel title="Time-to-Resolution" className="top-gap-small">
+                <div className="ui-tiles">
+                  <MetricTile label="Eligible cases" value={cycleTimeHeadline.count} />
+                  <MetricTile label="Avg days filing to close" value={cycleTimeHeadline.avgDays == null ? '—' : <>{Math.round(cycleTimeHeadline.avgDays)}<span className="ui-tile-unit">days</span></>} />
+                </div>
+              </Panel>
+
+              <Panel title="Resolution Time by Disposition Type" className="top-gap-small">
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Disposition Type</th><th>Count</th><th>Avg Days</th></tr></thead>
+                    <tbody>
+                      {cycleTimeByDisposition.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : Math.round(row.avgDays)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Time-in-Phase / Time-in-Holder — Data Coverage" className="top-gap-small">
+                <p>{cycleTimeSegments.length} completed stage transition{cycleTimeSegments.length === 1 ? '' : 's'} across {cycleTimeCasesWithSegments} case{cycleTimeCasesWithSegments === 1 ? '' : 's'}.</p>
+                <p className="helper-text top-gap-small">A fix shortly before this report was built made pipeline-handoff tracking complete going forward, but historical gaps before that fix are unrecoverable - a small or near-zero count here reflects the current state of the data, not a bug. A case's current, still-ongoing stage/holder has no completed segment yet and is intentionally excluded - this measures completed dwell time only.</p>
+              </Panel>
+
+              <Panel title="Time-in-Phase" className="top-gap-small" headerAction={<span className="helper-text">Sorted by average days, slowest stage first</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Stage</th><th>Completed Transitions</th><th>Avg Days</th></tr></thead>
+                    <tbody>
+                      {cycleTimeByPhase.length === 0 ? (
+                        <UiEmptyState colSpan={3} title="No completed stage transitions yet" />
+                      ) : cycleTimeByPhase.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{Math.round(row.avgDays)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Time-in-Holder" className="top-gap-small" headerAction={<span className="helper-text">Sorted by average days, slowest holder first</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Holder</th><th>Completed Transitions</th><th>Avg Days</th></tr></thead>
+                    <tbody>
+                      {cycleTimeByHolder.length === 0 ? (
+                        <UiEmptyState colSpan={3} title="No completed stage transitions yet" />
+                      ) : cycleTimeByHolder.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{Math.round(row.avgDays)}</td>
                         </tr>
                       ))}
                     </tbody>

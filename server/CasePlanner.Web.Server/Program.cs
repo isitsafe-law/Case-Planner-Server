@@ -985,6 +985,14 @@ app.MapGet("/api/work-queues/deadlines",async(IDeadlineStore deadlines,CaseAcces
 {
     var items=await deadlines.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Cross-case bulk fetch backing Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections -
+// unlike GET /api/cases/{id}/pipeline-handoffs above (which stays scoped to one case for the
+// per-case Handoff-history dialog), this pulls every case's handoffs at once so the client can
+// compute stage/holder dwell time across the whole docket without one request per case.
+app.MapGet("/api/work-queues/pipeline-handoffs",async(IPipelineHandoffStore handoffs,CaseAccessService access,CancellationToken token)=>
+{
+    var items=await handoffs.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/work-queues/checklist",async(IChecklistStore checklist,CaseAccessService access,CancellationToken token)=>
 {
     var items=await checklist.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));

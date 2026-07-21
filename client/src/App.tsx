@@ -1018,6 +1018,78 @@ function reportCellValue(record: CaseRecord, column: ReportColumnKey): string {
   return value == null ? '' : String(value)
 }
 
+// Report A (Caseload & Workload): canonical open/closed check, matching the server's combined
+// filter exactly (CasePlannerRepository.cs / SqlServerLitigationStores.cs:
+// COALESCE(case_status,'Pipeline') <> 'Resolved / Closed' AND COALESCE(status,'') NOT IN
+// ('Closed','Complete')). The Reports "export" view's reportRows whitelist and the Dashboard's
+// upcomingWorkItems blacklist each already express a slightly different variant of this (both
+// additionally treat Triage as not-open) - this is a new, separate implementation for the
+// caseload/workload view below, and intentionally does not touch either of those two.
+export function isOpenCase(record: { caseStatus?: string | null; status?: string | null }): boolean {
+  const caseStatus = record.caseStatus || 'Pipeline'
+  const status = record.status || ''
+  return caseStatus !== 'Resolved / Closed' && status !== 'Closed' && status !== 'Complete'
+}
+
+export type CaseloadAgeBucketKey = 'under90' | 'days90to180' | 'days180to365' | 'over365'
+
+// Deliberately new/simpler than reportAgeBandDefs above (6 bands, closed-duration-aware) - Report A
+// only cares about surfacing stalling OPEN cases in 4 coarse buckets.
+const caseloadAgeBucketDefs: { key: CaseloadAgeBucketKey; label: string }[] = [
+  { key: 'under90', label: '0–90 days' },
+  { key: 'days90to180', label: '90–180 days' },
+  { key: 'days180to365', label: '180–365 days' },
+  { key: 'over365', label: '365+ days' },
+]
+
+// Age-bucket boundaries are half-open on the low end: exactly 90 days open lands in the 90-180
+// bucket (not 0-90), exactly 180 lands in 180-365, exactly 365 lands in 365+. No dateOpened -> no
+// bucket (null) rather than guessing.
+export function caseloadAgeBucket(dateOpened: string | null | undefined, today: string): CaseloadAgeBucketKey | null {
+  if (!dateOpened) return null
+  const start = new Date(`${dateOpened}T00:00:00`)
+  const end = new Date(`${today}T00:00:00`)
+  const days = Math.floor((end.getTime() - start.getTime()) / 86400000)
+  if (!Number.isFinite(days) || days < 0) return null
+  if (days < 90) return 'under90'
+  if (days < 180) return 'days90to180'
+  if (days < 365) return 'days180to365'
+  return 'over365'
+}
+
+export const caseloadWindowSizes = [30, 60, 90] as const
+
+// Trial/deadline density windows are cumulative and inclusive: a date 10 days out counts toward
+// all three windows (not just the smallest one), a date exactly N days out counts toward the
+// N-day window, and a past or missing date counts toward none.
+export function caseloadWindowMatches(targetDate: string | null | undefined, today: string, windowSizes: readonly number[] = caseloadWindowSizes): number[] {
+  if (!targetDate) return []
+  const start = new Date(`${today}T00:00:00`)
+  const end = new Date(`${targetDate}T00:00:00`)
+  const days = Math.floor((end.getTime() - start.getTime()) / 86400000)
+  if (!Number.isFinite(days) || days < 0) return []
+  return windowSizes.filter((size) => days <= size)
+}
+
+export type LegalAssistantLoadRow = { id: number; name: string; openCaseCount: number }
+
+// LA load is a straight sum over each LA's tied attorneys' open-case counts; attorneys with no
+// tied LA (e.g. the Chief/Deputy Chief Counsel roles) simply never contribute to any row here.
+export function legalAssistantLoad(cases: { assignedAttorney?: string | null; caseStatus?: string | null; status?: string | null }[], legalAssistants: LegalAssistantRecord[]): LegalAssistantLoadRow[] {
+  const openCountByAttorney = new Map<string, number>()
+  for (const record of cases) {
+    if (!record.assignedAttorney || !isOpenCase(record)) continue
+    openCountByAttorney.set(record.assignedAttorney, (openCountByAttorney.get(record.assignedAttorney) || 0) + 1)
+  }
+  return legalAssistants
+    .filter((legalAssistant) => legalAssistant.isActive)
+    .map((legalAssistant) => ({
+      id: legalAssistant.id,
+      name: legalAssistant.name,
+      openCaseCount: legalAssistant.attorneyNames.reduce((sum, name) => sum + (openCountByAttorney.get(name) || 0), 0),
+    }))
+}
+
 const caseTabs: { key: CaseTabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'work', label: 'Work' },
@@ -1622,6 +1694,14 @@ function App() {
   const [reportColumns, setReportColumns] = useState<ReportColumnKey[]>(['caseName', 'caseNumber', 'county', 'caseStatus', 'currentHolder', 'nextAction', 'trialDate'])
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
+  // Reports sub-nav (Report A phase): 'export' is today's existing case-list-export view,
+  // unchanged; 'caseload' is the new Caseload & Workload view. Deliberately no stub keys yet for
+  // the later outcome/cycle-time report families.
+  const [reportView, setReportView] = useState<'export' | 'caseload'>('export')
+  // '' = Division-wide (every open case, attorney as a breakdown dimension); otherwise scoped to
+  // one attorney's open cases via assignedAttorney match. Manual stand-in for per-login scoping
+  // until Entra is live - a display filter only, no access restriction.
+  const [caseloadViewAttorney, setCaseloadViewAttorney] = useState('')
   const [attorneyDashboard, setAttorneyDashboard] = useState<AttorneyDashboardResponse | null>(null)
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
@@ -5042,6 +5122,112 @@ function App() {
     const ariaLabel = `Open case age distribution: ${bands.map((band) => `${band.label}: ${band.count} case${band.count === 1 ? '' : 's'}`).join(', ')}`
     return { bands, ariaLabel }
   }, [reportMetrics])
+
+  // ---- Report A: Caseload & Workload (reportView === 'caseload') ----------------------------
+  const caseloadOpenCases = useMemo(() => allCases.filter(isOpenCase), [allCases])
+  const caseloadActiveAttorneyNames = useMemo(() => attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), [attorneys])
+  const caseloadScopedCases = useMemo(
+    () => caseloadViewAttorney ? caseloadOpenCases.filter((record) => (record.assignedAttorney || '') === caseloadViewAttorney) : caseloadOpenCases,
+    [caseloadOpenCases, caseloadViewAttorney],
+  )
+  // Row list for the per-attorney breakdowns below: active attorneys (Staff Directory order) plus
+  // any other assignedAttorney value actually present on an open case - a deactivated/legacy name,
+  // or "Unassigned" for a blank value - so no open case silently disappears from a division-wide
+  // total. When a specific attorney is selected there's just the one row.
+  const caseloadAttorneyRows = useMemo(() => {
+    if (caseloadViewAttorney) return [caseloadViewAttorney]
+    const rows = [...caseloadActiveAttorneyNames]
+    const extra = new Set<string>()
+    let hasUnassigned = false
+    for (const record of caseloadOpenCases) {
+      const name = record.assignedAttorney || ''
+      if (!name) { hasUnassigned = true; continue }
+      if (!rows.includes(name)) extra.add(name)
+    }
+    rows.push(...[...extra].sort((a, b) => a.localeCompare(b)))
+    if (hasUnassigned) rows.push('Unassigned')
+    return rows
+  }, [caseloadActiveAttorneyNames, caseloadOpenCases, caseloadViewAttorney])
+  const caseloadCasesByRow = useMemo(() => {
+    const map = new Map<string, CaseRecord[]>()
+    for (const row of caseloadAttorneyRows) map.set(row, [])
+    for (const record of caseloadScopedCases) {
+      const row = record.assignedAttorney || 'Unassigned'
+      if (!map.has(row)) continue
+      map.get(row)!.push(record)
+    }
+    return map
+  }, [caseloadAttorneyRows, caseloadScopedCases])
+  const caseloadStatusMatrix = useMemo(() => caseloadAttorneyRows.map((row) => {
+    const rowCases = caseloadCasesByRow.get(row) || []
+    const counts = Object.fromEntries(consolidatedCaseStatuses.map((status) => [status, rowCases.filter((record) => (record.caseStatus || 'Pipeline') === status).length])) as Record<string, number>
+    return { name: row, counts, total: rowCases.length }
+  }), [caseloadAttorneyRows, caseloadCasesByRow])
+  const caseloadStatusMatrixRows = useMemo(() => {
+    if (caseloadViewAttorney) return caseloadStatusMatrix
+    const counts = Object.fromEntries(consolidatedCaseStatuses.map((status) => [status, caseloadStatusMatrix.reduce((sum, row) => sum + row.counts[status], 0)])) as Record<string, number>
+    const total = caseloadStatusMatrix.reduce((sum, row) => sum + row.total, 0)
+    return [...caseloadStatusMatrix, { name: 'Division-wide total', counts, total }]
+  }, [caseloadStatusMatrix, caseloadViewAttorney])
+  const caseloadTrialDensity = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const perAttorney = caseloadAttorneyRows.map((row) => {
+      const rowCases = caseloadCasesByRow.get(row) || []
+      const counts = { d30: 0, d60: 0, d90: 0 }
+      for (const record of rowCases) {
+        const matches = caseloadWindowMatches(record.trialDate, today)
+        if (matches.includes(30)) counts.d30++
+        if (matches.includes(60)) counts.d60++
+        if (matches.includes(90)) counts.d90++
+      }
+      return { name: row, ...counts }
+    })
+    const totals = perAttorney.reduce((sum, row) => ({ d30: sum.d30 + row.d30, d60: sum.d60 + row.d60, d90: sum.d90 + row.d90 }), { d30: 0, d60: 0, d90: 0 })
+    return { perAttorney, totals }
+  }, [caseloadAttorneyRows, caseloadCasesByRow])
+  // Deadline density: DeadlineItem has no service/discovery type distinction today, so this is a
+  // single combined count per window rather than split by type - splitting isn't supportable with
+  // the data that exists.
+  const caseloadDeadlineDensity = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const caseById = new Map(allCases.map((record) => [record.id, record]))
+    const scopedCaseIds = new Set(caseloadScopedCases.map((record) => record.id))
+    const perAttorney = new Map(caseloadAttorneyRows.map((row) => [row, { d30: 0, d60: 0, d90: 0 }]))
+    for (const deadline of queueDeadlines) {
+      if (deadline.status !== 'Open') continue
+      if (!scopedCaseIds.has(deadline.caseId)) continue
+      const row = caseById.get(deadline.caseId)?.assignedAttorney || 'Unassigned'
+      const bucket = perAttorney.get(row)
+      if (!bucket) continue
+      const matches = caseloadWindowMatches(deadline.dueDate, today)
+      if (matches.includes(30)) bucket.d30++
+      if (matches.includes(60)) bucket.d60++
+      if (matches.includes(90)) bucket.d90++
+    }
+    const perAttorneyArray = caseloadAttorneyRows.map((row) => ({ name: row, ...perAttorney.get(row)! }))
+    const totals = perAttorneyArray.reduce((sum, row) => ({ d30: sum.d30 + row.d30, d60: sum.d60 + row.d60, d90: sum.d90 + row.d90 }), { d30: 0, d60: 0, d90: 0 })
+    return { perAttorney: perAttorneyArray, totals }
+  }, [allCases, queueDeadlines, caseloadScopedCases, caseloadAttorneyRows])
+  const caseloadAgeBuckets = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return caseloadAttorneyRows.map((row) => {
+      const rowCases = caseloadCasesByRow.get(row) || []
+      const counts = Object.fromEntries(caseloadAgeBucketDefs.map((bucket) => [bucket.key, 0])) as Record<CaseloadAgeBucketKey, number>
+      for (const record of rowCases) {
+        const bucket = caseloadAgeBucket(record.dateOpened, today)
+        if (bucket) counts[bucket]++
+      }
+      return { name: row, counts, total: rowCases.length }
+    })
+  }, [caseloadAttorneyRows, caseloadCasesByRow])
+  const caseloadAgeBucketRows = useMemo(() => {
+    if (caseloadViewAttorney) return caseloadAgeBuckets
+    const counts = Object.fromEntries(caseloadAgeBucketDefs.map((bucket) => [bucket.key, caseloadAgeBuckets.reduce((sum, row) => sum + row.counts[bucket.key], 0)])) as Record<CaseloadAgeBucketKey, number>
+    const total = caseloadAgeBuckets.reduce((sum, row) => sum + row.total, 0)
+    return [...caseloadAgeBuckets, { name: 'Division-wide total', counts, total }]
+  }, [caseloadAgeBuckets, caseloadViewAttorney])
+  // Legal-assistant load is inherently division-wide - not affected by caseloadViewAttorney.
+  const caseloadLegalAssistantLoad = useMemo(() => legalAssistantLoad(allCases, legalAssistants), [allCases, legalAssistants])
 
   function exportReportCsv() {
     const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
@@ -8883,13 +9069,21 @@ function App() {
         <main className="page">
           <div className="queue-title-row">
             <h2>Reports</h2>
-            <div className="ui-title-actions">
-              <Btn onClick={exportReportCsv}>Export CSV</Btn>
-              <Btn variant="primary" onClick={() => void exportReportExcel()}>Export Excel</Btn>
-            </div>
+            {reportView === 'export' && (
+              <div className="ui-title-actions">
+                <Btn onClick={exportReportCsv}>Export CSV</Btn>
+                <Btn variant="primary" onClick={() => void exportReportExcel()}>Export Excel</Btn>
+              </div>
+            )}
           </div>
 
-          <div className="rep-grid">
+          <div className="segmented-tabs">
+            <button className={reportView === 'export' ? 'segment active' : 'segment'} onClick={() => setReportView('export')}>Case List Export</button>
+            <button className={reportView === 'caseload' ? 'segment active' : 'segment'} onClick={() => setReportView('caseload')}>Caseload &amp; Workload</button>
+          </div>
+
+          {reportView === 'export' && (
+          <div className="rep-grid top-gap-small">
             <div className="rep-rail">
               <CollapsiblePanel title="Filters">
                 <div className="rep-fields">
@@ -8998,6 +9192,122 @@ function App() {
               </Panel>
             </div>
           </div>
+          )}
+
+          {reportView === 'caseload' && (
+            <div className="top-gap-small">
+              <Panel title="View as">
+                <div className="rep-fields">
+                  <label>
+                    <span>View as</span>
+                    <select value={caseloadViewAttorney} onChange={(event) => setCaseloadViewAttorney(event.target.value)}>
+                      <option value="">All Attorneys (Division-wide)</option>
+                      {caseloadActiveAttorneyNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <p className="helper-text top-gap-small">A display filter only, standing in for per-login scoping until Entra is live - available to everyone, same as the rest of this Reports tab.</p>
+              </Panel>
+
+              <Panel title="Open Cases by Status" className="top-gap-small" headerAction={<span className="pill pill-neutral">{caseloadScopedCases.length} open case{caseloadScopedCases.length === 1 ? '' : 's'}</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>Attorney</th>
+                        {consolidatedCaseStatuses.map((status) => <th key={status}>{status}</th>)}
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {caseloadStatusMatrixRows.map((row) => (
+                        <tr key={row.name}>
+                          <td>{row.name}</td>
+                          {consolidatedCaseStatuses.map((status) => <td key={status} className="ui-data">{row.counts[status]}</td>)}
+                          <td className="ui-data">{row.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <CollapsiblePanel title="Upcoming Trial Density" className="top-gap-small">
+                <div className="ui-tiles">
+                  <MetricTile label="Next 30 days" value={caseloadTrialDensity.totals.d30} />
+                  <MetricTile label="Next 60 days" value={caseloadTrialDensity.totals.d60} />
+                  <MetricTile label="Next 90 days" value={caseloadTrialDensity.totals.d90} />
+                </div>
+                {!caseloadViewAttorney && (
+                  <div className="table-wrap top-gap-small">
+                    <table className="ui-table compact-table">
+                      <thead><tr><th>Attorney</th><th>Next 30</th><th>Next 60</th><th>Next 90</th></tr></thead>
+                      <tbody>
+                        {caseloadTrialDensity.perAttorney.map((row) => (
+                          <tr key={row.name}><td>{row.name}</td><td className="ui-data">{row.d30}</td><td className="ui-data">{row.d60}</td><td className="ui-data">{row.d90}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CollapsiblePanel>
+
+              <CollapsiblePanel title="Upcoming Deadline Density" className="top-gap-small">
+                <p className="helper-text">Deadlines have no service/discovery type distinction in this app today, so this is one combined count per window rather than split by type.</p>
+                <div className="ui-tiles top-gap-small">
+                  <MetricTile label="Next 30 days" value={caseloadDeadlineDensity.totals.d30} />
+                  <MetricTile label="Next 60 days" value={caseloadDeadlineDensity.totals.d60} />
+                  <MetricTile label="Next 90 days" value={caseloadDeadlineDensity.totals.d90} />
+                </div>
+                {!caseloadViewAttorney && (
+                  <div className="table-wrap top-gap-small">
+                    <table className="ui-table compact-table">
+                      <thead><tr><th>Attorney</th><th>Next 30</th><th>Next 60</th><th>Next 90</th></tr></thead>
+                      <tbody>
+                        {caseloadDeadlineDensity.perAttorney.map((row) => (
+                          <tr key={row.name}><td>{row.name}</td><td className="ui-data">{row.d30}</td><td className="ui-data">{row.d60}</td><td className="ui-data">{row.d90}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CollapsiblePanel>
+
+              <Panel title="Cases by Age Bucket" className="top-gap-small">
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead>
+                      <tr><th>Attorney</th>{caseloadAgeBucketDefs.map((bucket) => <th key={bucket.key}>{bucket.label}</th>)}<th>Total</th></tr>
+                    </thead>
+                    <tbody>
+                      {caseloadAgeBucketRows.map((row) => (
+                        <tr key={row.name}>
+                          <td>{row.name}</td>
+                          {caseloadAgeBucketDefs.map((bucket) => <td key={bucket.key} className="ui-data">{row.counts[bucket.key]}</td>)}
+                          <td className="ui-data">{row.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Legal Assistant Load" className="top-gap-small" headerAction={<span className="helper-text">Division-wide - not affected by View as</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Legal Assistant</th><th>Open Cases</th></tr></thead>
+                    <tbody>
+                      {caseloadLegalAssistantLoad.length === 0 ? (
+                        <UiEmptyState colSpan={2} title="No active legal assistants" />
+                      ) : caseloadLegalAssistantLoad.map((row) => (
+                        <tr key={row.id}><td>{row.name}</td><td className="ui-data">{row.openCaseCount}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </div>
+          )}
         </main>
       )}
 

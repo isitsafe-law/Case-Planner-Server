@@ -405,6 +405,25 @@ label span {
   font-size: 0.85rem;
 }
 
+/* Witness cross-reference lookup: the "Other cases" inline row on the Trial Notebook's Witnesses
+   panel. Kept lightweight - a plain sub-row with a bullet list, not a modal/popover - since this
+   is a simple lookup the attorney glances at, not a primary workflow surface. */
+.witness-other-cases-row td {
+  background: var(--surface-muted);
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.witness-other-cases-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.witness-other-cases-list li + li {
+  margin-top: 0.35rem;
+}
+
 .slideover-backdrop {
   position: fixed;
   inset: 0;

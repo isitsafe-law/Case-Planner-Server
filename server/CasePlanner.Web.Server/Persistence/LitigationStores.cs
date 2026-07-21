@@ -19,6 +19,10 @@ public interface IWitnessRegistryStore
 {
     string Provider { get; }
     Task<List<WitnessPersonMatch>> SearchAsync(string? query, CancellationToken token = default);
+    // Multi-user rollout Phase 4 (witness cross-reference lookup): the richer per-person detail
+    // used by the "Other cases" lookup on the Trial Notebook's Witnesses panel. Returns null when
+    // the person doesn't exist (deleted, or a bad id) so the endpoint can 404.
+    Task<WitnessPersonDetail?> GetPersonDetailAsync(long personId, CancellationToken token = default);
 }
 
 public interface IExhibitStore
@@ -49,6 +53,7 @@ public sealed class SqliteWitnessRegistryStore(CasePlannerRepository repository)
 {
     public string Provider => "Sqlite";
     public Task<List<WitnessPersonMatch>> SearchAsync(string? query, CancellationToken token = default) => repository.SearchWitnessPersonsAsync(query);
+    public Task<WitnessPersonDetail?> GetPersonDetailAsync(long personId, CancellationToken token = default) => repository.GetWitnessPersonDetailAsync(personId);
 }
 
 public sealed class SqliteExhibitStore(CasePlannerRepository repository) : IExhibitStore

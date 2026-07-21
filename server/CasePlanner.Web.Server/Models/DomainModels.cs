@@ -1336,6 +1336,40 @@ public sealed class WitnessPersonMatch
     public List<string> OtherCaseNumbers { get; set; } = [];
 }
 
+// Multi-user rollout Phase 4 (witness cross-reference lookup): the richer per-person detail
+// behind GET /api/witness-registry/{personId}. Deliberately a simple lookup, not a conflict
+// engine - the attorney glances at the returned dates and judges overlap themselves. No new date
+// fields are stored anywhere for this: TrialDate/TrialEndDate are read live from the case's
+// existing columns, and DepositionEvents are read live from that case's Deposition-type hearings
+// rows - nothing here is re-entered or persisted redundantly on the witness or witness_persons
+// row.
+public sealed class WitnessPersonDetail
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? ContactInfo { get; set; }
+    // Every current (not Closed/Complete/"Resolved / Closed") case where this person is linked as
+    // a witness, INCLUDING the case the caller is currently viewing - the client filters that one
+    // out before display since telling the attorney "also in this same case" is pointless.
+    public List<WitnessPersonCase> Cases { get; set; } = [];
+}
+
+public sealed class WitnessPersonCase
+{
+    public long CaseId { get; set; }
+    public string CaseNumber { get; set; } = "";
+    public string CaseName { get; set; } = "";
+    public string? TrialDate { get; set; }
+    public string? TrialEndDate { get; set; }
+    public List<WitnessDepositionEvent> DepositionEvents { get; set; } = [];
+}
+
+public sealed class WitnessDepositionEvent
+{
+    public string Title { get; set; } = "";
+    public string? Date { get; set; }
+}
+
 public sealed class ExhibitRecord
 {
     public long Id { get; set; }

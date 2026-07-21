@@ -243,6 +243,27 @@ type WitnessPersonMatch = {
   otherCaseNumbers: string[]
 }
 
+// Witness cross-reference lookup: the richer per-person detail behind GET
+// /api/witness-registry/{personId}, used by the Witnesses panel's "Other cases" lookup. A simple
+// lookup, not conflict detection - the attorney judges overlap themselves from the listed dates.
+// No new date fields exist anywhere for this: TrialDate/TrialEndDate/DepositionEvents are all read
+// live from the case/hearings data that already exists.
+type WitnessPersonCase = {
+  caseId: number
+  caseNumber: string
+  caseName: string
+  trialDate?: string | null
+  trialEndDate?: string | null
+  depositionEvents: { title: string; date?: string | null }[]
+}
+
+type WitnessPersonDetail = {
+  id: number
+  name: string
+  contactInfo?: string | null
+  cases: WitnessPersonCase[]
+}
+
 type Exhibit = {
   id: number
   caseId: number
@@ -1700,6 +1721,13 @@ function App() {
   // derived from witnessSuggestions below rather than tracked as its own state.
   const [witnessSuggestions, setWitnessSuggestions] = useState<WitnessPersonMatch[]>([])
   const [witnessSuggestionsOpen, setWitnessSuggestionsOpen] = useState(false)
+  // Witness cross-reference lookup: which witness row (by witness id, not person id) has its
+  // "Other cases" panel expanded, the on-demand fetch results keyed by person id (undefined = not
+  // fetched yet, so a repeat click on the same person doesn't re-hit the API), and which person id
+  // is currently loading.
+  const [witnessOtherCasesOpenId, setWitnessOtherCasesOpenId] = useState<number | null>(null)
+  const [witnessOtherCasesByPersonId, setWitnessOtherCasesByPersonId] = useState<Record<number, WitnessPersonDetail | null>>({})
+  const [witnessOtherCasesLoadingPersonId, setWitnessOtherCasesLoadingPersonId] = useState<number | null>(null)
   const [exhibitDraft, setExhibitDraft] = useState<Exhibit>(emptyExhibit(0))
   const [trialMotionDraft, setTrialMotionDraft] = useState<TrialMotion>(emptyTrialMotion(0))
   const [referenceLibrary, setReferenceLibrary] = useState<ReferenceDocument[]>([])
@@ -1962,6 +1990,8 @@ function App() {
           setWitnesses(loadedWitnesses)
           setExhibits(loadedExhibits)
           setTrialMotions(loadedMotions)
+          setWitnessOtherCasesOpenId(null)
+          setWitnessOtherCasesByPersonId({})
         })
         .catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Unable to load trial notebook data.'))
     }
@@ -2763,6 +2793,30 @@ function App() {
     setWitnessSuggestionsOpen(false)
     clearModalFeedback()
     setModalDirty(true)
+  }
+
+  // Witness cross-reference lookup: toggles the inline "Other cases" row for a witness, fetching
+  // GET /api/witness-registry/{personId} on demand the first time it's expanded for that person
+  // (not eagerly for every row on panel load) and caching the result by person id so re-expanding
+  // doesn't re-fetch.
+  async function toggleWitnessOtherCases(item: Witness) {
+    if (!item.personId) return
+    if (witnessOtherCasesOpenId === item.id) {
+      setWitnessOtherCasesOpenId(null)
+      return
+    }
+    setWitnessOtherCasesOpenId(item.id)
+    const personId = item.personId
+    if (witnessOtherCasesByPersonId[personId] !== undefined) return
+    setWitnessOtherCasesLoadingPersonId(personId)
+    try {
+      const detail = await api<WitnessPersonDetail>(`/api/witness-registry/${personId}`)
+      setWitnessOtherCasesByPersonId((current) => ({ ...current, [personId]: detail }))
+    } catch {
+      setWitnessOtherCasesByPersonId((current) => ({ ...current, [personId]: null }))
+    } finally {
+      setWitnessOtherCasesLoadingPersonId((current) => (current === personId ? null : current))
+    }
   }
 
   function startWitnessModal(item?: Witness) {
@@ -6564,21 +6618,64 @@ function App() {
                   <tbody>
                     {witnesses.length === 0 ? (
                       <tr><td colSpan={6}>No witnesses added yet.</td></tr>
-                    ) : witnesses.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.name}</td>
-                        <td><span className={`pill pill-${sidePillTone(item.side)}`}>{item.side}</span></td>
-                        <td>{item.role || 'Not set'}</td>
-                        <td>{item.subpoenaStatus}</td>
-                        <td>{item.notes || 'No notes'}</td>
-                        <td>
-                          <div className="button-row compact-actions row-actions">
-                            <button onClick={() => startWitnessModal(item)}>Edit</button>
-                            <button onClick={() => void deleteWitness(item.id)}>Delete</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    ) : witnesses.map((item) => {
+                      // Witness cross-reference lookup: only witnesses linked to the shared
+                      // registry (item.personId set) can be looked up - unlinked legacy rows just
+                      // don't show the button. Whether the person ACTUALLY appears elsewhere isn't
+                      // known until the on-demand fetch resolves, so the button's own label/tone
+                      // updates once that comes back.
+                      const detail = item.personId ? witnessOtherCasesByPersonId[item.personId] : undefined
+                      const otherCases = detail?.cases.filter((c) => c.caseId !== selectedCaseId) ?? []
+                      const isOpen = witnessOtherCasesOpenId === item.id
+                      const isLoading = item.personId != null && witnessOtherCasesLoadingPersonId === item.personId
+                      return (
+                        <Fragment key={item.id}>
+                          <tr>
+                            <td>{item.name}</td>
+                            <td><span className={`pill pill-${sidePillTone(item.side)}`}>{item.side}</span></td>
+                            <td>{item.role || 'Not set'}</td>
+                            <td>{item.subpoenaStatus}</td>
+                            <td>{item.notes || 'No notes'}</td>
+                            <td>
+                              <div className="button-row compact-actions row-actions">
+                                {item.personId != null && (
+                                  <button onClick={() => void toggleWitnessOtherCases(item)}>
+                                    {isOpen ? 'Hide other cases' : 'Other cases'}
+                                  </button>
+                                )}
+                                <button onClick={() => startWitnessModal(item)}>Edit</button>
+                                <button onClick={() => void deleteWitness(item.id)}>Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                          {isOpen && (
+                            <tr className="witness-other-cases-row">
+                              <td colSpan={6}>
+                                {isLoading ? (
+                                  <span className="helper-text">Checking other cases…</span>
+                                ) : otherCases.length === 0 ? (
+                                  <span className="helper-text">Not listed as a witness in any other open case.</span>
+                                ) : (
+                                  <ul className="witness-other-cases-list">
+                                    {otherCases.map((c) => (
+                                      <li key={c.caseId}>
+                                        <strong>{c.caseNumber}</strong> — {c.caseName}
+                                        {c.trialDate && (
+                                          <span> · Trial {c.trialEndDate ? `${displayDate(c.trialDate)} – ${displayDate(c.trialEndDate)}` : displayDate(c.trialDate)}</span>
+                                        )}
+                                        {c.depositionEvents.length > 0 && (
+                                          <span> · Deposition{c.depositionEvents.length > 1 ? 's' : ''}: {c.depositionEvents.map((d) => `${d.title}${d.date ? ` (${displayDate(d.date)})` : ''}`).join(', ')}</span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>}

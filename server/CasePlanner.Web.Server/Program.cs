@@ -737,6 +737,17 @@ app.MapDelete("/api/witnesses/{id:long}", async (long id,IWitnessStore witnesses
 // query" call) rather than a separate admin listing endpoint, since the primary need here is the
 // autofill list, not a full management screen.
 app.MapGet("/api/witness-registry/search", async (string? q, IWitnessRegistryStore registry, CancellationToken token) => Results.Ok(await registry.SearchAsync(q, token)));
+// Multi-user rollout Phase 4 (witness cross-reference lookup): the "Other cases" detail behind
+// the Witnesses panel's per-row lookup button - every current (non-Closed/Resolved) case this
+// person is linked as a witness in, with that case's trial date range and Deposition-type event
+// dates read live off the case's own columns/hearings rows. Same access posture as the search
+// endpoint above: not case-scoped and not write-gated, since it's a read-only cross-registry
+// lookup rather than an action on any one case.
+app.MapGet("/api/witness-registry/{personId:long}", async (long personId, IWitnessRegistryStore registry, CancellationToken token) =>
+{
+    var detail = await registry.GetPersonDetailAsync(personId, token);
+    return detail is null ? Results.NotFound() : Results.Ok(detail);
+});
 app.MapGet("/api/cases/{id:long}/opposing-attorneys", async (long id, IOpposingAttorneyStore opposingAttorneys) => Results.Ok(await opposingAttorneys.GetAsync(id)));
 app.MapPost("/api/cases/{id:long}/opposing-attorneys", async (long id, OpposingAttorneyRecord model,IOpposingAttorneyStore opposingAttorneys,CaseAccessService access,CancellationToken token) =>
 {

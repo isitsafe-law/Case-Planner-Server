@@ -2706,6 +2706,113 @@ public sealed partial class CasePlannerRepository
         }).ToList();
     }
 
+    // Multi-user rollout Phase 4 (witness cross-reference lookup): the richer per-person detail
+    // endpoint behind GET /api/witness-registry/{personId}, distinct from SearchWitnessPersonsAsync
+    // above (which stays a lightweight typeahead). This is a simple lookup/cross-reference, not
+    // conflict detection - the attorney glances at whatever cases + dates come back and judges
+    // overlap themselves. "Current open case" mirrors both signals the Case List page itself
+    // checks (see GetCasesAsync's includeClosed filter and the consolidated case_status bucket
+    // used by its status dropdown): excludes the legacy status values ('Closed'/'Complete') AND
+    // the consolidated 'Resolved / Closed' bucket, since a case could carry either signal
+    // depending on when/how it was last touched. Deposition dates come from that case's own
+    // Deposition-type hearings rows - no new date field is stored on the witness/witness_persons
+    // row for this.
+    public async Task<WitnessPersonDetail?> GetWitnessPersonDetailAsync(long personId)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        string name;
+        string? contactInfo;
+        var personCmd = connection.CreateCommand();
+        personCmd.CommandText = "SELECT name, contact_info FROM witness_persons WHERE id = @id";
+        personCmd.Parameters.AddWithValue("@id", personId);
+        await using (var personReader = await personCmd.ExecuteReaderAsync())
+        {
+            if (!await personReader.ReadAsync())
+            {
+                return null;
+            }
+
+            name = personReader.GetString(0);
+            contactInfo = personReader.IsDBNull(1) ? null : personReader.GetString(1);
+        }
+
+        var cases = new List<WitnessPersonCase>();
+        var caseCmd = connection.CreateCommand();
+        caseCmd.CommandText = """
+            SELECT DISTINCT c.id, c.case_number, c.case_name, c.trial_date, c.trial_end_date
+            FROM witnesses w
+            JOIN cases c ON c.id = w.case_id
+            WHERE w.person_id = @personId
+              AND COALESCE(c.case_status, 'Pipeline') <> 'Resolved / Closed'
+              AND COALESCE(c.status, '') NOT IN ('Closed', 'Complete')
+            ORDER BY c.case_name
+            """;
+        caseCmd.Parameters.AddWithValue("@personId", personId);
+        await using (var caseReader = await caseCmd.ExecuteReaderAsync())
+        {
+            while (await caseReader.ReadAsync())
+            {
+                cases.Add(new WitnessPersonCase
+                {
+                    CaseId = caseReader.GetInt64(0),
+                    CaseNumber = caseReader.IsDBNull(1) ? "" : caseReader.GetString(1),
+                    CaseName = caseReader.IsDBNull(2) ? "" : caseReader.GetString(2),
+                    TrialDate = NormalizeDate(caseReader.IsDBNull(3) ? null : caseReader.GetString(3)),
+                    TrialEndDate = NormalizeDate(caseReader.IsDBNull(4) ? null : caseReader.GetString(4)),
+                });
+            }
+        }
+
+        if (cases.Count > 0)
+        {
+            var caseIdList = string.Join(",", cases.Select(c => c.CaseId));
+            var depositionsByCase = new Dictionary<long, List<WitnessDepositionEvent>>();
+            var depoCmd = connection.CreateCommand();
+            depoCmd.CommandText = $"""
+                SELECT case_id, title, hearing_date
+                FROM hearings
+                WHERE event_type = 'Deposition' AND case_id IN ({caseIdList})
+                ORDER BY COALESCE(hearing_date, '9999-12-31')
+                """;
+            await using (var depoReader = await depoCmd.ExecuteReaderAsync())
+            {
+                while (await depoReader.ReadAsync())
+                {
+                    var caseId = depoReader.GetInt64(0);
+                    if (!depositionsByCase.TryGetValue(caseId, out var list))
+                    {
+                        list = [];
+                        depositionsByCase[caseId] = list;
+                    }
+
+                    list.Add(new WitnessDepositionEvent
+                    {
+                        Title = depoReader.IsDBNull(1) ? "" : depoReader.GetString(1),
+                        Date = NormalizeDate(depoReader.IsDBNull(2) ? null : depoReader.GetString(2)),
+                    });
+                }
+            }
+
+            foreach (var c in cases)
+            {
+                if (depositionsByCase.TryGetValue(c.CaseId, out var events))
+                {
+                    c.DepositionEvents = events;
+                }
+            }
+        }
+
+        return new WitnessPersonDetail
+        {
+            Id = personId,
+            Name = name,
+            ContactInfo = contactInfo,
+            Cases = cases,
+        };
+    }
+
     public async Task DeleteWitnessAsync(long id)
     {
         await WithWriteAsync(async (connection, tx) =>

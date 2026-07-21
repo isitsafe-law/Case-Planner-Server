@@ -137,6 +137,72 @@ public sealed class SqlServerWitnessRegistryStore(IDatabaseConnectionFactory con
 
         return capped.Select(r=>new WitnessPersonMatch{Id=r.Id,Name=r.Name,ContactInfo=r.ContactInfo,MatchType=r.MatchType,OtherCaseNumbers=caseNamesByPerson.TryGetValue(r.Id,out var cases)?cases:[]}).ToList();
     }
+
+    // Multi-user rollout Phase 4 (witness cross-reference lookup): mirrors CasePlannerRepository.
+    // GetWitnessPersonDetailAsync exactly (same "open case" definition - excludes both the legacy
+    // status column and the consolidated case_status 'Resolved / Closed' bucket - and same
+    // Deposition-type hearings join for event dates). No live SQL Server sandbox available here to
+    // exercise this against a real pilot instance - same caveat as the rest of this dormant
+    // multi-user foundation.
+    public async Task<WitnessPersonDetail?> GetPersonDetailAsync(long personId,CancellationToken token=default)
+    {
+        await using var connection=Connections.CreateConnection();await connection.OpenAsync(token);
+
+        string name;string? contactInfo;
+        await using(var command=connection.CreateCommand())
+        {
+            command.CommandText="SELECT name,contact_info FROM dbo.witness_persons WHERE id=@id AND is_deleted=0";
+            command.Parameters.Add(new SqlParameter("@id",personId));
+            await using var reader=await command.ExecuteReaderAsync(token);
+            if(!await reader.ReadAsync(token))return null;
+            name=Text(reader,0)??"";contactInfo=Text(reader,1);
+        }
+
+        var cases=new List<WitnessPersonCase>();
+        await using(var command=connection.CreateCommand())
+        {
+            command.CommandText="""
+                SELECT DISTINCT c.id, c.case_number, c.case_name, c.trial_date, c.trial_end_date
+                FROM dbo.witnesses w
+                JOIN dbo.cases c ON c.id = w.case_id
+                WHERE w.is_deleted=0 AND w.person_id=@personId AND COALESCE(c.is_deleted,0)=0
+                  AND COALESCE(c.case_status,N'Pipeline') <> N'Resolved / Closed'
+                  AND COALESCE(c.status,N'') NOT IN (N'Closed', N'Complete')
+                ORDER BY c.case_name
+                """;
+            command.Parameters.Add(new SqlParameter("@personId",personId));
+            await using var reader=await command.ExecuteReaderAsync(token);
+            while(await reader.ReadAsync(token))
+            {
+                cases.Add(new WitnessPersonCase{CaseId=reader.GetInt64(0),CaseNumber=Text(reader,1)??"",CaseName=Text(reader,2)??"",TrialDate=Text(reader,3),TrialEndDate=Text(reader,4)});
+            }
+        }
+
+        if(cases.Count>0)
+        {
+            var caseIdList=string.Join(",",cases.Select(c=>c.CaseId));
+            var depositionsByCase=new Dictionary<long,List<WitnessDepositionEvent>>();
+            await using(var command=connection.CreateCommand())
+            {
+                command.CommandText=$"""
+                    SELECT case_id, title, hearing_date
+                    FROM dbo.hearings
+                    WHERE is_deleted=0 AND event_type = N'Deposition' AND case_id IN ({caseIdList})
+                    ORDER BY COALESCE(hearing_date, N'9999-12-31')
+                    """;
+                await using var reader=await command.ExecuteReaderAsync(token);
+                while(await reader.ReadAsync(token))
+                {
+                    var caseId=reader.GetInt64(0);
+                    if(!depositionsByCase.TryGetValue(caseId,out var list)){list=[];depositionsByCase[caseId]=list;}
+                    list.Add(new WitnessDepositionEvent{Title=Text(reader,1)??"",Date=Text(reader,2)});
+                }
+            }
+            foreach(var c in cases)if(depositionsByCase.TryGetValue(c.CaseId,out var events))c.DepositionEvents=events;
+        }
+
+        return new WitnessPersonDetail{Id=personId,Name=name,ContactInfo=contactInfo,Cases=cases};
+    }
 }
 
 public sealed class SqlServerExhibitStore(IDatabaseConnectionFactory connections,IHttpContextAccessor accessor)

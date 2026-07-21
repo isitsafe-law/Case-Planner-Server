@@ -1,13 +1,12 @@
 using CasePlanner.Web.Server.Models;
-using Microsoft.Data.Sqlite;
 
 namespace CasePlanner.Web.Server.Tests;
 
 // Multi-user rollout Phase 3 (shared witness registry): covers the witness_persons link-or-create
 // behavior in SaveWitnessAsync, the registry search/ranking (SearchWitnessPersonsAsync), and the
-// one-time migration that backfills person_id for pre-existing witness rows by EXACT normalized
-// name only (never fuzzy) - fully testable against SQLite, no live SQL Server sandbox needed for
-// this half of the feature.
+// cross-case lookup (GetWitnessPersonDetailAsync, Phase 3b) - fully testable against SQLite, no
+// live SQL Server sandbox needed for this half of the feature. There is no backfill migration for
+// pre-existing witness rows by design - the registry starts empty and grows only from new adds.
 public class WitnessRegistryTests : IAsyncLifetime
 {
     private RepositoryTestFixture _fixture = null!;
@@ -167,5 +166,103 @@ public class WitnessRegistryTests : IAsyncLifetime
         var matches = await _fixture.Repository.SearchWitnessPersonsAsync("");
 
         Assert.True(matches.Count >= 2);
+    }
+
+    // ---- GetWitnessPersonDetailAsync (Phase 3b: witness cross-reference lookup) ----
+
+    [Fact]
+    public async Task PersonDetail_LinkedAcrossTwoOpenCases_ReturnsBothWithTrialDateAndDepositionEvent()
+    {
+        var caseA = await CreateCaseAsync("24-CV-200");
+        caseA.TrialDate = "2026-09-01";
+        caseA.TrialEndDate = "2026-09-05";
+        caseA = await _fixture.Repository.SaveCaseAsync(caseA);
+
+        var caseB = await CreateCaseAsync("24-CV-201");
+
+        var witnessA = await _fixture.Repository.SaveWitnessAsync(new WitnessRecord { CaseId = caseA.Id, Name = "Jane Doe", Side = "ASHC" });
+        await _fixture.Repository.SaveWitnessAsync(new WitnessRecord { CaseId = caseB.Id, Name = "Jane Doe", Side = "Landowner" });
+
+        await _fixture.Repository.SaveHearingAsync(new HearingRecord
+        {
+            CaseId = caseB.Id,
+            Title = "Deposition of Jane Doe",
+            HearingDate = "2026-06-15",
+            EventType = "Deposition",
+        });
+        // A non-Deposition event on caseB should not show up in DepositionEvents.
+        await _fixture.Repository.SaveHearingAsync(new HearingRecord
+        {
+            CaseId = caseB.Id,
+            Title = "Status Conference",
+            HearingDate = "2026-05-01",
+            EventType = "Hearing",
+        });
+
+        var detail = await _fixture.Repository.GetWitnessPersonDetailAsync(witnessA.PersonId!.Value);
+
+        Assert.NotNull(detail);
+        Assert.Equal("Jane Doe", detail!.Name);
+        Assert.Equal(2, detail.Cases.Count);
+
+        var returnedCaseA = Assert.Single(detail.Cases, c => c.CaseNumber == "24-CV-200");
+        Assert.Equal("2026-09-01", returnedCaseA.TrialDate);
+        Assert.Equal("2026-09-05", returnedCaseA.TrialEndDate);
+        Assert.Empty(returnedCaseA.DepositionEvents);
+
+        var returnedCaseB = Assert.Single(detail.Cases, c => c.CaseNumber == "24-CV-201");
+        var deposition = Assert.Single(returnedCaseB.DepositionEvents);
+        Assert.Equal("Deposition of Jane Doe", deposition.Title);
+        Assert.Equal("2026-06-15", deposition.Date);
+    }
+
+    [Fact]
+    public async Task PersonDetail_OnlyInOneCase_ReturnsThatCaseWithNoOthers()
+    {
+        var c = await CreateCaseAsync("24-CV-202");
+        var witness = await _fixture.Repository.SaveWitnessAsync(new WitnessRecord { CaseId = c.Id, Name = "Solo Witness", Side = "ASHC" });
+
+        var detail = await _fixture.Repository.GetWitnessPersonDetailAsync(witness.PersonId!.Value);
+
+        Assert.NotNull(detail);
+        var onlyCase = Assert.Single(detail!.Cases);
+        Assert.Equal("24-CV-202", onlyCase.CaseNumber);
+    }
+
+    [Fact]
+    public async Task PersonDetail_ClosedCase_IsExcludedFromCasesList()
+    {
+        var openCase = await CreateCaseAsync("24-CV-203");
+        var closedCase = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseNumber = "24-CV-204",
+            CaseName = "Fixture Case 24-CV-204",
+            County = "Pulaski",
+            Status = "Closed",
+            CaseStatus = "Resolved / Closed",
+            Track = "Contested",
+        });
+
+        var witnessOpen = await _fixture.Repository.SaveWitnessAsync(new WitnessRecord { CaseId = openCase.Id, Name = "Cross Case Witness", Side = "ASHC" });
+        await _fixture.Repository.SaveWitnessAsync(new WitnessRecord
+        {
+            CaseId = closedCase.Id,
+            Name = "Cross Case Witness",
+            Side = "Landowner",
+            PersonId = witnessOpen.PersonId,
+        });
+
+        var detail = await _fixture.Repository.GetWitnessPersonDetailAsync(witnessOpen.PersonId!.Value);
+
+        Assert.NotNull(detail);
+        var onlyCase = Assert.Single(detail!.Cases);
+        Assert.Equal("24-CV-203", onlyCase.CaseNumber);
+    }
+
+    [Fact]
+    public async Task PersonDetail_UnknownPersonId_ReturnsNull()
+    {
+        var detail = await _fixture.Repository.GetWitnessPersonDetailAsync(999_999);
+        Assert.Null(detail);
     }
 }

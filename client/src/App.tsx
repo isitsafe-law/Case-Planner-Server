@@ -226,6 +226,21 @@ type Witness = {
   subpoenaStatus: string
   outlineNotes?: string | null
   notes?: string | null
+  // Multi-user rollout Phase 3 (shared witness registry): links this per-case witness row to a
+  // global witness_persons identity. Set when the user picks a suggestion from the registry
+  // search, or resolved server-side on save (exact-name match or a brand-new person).
+  personId?: number | null
+}
+
+// A witness_persons row as returned by the registry search/autofill endpoint (GET
+// /api/witness-registry/search?q=...), used to drive the "Add Witness" modal's suggestion
+// dropdown and similar-name flag.
+type WitnessPersonMatch = {
+  id: number
+  name: string
+  contactInfo?: string | null
+  matchType: 'exact' | 'similar'
+  otherCaseNumbers: string[]
 }
 
 type Exhibit = {
@@ -1168,7 +1183,7 @@ function emptyDiscoveryPosture(caseId: number): DiscoveryPosture {
 }
 
 function emptyWitness(caseId: number): Witness {
-  return { id: 0, caseId, name: '', side: 'ASHC', role: '', contactInfo: '', subpoenaStatus: 'Not Needed', outlineNotes: '', notes: '' }
+  return { id: 0, caseId, name: '', side: 'ASHC', role: '', contactInfo: '', subpoenaStatus: 'Not Needed', outlineNotes: '', notes: '', personId: null }
 }
 
 function emptyExhibit(caseId: number): Exhibit {
@@ -1680,6 +1695,11 @@ function App() {
   const [trialMotions, setTrialMotions] = useState<TrialMotion[]>([])
   const [trialNotebookLoadedForCase, setTrialNotebookLoadedForCase] = useState<number | null>(null)
   const [witnessDraft, setWitnessDraft] = useState<Witness>(emptyWitness(0))
+  // Multi-user rollout Phase 3 (shared witness registry): autofill suggestions for the witness
+  // name field, and whether the dropdown is open. A separate "similar but not exact" flag is
+  // derived from witnessSuggestions below rather than tracked as its own state.
+  const [witnessSuggestions, setWitnessSuggestions] = useState<WitnessPersonMatch[]>([])
+  const [witnessSuggestionsOpen, setWitnessSuggestionsOpen] = useState(false)
   const [exhibitDraft, setExhibitDraft] = useState<Exhibit>(emptyExhibit(0))
   const [trialMotionDraft, setTrialMotionDraft] = useState<TrialMotion>(emptyTrialMotion(0))
   const [referenceLibrary, setReferenceLibrary] = useState<ReferenceDocument[]>([])
@@ -1757,6 +1777,32 @@ function App() {
     }, 250)
     return () => window.clearTimeout(timer)
   }, [paletteCaseQuery])
+
+  // Multi-user rollout Phase 3 (shared witness registry): debounced type-ahead against the new
+  // witness registry search, same 250ms debounce convention as the topbar/palette case search
+  // above. Only runs while the "Add Witness" modal is actually open so typing elsewhere in the app
+  // never fires it. A 2-character floor (matching the case-search convention) avoids a flood of
+  // near-useless single-letter matches.
+  useEffect(() => {
+    if (activeModal !== 'witness') {
+      return
+    }
+    const query = witnessDraft.name.trim()
+    if (query.length < 2) {
+      setWitnessSuggestions([])
+      setWitnessSuggestionsOpen(false)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      api<WitnessPersonMatch[]>(`/api/witness-registry/search?q=${encodeURIComponent(query)}`)
+        .then((matches) => {
+          setWitnessSuggestions(matches)
+          setWitnessSuggestionsOpen(matches.length > 0)
+        })
+        .catch(() => setWitnessSuggestions([]))
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [witnessDraft.name, activeModal])
 
   // Global shortcuts: Ctrl/Cmd+K opens the command palette from anywhere (even mid-typing - opening
   // it over a busy form or the TriageWizard is fine, that's simplest-correct here); "?" opens the
@@ -2240,6 +2286,8 @@ function App() {
       setComparableSaleDraft(mode === 'edit' ? comparableSaleDraft : emptyComparableSale(caseId, comparableSaleDraft.side))
     } else if (kind === 'witness') {
       setWitnessDraft(mode === 'edit' ? witnessDraft : emptyWitness(caseId))
+      setWitnessSuggestions([])
+      setWitnessSuggestionsOpen(false)
     } else if (kind === 'exhibit') {
       setExhibitDraft(mode === 'edit' ? exhibitDraft : emptyExhibit(caseId))
     } else if (kind === 'trialMotion') {
@@ -2696,6 +2744,23 @@ function App() {
 
   function patchWitnessDraft(patch: Partial<Witness>) {
     setWitnessDraft((current) => ({ ...current, ...patch }))
+    clearModalFeedback()
+    setModalDirty(true)
+  }
+
+  // Multi-user rollout Phase 3 (shared witness registry): user picked a suggestion from the
+  // autofill dropdown - link the draft to that person_id and adopt their canonical name, filling
+  // in contact info only if the draft doesn't already have its own (still editable afterward,
+  // this is just a convenience default).
+  function selectWitnessSuggestion(match: WitnessPersonMatch) {
+    setWitnessDraft((current) => ({
+      ...current,
+      name: match.name,
+      contactInfo: current.contactInfo?.trim() ? current.contactInfo : match.contactInfo ?? current.contactInfo,
+      personId: match.id,
+    }))
+    setWitnessSuggestions([])
+    setWitnessSuggestionsOpen(false)
     clearModalFeedback()
     setModalDirty(true)
   }
@@ -3307,6 +3372,8 @@ function App() {
       const loaded = await api<Witness[]>(`/api/cases/${caseId}/witnesses`)
       setWitnesses(loaded)
       setWitnessDraft(emptyWitness(caseId))
+      setWitnessSuggestions([])
+      setWitnessSuggestionsOpen(false)
       if (closeAfterSave) setActiveModal(null)
       setModalDirty(false)
       setMessage(successMessage)
@@ -7696,10 +7763,45 @@ function App() {
 
           {activeModal === 'witness' && (
             <form className="form-grid modal-form" onSubmit={saveWitness} noValidate>
-              <label>
+              <label className="witness-name-field">
                 <span>Name</span>
-                <input value={witnessDraft.name} onChange={(event) => patchWitnessDraft({ name: event.target.value })} placeholder="Witness name" />
+                <input
+                  value={witnessDraft.name}
+                  onChange={(event) => patchWitnessDraft({ name: event.target.value, personId: null })}
+                  onFocus={() => { if (witnessSuggestions.length > 0) setWitnessSuggestionsOpen(true) }}
+                  onBlur={() => window.setTimeout(() => setWitnessSuggestionsOpen(false), 150)}
+                  placeholder="Witness name"
+                  autoComplete="off"
+                />
                 {modalFieldErrors.name && <small className="field-error">{modalFieldErrors.name}</small>}
+                {witnessSuggestionsOpen && witnessSuggestions.length > 0 && (
+                  <div className="search-suggestions">
+                    {witnessSuggestions.map((match) => (
+                      <button
+                        key={match.id}
+                        type="button"
+                        className="search-suggestion"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectWitnessSuggestion(match)}
+                      >
+                        <strong>{match.name}</strong>
+                        <span>
+                          {[
+                            match.matchType === 'exact' ? 'Existing witness' : 'Similar name',
+                            match.otherCaseNumbers.length > 0 ? `also in ${match.otherCaseNumbers.join(', ')}` : null,
+                          ].filter(Boolean).join(' · ')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!witnessDraft.personId && witnessDraft.name.trim().length >= 2 &&
+                  !witnessSuggestions.some((match) => match.matchType === 'exact') &&
+                  witnessSuggestions.some((match) => match.matchType === 'similar') && (
+                    <div className="inline-message warn witness-similar-flag">
+                      Similar to an existing witness: {witnessSuggestions.find((match) => match.matchType === 'similar')?.name} — select above or continue typing to add as new.
+                    </div>
+                  )}
               </label>
               <label><span>Side</span><select value={witnessDraft.side} onChange={(event) => patchWitnessDraft({ side: event.target.value as ValuationSide })}><option value="ASHC">ASHC</option><option value="Landowner">Landowner</option></select></label>
               <label><span>Role</span><input value={witnessDraft.role || ''} onChange={(event) => patchWitnessDraft({ role: event.target.value })} placeholder="e.g. Appraiser, Fact Witness, Engineer" /></label>

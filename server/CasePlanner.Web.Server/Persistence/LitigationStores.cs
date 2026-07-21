@@ -11,6 +11,16 @@ public interface IWitnessStore
     Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default);
 }
 
+// Multi-user rollout Phase 3: the shared witness_persons registry's read side - search/autofill
+// for the "Add Witness" modal's type-ahead. Not case-scoped (a person can be a witness across
+// many cases), so unlike every other store here there's no per-case Get/Save/Delete shape - just
+// a single search query the client hits on every debounced keystroke.
+public interface IWitnessRegistryStore
+{
+    string Provider { get; }
+    Task<List<WitnessPersonMatch>> SearchAsync(string? query, CancellationToken token = default);
+}
+
 public interface IExhibitStore
 {
     string Provider { get; }
@@ -33,6 +43,12 @@ public sealed class SqliteWitnessStore(CasePlannerRepository repository) : IWitn
     public Task<List<WitnessRecord>> GetAsync(long? caseId, CancellationToken token = default) => repository.GetWitnessesAsync(caseId);
     public Task<WitnessRecord> SaveAsync(WitnessRecord model, CancellationToken token = default) => repository.SaveWitnessAsync(model);
     public Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default) => repository.DeleteWitnessAsync(id);
+}
+
+public sealed class SqliteWitnessRegistryStore(CasePlannerRepository repository) : IWitnessRegistryStore
+{
+    public string Provider => "Sqlite";
+    public Task<List<WitnessPersonMatch>> SearchAsync(string? query, CancellationToken token = default) => repository.SearchWitnessPersonsAsync(query);
 }
 
 public sealed class SqliteExhibitStore(CasePlannerRepository repository) : IExhibitStore

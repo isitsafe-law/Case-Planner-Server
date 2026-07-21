@@ -392,6 +392,19 @@ label span {
   color: var(--text-muted);
 }
 
+/* Multi-user rollout Phase 3 (shared witness registry): the "Add Witness" modal's name field
+   reuses .search-suggestions/.search-suggestion verbatim for its autofill dropdown (same visual
+   language as the topbar search), just needs its own positioning context since modal-form labels
+   aren't relatively positioned by default. */
+.witness-name-field {
+  position: relative;
+}
+
+.witness-similar-flag {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
 .slideover-backdrop {
   position: fixed;
   inset: 0;

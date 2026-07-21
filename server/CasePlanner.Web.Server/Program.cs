@@ -166,6 +166,12 @@ builder.Services.AddSingleton<IWitnessStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerWitnessStore>()
         : services.GetRequiredService<SqliteWitnessStore>());
+builder.Services.AddSingleton<SqliteWitnessRegistryStore>();
+builder.Services.AddSingleton<SqlServerWitnessRegistryStore>();
+builder.Services.AddSingleton<IWitnessRegistryStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerWitnessRegistryStore>()
+        : services.GetRequiredService<SqliteWitnessRegistryStore>());
 builder.Services.AddSingleton<SqliteOpposingAttorneyStore>();
 builder.Services.AddSingleton<SqlServerOpposingAttorneyStore>();
 builder.Services.AddSingleton<IOpposingAttorneyStore>(services =>
@@ -723,6 +729,14 @@ app.MapDelete("/api/witnesses/{id:long}", async (long id,IWitnessStore witnesses
     await witnesses.DeleteAsync(id);
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Multi-user rollout Phase 3 (shared witness registry): type-ahead search for the "Add Witness"
+// modal, ranked exact matches first then similar-name suggestions (see WitnessNameMatcher). Not
+// case-scoped and not write access-gated - it's a read-only lookup across the whole registry, the
+// same way the topbar/command-palette case search isn't gated either. Blank/omitted q returns a
+// plain paged listing (same endpoint, per the batch's "reuse the search endpoint with an empty
+// query" call) rather than a separate admin listing endpoint, since the primary need here is the
+// autofill list, not a full management screen.
+app.MapGet("/api/witness-registry/search", async (string? q, IWitnessRegistryStore registry, CancellationToken token) => Results.Ok(await registry.SearchAsync(q, token)));
 app.MapGet("/api/cases/{id:long}/opposing-attorneys", async (long id, IOpposingAttorneyStore opposingAttorneys) => Results.Ok(await opposingAttorneys.GetAsync(id)));
 app.MapPost("/api/cases/{id:long}/opposing-attorneys", async (long id, OpposingAttorneyRecord model,IOpposingAttorneyStore opposingAttorneys,CaseAccessService access,CancellationToken token) =>
 {

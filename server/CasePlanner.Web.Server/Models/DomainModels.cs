@@ -1298,6 +1298,42 @@ public sealed class WitnessRecord
     public string? OutlineNotes { get; set; }
     public string? Notes { get; set; }
     public string? RowVersion { get; set; }
+    // Multi-user rollout Phase 3 (shared witness registry): links this per-case witness row to a
+    // global witness_persons identity. Null means "not yet linked" (pre-migration legacy row, or
+    // a save that hasn't resolved a person yet). Name/ContactInfo above remain a per-case
+    // snapshot - they are populated FROM the linked person at save time but are not overwritten
+    // just because the person's canonical record changes later.
+    public long? PersonId { get; set; }
+}
+
+// Multi-user rollout Phase 3: the global witness *person* identity - one row per real person,
+// shared across every case they're a witness in. Deliberately minimal (name + optional contact
+// info) since the per-case witnesses table still carries all case-specific detail (side, role,
+// subpoena status, outline notes). Full dual-provider parity, unlike the Phase 1/2 pieces that
+// are SQL-Server-only functional - this table and its search/link behavior work fully on SQLite.
+public sealed class WitnessPersonRecord
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? ContactInfo { get; set; }
+    public string? RowVersion { get; set; }
+}
+
+// A witness_persons row as returned by the registry search/autofill endpoint, annotated with why
+// it matched the typed query and (cheaply, via a join) which other case(s) it's already a
+// witness in - so the picker can show "Maxwell Carter - also a witness in 24-CV-118" instead of
+// just a bare name.
+public sealed class WitnessPersonMatch
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? ContactInfo { get; set; }
+    // "exact" = the typed text equals, starts with, or is contained in this person's name (the
+    // common "just continuing to type the right name" case). "similar" = not exact, but flagged
+    // by WitnessNameMatcher.AreSimilar (nickname/prefix or small edit distance) - a non-blocking
+    // "did you mean" hint, never auto-selected.
+    public string MatchType { get; set; } = "similar";
+    public List<string> OtherCaseNumbers { get; set; } = [];
 }
 
 public sealed class ExhibitRecord

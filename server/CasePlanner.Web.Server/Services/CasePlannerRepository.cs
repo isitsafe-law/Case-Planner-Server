@@ -2465,7 +2465,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, name, side, role, contact_info, subpoena_status, outline_notes, notes
+            SELECT id, case_id, name, side, role, contact_info, subpoena_status, outline_notes, notes, person_id
             FROM witnesses
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY side, name
@@ -2484,7 +2484,8 @@ public sealed partial class CasePlannerRepository
                 ContactInfo = reader.IsDBNull(5) ? null : reader.GetString(5),
                 SubpoenaStatus = reader.IsDBNull(6) ? "Not Needed" : reader.GetString(6),
                 OutlineNotes = reader.IsDBNull(7) ? null : reader.GetString(7),
-                Notes = reader.IsDBNull(8) ? null : reader.GetString(8)
+                Notes = reader.IsDBNull(8) ? null : reader.GetString(8),
+                PersonId = reader.IsDBNull(9) ? null : reader.GetInt64(9)
             });
         }
 
@@ -2496,13 +2497,27 @@ public sealed partial class CasePlannerRepository
         return await WithWriteAsync(async (connection, tx) =>
         {
             var now = DateTime.UtcNow.ToString("O");
+            var isNew = model.Id == 0;
+
+            // Multi-user rollout Phase 3: resolve the shared witness_persons identity for a new
+            // witness row. If the client already resolved a person (the user picked a suggestion
+            // from the registry search), use it as-is. Otherwise, only auto-link on an EXACT
+            // normalized-name match to an existing person (the "just kept typing the right name"
+            // case) - never auto-link on a merely "similar" name, that's a suggestion for the user
+            // to accept or decline, not something the server should decide unattended. If neither
+            // applies, create a brand-new witness_persons row.
+            if (isNew)
+            {
+                model.PersonId = await ResolveOrCreateWitnessPersonAsync(connection, tx, model.PersonId, model.Name, model.ContactInfo, now);
+            }
+
             var cmd = connection.CreateCommand();
             cmd.Transaction = tx;
-            if (model.Id == 0)
+            if (isNew)
             {
                 cmd.CommandText = """
-                    INSERT INTO witnesses (case_id, name, side, role, contact_info, subpoena_status, outline_notes, notes, created_at, updated_at)
-                    VALUES (@case_id, @name, @side, @role, @contact_info, @subpoena_status, @outline_notes, @notes, @now, @now);
+                    INSERT INTO witnesses (case_id, name, side, role, contact_info, subpoena_status, outline_notes, notes, person_id, created_at, updated_at)
+                    VALUES (@case_id, @name, @side, @role, @contact_info, @subpoena_status, @outline_notes, @notes, @person_id, @now, @now);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -2511,7 +2526,7 @@ public sealed partial class CasePlannerRepository
                 cmd.CommandText = """
                     UPDATE witnesses
                     SET name=@name, side=@side, role=@role, contact_info=@contact_info, subpoena_status=@subpoena_status,
-                        outline_notes=@outline_notes, notes=@notes, updated_at=@now
+                        outline_notes=@outline_notes, notes=@notes, person_id=COALESCE(@person_id, person_id), updated_at=@now
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -2526,11 +2541,169 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@subpoena_status", model.SubpoenaStatus);
             cmd.Parameters.AddWithValue("@outline_notes", DbValue(model.OutlineNotes));
             cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+            cmd.Parameters.AddWithValue("@person_id", model.PersonId is null ? DBNull.Value : model.PersonId);
             cmd.Parameters.AddWithValue("@now", now);
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+            if (!isNew)
+            {
+                // The update above only ever WIDENS person_id via COALESCE (never clears it), so
+                // re-read the row's actual current value rather than trusting whatever the caller
+                // happened to send (typically null, since editing an existing witness doesn't
+                // resend its link) - otherwise the returned model would misreport an existing
+                // link as gone even though the database still has it.
+                var personLookup = connection.CreateCommand();
+                personLookup.Transaction = tx;
+                personLookup.CommandText = "SELECT person_id FROM witnesses WHERE id = @id";
+                personLookup.Parameters.AddWithValue("@id", model.Id);
+                var personResult = await personLookup.ExecuteScalarAsync();
+                model.PersonId = personResult is null or DBNull ? null : Convert.ToInt64(personResult);
+            }
+
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved witness {model.Name} at {DateTime.Now:G}");
             return model;
         });
+    }
+
+    // Multi-user rollout Phase 3: shared helper for SaveWitnessAsync's link-or-create step.
+    // - explicitPersonId (the client resolved a suggestion): used as-is, no lookup.
+    // - otherwise: exact normalized-name match against existing witness_persons -> link to it.
+    // - otherwise: create a new witness_persons row and link to that.
+    private async Task<long> ResolveOrCreateWitnessPersonAsync(SqliteConnection connection, SqliteTransaction tx, long? explicitPersonId, string name, string? contactInfo, string now)
+    {
+        if (explicitPersonId is > 0)
+        {
+            return explicitPersonId.Value;
+        }
+
+        var normalized = WitnessNameMatcher.Normalize(name);
+        if (normalized.Length > 0)
+        {
+            var findCmd = connection.CreateCommand();
+            findCmd.Transaction = tx;
+            findCmd.CommandText = "SELECT id FROM witness_persons WHERE LOWER(TRIM(name)) = @normalized LIMIT 1";
+            findCmd.Parameters.AddWithValue("@normalized", normalized);
+            var existing = await findCmd.ExecuteScalarAsync();
+            if (existing is not null)
+            {
+                return Convert.ToInt64(existing);
+            }
+        }
+
+        var insertCmd = connection.CreateCommand();
+        insertCmd.Transaction = tx;
+        insertCmd.CommandText = """
+            INSERT INTO witness_persons (name, contact_info, created_at, updated_at)
+            VALUES (@name, @contact, @now, @now);
+            SELECT last_insert_rowid();
+            """;
+        insertCmd.Parameters.AddWithValue("@name", name);
+        insertCmd.Parameters.AddWithValue("@contact", DbValue(contactInfo));
+        insertCmd.Parameters.AddWithValue("@now", now);
+        return Convert.ToInt64(await insertCmd.ExecuteScalarAsync());
+    }
+
+    // Multi-user rollout Phase 3: the witness registry search/autofill endpoint's backing query.
+    // Blank query -> a plain, uncapped-by-similarity listing (ordered by name, capped generously)
+    // for a full/paged list. Non-blank query -> ranked exact matches first (equals/starts-with/
+    // contains - the common "just continuing to type the right name" case), then names flagged
+    // similar by WitnessNameMatcher (nickname/prefix or small edit distance), capped to 10.
+    public async Task<List<WitnessPersonMatch>> SearchWitnessPersonsAsync(string? query)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        var people = new List<(long Id, string Name, string? ContactInfo)>();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id, name, contact_info FROM witness_persons ORDER BY name";
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                people.Add((reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+            }
+        }
+
+        var normalizedQuery = WitnessNameMatcher.Normalize(query);
+        List<(long Id, string Name, string? ContactInfo, string MatchType, int Rank)> ranked;
+        if (normalizedQuery.Length == 0)
+        {
+            ranked = people.Select(p => (p.Id, p.Name, p.ContactInfo, MatchType: "exact", Rank: 0)).ToList();
+        }
+        else
+        {
+            ranked = [];
+            foreach (var person in people)
+            {
+                var normalizedName = WitnessNameMatcher.Normalize(person.Name);
+                if (normalizedName == normalizedQuery)
+                {
+                    ranked.Add((person.Id, person.Name, person.ContactInfo, "exact", 0));
+                }
+                else if (normalizedName.StartsWith(normalizedQuery, StringComparison.Ordinal))
+                {
+                    ranked.Add((person.Id, person.Name, person.ContactInfo, "exact", 1));
+                }
+                else if (normalizedName.Contains(normalizedQuery, StringComparison.Ordinal))
+                {
+                    ranked.Add((person.Id, person.Name, person.ContactInfo, "exact", 2));
+                }
+                else if (WitnessNameMatcher.AreSimilar(normalizedQuery, normalizedName))
+                {
+                    ranked.Add((person.Id, person.Name, person.ContactInfo, "similar", 3));
+                }
+            }
+        }
+
+        var capped = ranked.OrderBy(r => r.Rank).ThenBy(r => r.Name).Take(normalizedQuery.Length == 0 ? 200 : 10).ToList();
+        if (capped.Count == 0)
+        {
+            return [];
+        }
+
+        // Cheap join for "which other case(s) is this person already a witness in" - one query
+        // for all matched people rather than N+1.
+        var caseNamesByPerson = new Dictionary<long, List<string>>();
+        var personIdList = string.Join(",", capped.Select(c => c.Id));
+        var caseCmd = connection.CreateCommand();
+        caseCmd.CommandText = $"""
+            SELECT w.person_id, c.case_number
+            FROM witnesses w
+            JOIN cases c ON c.id = w.case_id
+            WHERE w.person_id IN ({personIdList})
+            """;
+        await using (var caseReader = await caseCmd.ExecuteReaderAsync())
+        {
+            while (await caseReader.ReadAsync())
+            {
+                var personId = caseReader.GetInt64(0);
+                var caseNumber = caseReader.IsDBNull(1) ? null : caseReader.GetString(1);
+                if (string.IsNullOrWhiteSpace(caseNumber))
+                {
+                    continue;
+                }
+
+                if (!caseNamesByPerson.TryGetValue(personId, out var caseList))
+                {
+                    caseList = [];
+                    caseNamesByPerson[personId] = caseList;
+                }
+
+                if (!caseList.Contains(caseNumber))
+                {
+                    caseList.Add(caseNumber);
+                }
+            }
+        }
+
+        return capped.Select(r => new WitnessPersonMatch
+        {
+            Id = r.Id,
+            Name = r.Name,
+            ContactInfo = r.ContactInfo,
+            MatchType = r.MatchType,
+            OtherCaseNumbers = caseNamesByPerson.TryGetValue(r.Id, out var cases) ? cases : []
+        }).ToList();
     }
 
     public async Task DeleteWitnessAsync(long id)
@@ -4618,6 +4791,10 @@ public sealed partial class CasePlannerRepository
         // Item 2 (multi-user rollout Phase 2): opaque passthrough on SQLite (no app_users table
         // here to validate against) - only meaningfully populated/selectable once Entra is enabled.
         await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_user_id", "TEXT");
+        // Multi-user rollout Phase 3 (shared witness registry): links a per-case witness row to
+        // the new global witness_persons identity. Nullable so pre-existing rows (and the
+        // one-time migration that backfills them) can be told apart from never-linked ones.
+        await AddColumnIfMissingAsync(connection, "witnesses", "person_id", "INTEGER");
         await AddColumnIfMissingAsync(connection, "cases", "assigned_attorney", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "appraiser", "TEXT");
@@ -7064,6 +7241,13 @@ public sealed partial class CasePlannerRepository
             subpoena_status TEXT,
             outline_notes TEXT,
             notes TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS witness_persons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            contact_info TEXT,
             created_at TEXT,
             updated_at TEXT
         );

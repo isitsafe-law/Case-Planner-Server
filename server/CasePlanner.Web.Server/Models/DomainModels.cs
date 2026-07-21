@@ -282,6 +282,32 @@ public sealed class NotificationFeed
     public int UnreadCount { get; set; }
 }
 
+// Multi-user rollout Phase 4c (per-user notification preferences). UserId follows
+// NotificationRecord.RecipientUserId's opaque passthrough convention above. All six booleans default
+// true (enabled) so a user with no saved row - the common case, since a row is only ever written once
+// someone changes something - reads back as "everything on" rather than "everything off".
+public sealed class NotificationPreferencesRecord
+{
+    public string UserId { get; set; } = "";
+    public bool TaskAssignedInApp { get; set; } = true;
+    public bool TaskAssignedEmail { get; set; } = true;
+    public bool TaskCompletedInApp { get; set; } = true;
+    public bool TaskCompletedEmail { get; set; } = true;
+    public bool DeadlineReminderInApp { get; set; } = true;
+    public bool DeadlineReminderEmail { get; set; } = true;
+}
+
+// The PUT /api/notification-preferences request body - deliberately has no UserId field, since the
+// preferences being saved are always the current actor's own (resolved server-side from
+// IApplicationActorContext), never an arbitrary target user.
+public sealed record NotificationPreferencesUpdateRequest(
+    bool TaskAssignedInApp,
+    bool TaskAssignedEmail,
+    bool TaskCompletedInApp,
+    bool TaskCompletedEmail,
+    bool DeadlineReminderInApp,
+    bool DeadlineReminderEmail);
+
 public sealed class DiscoveryItemRecord
 {
     public long Id { get; set; }

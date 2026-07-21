@@ -41,7 +41,7 @@ type ThemeMode = 'light' | 'dark' | 'system'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'notifications' | 'developer'
 
 type CaseRecord = {
   id: number
@@ -168,6 +168,29 @@ type ChecklistItem = {
 type NotificationFeed = {
   items: NotificationItem[]
   unreadCount: number
+}
+
+// Multi-user rollout Phase 4c (per-user notification preferences). Mirrors the server's
+// NotificationPreferencesRecord shape one-for-one (System.Text.Json's default camelCase policy is
+// what maps TaskAssignedInApp -> taskAssignedInApp here, same as every other API type in this file).
+// All six default true so a freshly-loaded panel (no actor, or an actor with no saved row) reads as
+// "everything on" without a special-case branch.
+type NotificationPreferences = {
+  taskAssignedInApp: boolean
+  taskAssignedEmail: boolean
+  taskCompletedInApp: boolean
+  taskCompletedEmail: boolean
+  deadlineReminderInApp: boolean
+  deadlineReminderEmail: boolean
+}
+
+const defaultNotificationPreferences: NotificationPreferences = {
+  taskAssignedInApp: true,
+  taskAssignedEmail: true,
+  taskCompletedInApp: true,
+  taskCompletedEmail: true,
+  deadlineReminderInApp: true,
+  deadlineReminderEmail: true,
 }
 
 // Multi-user rollout Phase 2, item 1: case.opposingCounsel (a single free-text string with no
@@ -1004,6 +1027,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
   { key: 'staff', label: 'Attorneys & Staff' },
+  { key: 'notifications', label: 'Notifications' },
   { key: 'about', label: 'About / IT Notes' },
   // Dev-only - strip this section (and the Developer settings category below) before a real release.
   { key: 'developer', label: 'Developer' },
@@ -1015,7 +1039,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Tasks and Deadlines', sections: ['checklistTemplates', 'deadlineTemplates'] },
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
-  { label: 'Staff', sections: ['staff'] },
+  { label: 'Staff', sections: ['staff', 'notifications'] },
   { label: 'Diagnostics and Help', sections: ['diagnostics', 'about'] },
   // Dev-only category - strip before a real release.
   { label: 'Developer', sections: ['developer'] },
@@ -1680,8 +1704,14 @@ function App() {
   const [notificationItems, setNotificationItems] = useState<NotificationItem[]>([])
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(defaultNotificationPreferences)
+  const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmOptions | null>(null)
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null)
+  // "Email me" master checkbox (Notifications settings panel) - client-only convenience, not a
+  // separate stored field. Native checkboxes don't expose an `indeterminate` prop, only a DOM
+  // property, hence the ref + effect below rather than plain JSX state.
+  const emailMasterCheckboxRef = useRef<HTMLInputElement | null>(null)
 
   // ConfirmAction (design-system/MASTER.md \8.9) - promise-based drop-in replacement for the
   // native browser confirm(). Callers `await confirmAction({...})` and get true/false exactly
@@ -2486,6 +2516,23 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Loaded on-open rather than on-app-load, unlike the bell's own poll above - this is a settings
+  // panel, not something that needs to stay fresh in the background.
+  useEffect(() => {
+    if (settingsSection === 'notifications') void loadNotificationPreferences()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsSection])
+
+  // "Email me" master checkbox derives its checked/indeterminate state from whether the three email
+  // columns currently agree - simple majority-free derivation, not a stored field of its own.
+  useEffect(() => {
+    if (!emailMasterCheckboxRef.current) return
+    const { taskAssignedEmail, taskCompletedEmail, deadlineReminderEmail } = notificationPreferences
+    const allOn = taskAssignedEmail && taskCompletedEmail && deadlineReminderEmail
+    const allOff = !taskAssignedEmail && !taskCompletedEmail && !deadlineReminderEmail
+    emailMasterCheckboxRef.current.indeterminate = !allOn && !allOff
+  }, [notificationPreferences])
+
   async function markNotificationRead(item: NotificationItem) {
     setNotificationItems((current) => current.map((n) => (n.id === item.id ? { ...n, isRead: true } : n)))
     setNotificationUnreadCount((current) => (item.isRead ? current : Math.max(0, current - 1)))
@@ -2511,6 +2558,31 @@ function App() {
       await api('/api/notifications/read-all', { method: 'POST' })
     } catch {
       // best-effort only
+    }
+  }
+
+  // Multi-user rollout Phase 4c (per-user notification preferences). Loaded when the Settings
+  // section is opened (see the useEffect keyed on settingsSection below), not eagerly on app load -
+  // unlike the bell's own poll, this is a settings screen nobody looks at most sessions. Errors are
+  // swallowed the same way loadNotifications does above: a failed load just leaves the defaults
+  // showing rather than surfacing an error banner for a settings panel nobody's looking at yet.
+  async function loadNotificationPreferences() {
+    try {
+      const preferences = await api<NotificationPreferences>('/api/notification-preferences')
+      setNotificationPreferences(preferences)
+    } catch {
+      // best-effort only - defaults already showing
+    }
+  }
+
+  async function saveNotificationPreferences() {
+    setNotificationPreferencesSaving(true)
+    try {
+      await api('/api/notification-preferences', { method: 'PUT', body: JSON.stringify(notificationPreferences) })
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save notification preferences.')
+    } finally {
+      setNotificationPreferencesSaving(false)
     }
   }
 
@@ -9287,6 +9359,53 @@ function App() {
                     {staffRoster.length === 0 && <tr><td colSpan={4} className="helper-text">Click "Load Staff" to see everyone on the roster.</td></tr>}
                   </tbody>
                 </table>
+              </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'notifications' && (
+            <Panel title="Notifications">
+              <p className="helper-text">Choose which notifications you receive, and how. Everything is on by default.</p>
+              <label className="toggle-inline top-gap-small">
+                <span>Email me</span>
+                <input
+                  ref={emailMasterCheckboxRef}
+                  type="checkbox"
+                  checked={notificationPreferences.taskAssignedEmail && notificationPreferences.taskCompletedEmail && notificationPreferences.deadlineReminderEmail}
+                  onChange={(event) => setNotificationPreferences((current) => ({
+                    ...current,
+                    taskAssignedEmail: event.target.checked,
+                    taskCompletedEmail: event.target.checked,
+                    deadlineReminderEmail: event.target.checked,
+                  }))}
+                />
+              </label>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>Notification</th><th>In-app</th><th>Email</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>Task assigned to me</td>
+                      <td><input type="checkbox" checked={notificationPreferences.taskAssignedInApp} onChange={(event) => setNotificationPreferences((current) => ({ ...current, taskAssignedInApp: event.target.checked }))} /></td>
+                      <td><input type="checkbox" checked={notificationPreferences.taskAssignedEmail} onChange={(event) => setNotificationPreferences((current) => ({ ...current, taskAssignedEmail: event.target.checked }))} /></td>
+                    </tr>
+                    <tr>
+                      <td>Task completed</td>
+                      <td><input type="checkbox" checked={notificationPreferences.taskCompletedInApp} onChange={(event) => setNotificationPreferences((current) => ({ ...current, taskCompletedInApp: event.target.checked }))} /></td>
+                      <td><input type="checkbox" checked={notificationPreferences.taskCompletedEmail} onChange={(event) => setNotificationPreferences((current) => ({ ...current, taskCompletedEmail: event.target.checked }))} /></td>
+                    </tr>
+                    <tr>
+                      <td>Deadline reminder</td>
+                      <td><input type="checkbox" checked={notificationPreferences.deadlineReminderInApp} onChange={(event) => setNotificationPreferences((current) => ({ ...current, deadlineReminderInApp: event.target.checked }))} /></td>
+                      <td><input type="checkbox" checked={notificationPreferences.deadlineReminderEmail} onChange={(event) => setNotificationPreferences((current) => ({ ...current, deadlineReminderEmail: event.target.checked }))} /></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="button-row compact-actions top-gap-small">
+                <button className="primary" disabled={notificationPreferencesSaving} onClick={() => void saveNotificationPreferences()}>
+                  {notificationPreferencesSaving ? 'Saving…' : 'Save'}
+                </button>
               </div>
             </Panel>
           )}

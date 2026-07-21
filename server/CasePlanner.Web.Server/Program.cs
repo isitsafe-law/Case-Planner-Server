@@ -143,6 +143,14 @@ builder.Services.AddSingleton<INotificationStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerNotificationStore>()
         : services.GetRequiredService<SqliteNotificationStore>());
+// Multi-user rollout Phase 4c (per-user notification preferences): same provider-switch pattern as
+// every other IXStore above.
+builder.Services.AddSingleton<SqliteNotificationPreferencesStore>();
+builder.Services.AddSingleton<SqlServerNotificationPreferencesStore>();
+builder.Services.AddSingleton<INotificationPreferencesStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerNotificationPreferencesStore>()
+        : services.GetRequiredService<SqliteNotificationPreferencesStore>());
 // Deadline-reminder scanning needs case_assignments (SQL-Server-only, see DeadlineReminderScanner's
 // header comment) and is pointless work when the feature is switched off, so it's only registered
 // when both conditions hold - same "only register what's needed" spirit as the provider switch above.
@@ -732,6 +740,30 @@ app.MapPost("/api/notifications/read-all", async (INotificationStore notificatio
 {
     var recipientUserId = actor.UserId?.ToString();
     if (recipientUserId is not null) await notifications.MarkAllReadAsync(recipientUserId, token);
+    return Results.NoContent();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Multi-user rollout Phase 4c (per-user notification preferences): same "self-scoped by actor, not
+// by case, empty/default-graceful when there's no resolvable actor" convention as the /api/notifications
+// routes right above.
+app.MapGet("/api/notification-preferences", async (INotificationPreferencesStore preferences, IApplicationActorContext actor, CancellationToken token) =>
+{
+    var userId = actor.UserId?.ToString();
+    return Results.Ok(userId is null ? new NotificationPreferencesRecord() : await preferences.GetAsync(userId, token));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPut("/api/notification-preferences", async (NotificationPreferencesUpdateRequest model, INotificationPreferencesStore preferences, IApplicationActorContext actor, CancellationToken token) =>
+{
+    var userId = actor.UserId?.ToString();
+    if (userId is null) return Results.NoContent();
+    await preferences.UpsertAsync(new NotificationPreferencesRecord
+    {
+        UserId = userId,
+        TaskAssignedInApp = model.TaskAssignedInApp,
+        TaskAssignedEmail = model.TaskAssignedEmail,
+        TaskCompletedInApp = model.TaskCompletedInApp,
+        TaskCompletedEmail = model.TaskCompletedEmail,
+        DeadlineReminderInApp = model.DeadlineReminderInApp,
+        DeadlineReminderEmail = model.DeadlineReminderEmail,
+    }, token);
     return Results.NoContent();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapDelete("/api/deadlines/{id:long}", async (long id,IDeadlineStore deadlines,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>

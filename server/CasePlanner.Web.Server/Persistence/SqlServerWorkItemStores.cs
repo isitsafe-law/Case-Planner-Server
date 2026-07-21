@@ -214,7 +214,7 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
     }
 }
 
-public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor, SqlServerNotificationStore notifications, SqlServerCaseAssignmentRepository assignments)
+public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor, SqlServerNotificationStore notifications, SqlServerCaseAssignmentRepository assignments, SqlServerAppUserRepository appUsers)
     : SqlServerWorkItemStoreBase(connections, accessor), IChecklistStore
 {
     public string Provider => "SqlServer";
@@ -261,7 +261,14 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
         }
         if(isNowDone && !wasAlreadyDone)
         {
-            var recipients=await assignments.GetCaseRoleUserIdsAsync(model.CaseId,"Attorney",token);
+            // Part A (admin system-wide inclusion): every current administrator is unioned in
+            // alongside the case's assigned attorneys, deduped, regardless of whether that admin is
+            // personally assigned to this case - matching admins' existing full-visibility role
+            // elsewhere in this app (see-all-cases, delete-any-case).
+            var recipients=(await assignments.GetCaseRoleUserIdsAsync(model.CaseId,"Attorney",token))
+                .Concat(await appUsers.GetAllAdministratorUserIdsAsync(token))
+                .Distinct()
+                .ToList();
             if(recipients.Count>0)
             {
                 var caseNumber=await GetCaseNumberAsync(connection,model.CaseId,token);
@@ -310,9 +317,19 @@ public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connec
 
         await using var connection = connections.CreateConnection();
         await connection.OpenAsync(token);
+        // Multi-user rollout Phase 4c (per-user notification preferences): each recipient's
+        // preferences are read once here (inside the same transaction as the insert loop) and kept
+        // for the email loop below, which runs after commit - avoiding a second round-trip per
+        // recipient while still letting the in-app and email gates be checked independently, so all
+        // four combinations (in-app+email, in-app-only, email-only, neither) behave correctly.
+        var preferencesByRecipient = new Dictionary<Guid, NotificationPreferencesRecord>();
         await using var transaction = await connection.BeginTransactionAsync(token);
         foreach (var recipient in recipients)
         {
+            var preferences = await SqlServerNotificationPreferencesStore.ReadAsync(connection, transaction, recipient, token);
+            preferencesByRecipient[recipient] = preferences;
+            if (!NotificationPreferenceGate.IsInAppEnabled(preferences, notificationType)) continue;
+
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO dbo.notifications (recipient_user_id,case_id,notification_type,title,body) VALUES (@recipient,@caseId,@type,@title,@body)";
@@ -329,10 +346,13 @@ public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connec
         // committed - app_users.email is the only place a real recipient address can be resolved
         // from (SQLite has no such table at all, hence SqliteNotificationStore sends no email). A
         // failed/slow SMTP relay must never roll back or block the notification that's already saved.
+        // Gated independently by each recipient's email preference - a recipient with in-app off but
+        // email on for this notificationType must still get the email, and vice versa.
         if (notificationsOptions.Enabled)
         {
             foreach (var recipient in recipients)
             {
+                if (!NotificationPreferenceGate.IsEmailEnabled(preferencesByRecipient[recipient], notificationType)) continue;
                 var (email, displayName) = await GetRecipientEmailAsync(connection, recipient, token);
                 if (!string.IsNullOrWhiteSpace(email))
                 {
@@ -413,6 +433,87 @@ public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connec
         command.CommandText = "UPDATE dbo.notifications SET is_read=1,read_at=SYSUTCDATETIME() WHERE recipient_user_id=@recipient AND is_read=0";
         command.Parameters.Add(new SqlParameter("@recipient", recipient));
         await command.ExecuteNonQueryAsync(token);
+    }
+}
+
+// Multi-user rollout Phase 4c (per-user notification preferences). ReadAsync is exposed as an
+// internal static helper (not just an instance method) so SqlServerNotificationStore.CreateAsync can
+// read a recipient's preferences inside its own already-open connection/transaction, rather than
+// opening a second connection per recipient. Cannot be exercised against a live SQL Server in this
+// sandbox - compile/review-only, like the rest of this project's SqlServer*-prefixed code.
+public sealed class SqlServerNotificationPreferencesStore(IDatabaseConnectionFactory connections) : INotificationPreferencesStore
+{
+    public string Provider => "SqlServer";
+
+    public async Task<NotificationPreferencesRecord> GetAsync(string userId, CancellationToken token = default)
+    {
+        if (!Guid.TryParse(userId, out var recipient)) return new NotificationPreferencesRecord { UserId = userId };
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        var preferences = await ReadAsync(connection, null, recipient, token);
+        preferences.UserId = userId;
+        return preferences;
+    }
+
+    public async Task<NotificationPreferencesRecord> UpsertAsync(NotificationPreferencesRecord preferences, CancellationToken token = default)
+    {
+        if (!Guid.TryParse(preferences.UserId, out var recipient))
+            throw new ArgumentException("NotificationPreferencesRecord.UserId must be a valid GUID on SQL Server.");
+
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE dbo.notification_preferences
+            SET task_assigned_in_app=@taia,task_assigned_email=@tae,task_completed_in_app=@tcia,task_completed_email=@tce,
+                deadline_reminder_in_app=@dria,deadline_reminder_email=@dre,updated_at=SYSUTCDATETIME()
+            WHERE user_id=@userId;
+            IF @@ROWCOUNT=0
+                INSERT INTO dbo.notification_preferences
+                    (user_id,task_assigned_in_app,task_assigned_email,task_completed_in_app,task_completed_email,deadline_reminder_in_app,deadline_reminder_email,updated_at)
+                VALUES (@userId,@taia,@tae,@tcia,@tce,@dria,@dre,SYSUTCDATETIME());
+            """;
+        AddParameters(command, recipient, preferences);
+        await command.ExecuteNonQueryAsync(token);
+        await transaction.CommitAsync(token);
+        return preferences;
+    }
+
+    internal static async Task<NotificationPreferencesRecord> ReadAsync(DbConnection connection, DbTransaction? transaction, Guid userId, CancellationToken token)
+    {
+        var result = new NotificationPreferencesRecord { UserId = userId.ToString() };
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT task_assigned_in_app,task_assigned_email,task_completed_in_app,task_completed_email,deadline_reminder_in_app,deadline_reminder_email
+            FROM dbo.notification_preferences WHERE user_id=@userId
+            """;
+        command.Parameters.Add(new SqlParameter("@userId", userId));
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (await reader.ReadAsync(token))
+        {
+            result.TaskAssignedInApp = reader.GetBoolean(0);
+            result.TaskAssignedEmail = reader.GetBoolean(1);
+            result.TaskCompletedInApp = reader.GetBoolean(2);
+            result.TaskCompletedEmail = reader.GetBoolean(3);
+            result.DeadlineReminderInApp = reader.GetBoolean(4);
+            result.DeadlineReminderEmail = reader.GetBoolean(5);
+        }
+
+        return result;
+    }
+
+    private static void AddParameters(DbCommand command, Guid userId, NotificationPreferencesRecord preferences)
+    {
+        command.Parameters.Add(new SqlParameter("@userId", userId));
+        command.Parameters.Add(new SqlParameter("@taia", preferences.TaskAssignedInApp));
+        command.Parameters.Add(new SqlParameter("@tae", preferences.TaskAssignedEmail));
+        command.Parameters.Add(new SqlParameter("@tcia", preferences.TaskCompletedInApp));
+        command.Parameters.Add(new SqlParameter("@tce", preferences.TaskCompletedEmail));
+        command.Parameters.Add(new SqlParameter("@dria", preferences.DeadlineReminderInApp));
+        command.Parameters.Add(new SqlParameter("@dre", preferences.DeadlineReminderEmail));
     }
 }
 

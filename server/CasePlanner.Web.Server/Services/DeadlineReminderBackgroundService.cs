@@ -22,6 +22,7 @@ namespace CasePlanner.Web.Server.Services;
 public sealed class DeadlineReminderBackgroundService(
     IDatabaseConnectionFactory connections,
     SqlServerCaseAssignmentRepository assignments,
+    SqlServerAppUserRepository appUsers,
     SqlServerNotificationStore notifications,
     NotificationsOptions options,
     ILogger<DeadlineReminderBackgroundService> logger) : BackgroundService
@@ -63,9 +64,19 @@ public sealed class DeadlineReminderBackgroundService(
         var alreadyNotified = await LoadAlreadyNotifiedAsync(connection, token);
         var due = DeadlineReminderScanner.GetDueReminders(cases, today, options.ReminderLeadDays, alreadyNotified);
 
+        // Part A (admin system-wide inclusion): every current administrator is unioned in alongside
+        // the case's assigned staff, deduped, regardless of whether that admin is personally
+        // assigned to this case - matching admins' existing full-visibility role elsewhere in this
+        // app (see-all-cases, delete-any-case). Resolved once per scan rather than once per reminder,
+        // since the admin roster doesn't vary case-by-case.
+        var administratorIds = await appUsers.GetAllAdministratorUserIdsAsync(token);
+
         foreach (var reminder in due)
         {
-            var recipients = await assignments.GetAllAssignedUserIdsAsync(reminder.CaseId, token);
+            var recipients = (await assignments.GetAllAssignedUserIdsAsync(reminder.CaseId, token))
+                .Concat(administratorIds)
+                .Distinct()
+                .ToList();
             if (recipients.Count == 0)
             {
                 continue;

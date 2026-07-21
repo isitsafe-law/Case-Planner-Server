@@ -39,6 +39,17 @@ public interface INotificationStore
     Task MarkAllReadAsync(string recipientUserId, CancellationToken token = default);
 }
 
+// Multi-user rollout Phase 4c (per-user notification preferences). Separate from INotificationStore
+// above - preferences are a distinct concern (per-user settings) from notification creation/reading,
+// and this is fully dual-provider testable (no case_assignments dependency), unlike some of the rest
+// of this rollout's SQL-Server-only pieces.
+public interface INotificationPreferencesStore
+{
+    string Provider { get; }
+    Task<NotificationPreferencesRecord> GetAsync(string userId, CancellationToken token = default);
+    Task<NotificationPreferencesRecord> UpsertAsync(NotificationPreferencesRecord preferences, CancellationToken token = default);
+}
+
 public sealed class SqliteDeadlineStore(CasePlannerRepository repository) : IDeadlineStore
 {
     public string Provider => "Sqlite";
@@ -78,4 +89,13 @@ public sealed class SqliteNotificationStore(CasePlannerRepository repository) : 
         repository.MarkNotificationReadAsync(id, recipientUserId);
     public Task MarkAllReadAsync(string recipientUserId, CancellationToken token = default) =>
         repository.MarkAllNotificationsReadAsync(recipientUserId);
+}
+
+public sealed class SqliteNotificationPreferencesStore(CasePlannerRepository repository) : INotificationPreferencesStore
+{
+    public string Provider => "Sqlite";
+    public Task<NotificationPreferencesRecord> GetAsync(string userId, CancellationToken token = default) =>
+        repository.GetNotificationPreferencesAsync(userId);
+    public Task<NotificationPreferencesRecord> UpsertAsync(NotificationPreferencesRecord preferences, CancellationToken token = default) =>
+        repository.UpsertNotificationPreferencesAsync(preferences);
 }

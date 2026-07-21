@@ -1636,12 +1636,23 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    // Multi-user rollout Phase 4c (per-user notification preferences): the gating check happens here,
+    // at the same shared, recipient-agnostic layer as the insert itself, so it applies uniformly
+    // regardless of how the recipient was resolved (direct assignment, case staff, or - on SQL Server
+    // only - admin-injected). A recipient with their in-app flag off for this notificationType gets
+    // no row created at all; this is silent, correct behavior, not a bug.
     private static async Task InsertNotificationsAsync(SqliteConnection connection, SqliteTransaction tx, IEnumerable<string> recipientUserIds, string notificationType, long? caseId, string title, string body)
     {
         var now = DateTime.UtcNow.ToString("O");
         foreach (var recipientUserId in recipientUserIds)
         {
             if (string.IsNullOrWhiteSpace(recipientUserId))
+            {
+                continue;
+            }
+
+            var preferences = await ReadNotificationPreferencesAsync(connection, tx, recipientUserId);
+            if (!NotificationPreferenceGate.IsInAppEnabled(preferences, notificationType))
             {
                 continue;
             }
@@ -1660,6 +1671,81 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@created_at", now);
             await cmd.ExecuteNonQueryAsync();
         }
+    }
+
+    // Public entry point used by the /api/notification-preferences GET endpoint (via
+    // SqliteNotificationPreferencesStore) - opens its own connection since it runs outside of any
+    // write transaction. Returns all-defaults-true when the user has no saved row.
+    public async Task<NotificationPreferencesRecord> GetNotificationPreferencesAsync(string userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return new NotificationPreferencesRecord { UserId = userId };
+        }
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        return await ReadNotificationPreferencesAsync(connection, null, userId);
+    }
+
+    // Full replace of all six booleans in one call - matches the phase's "upsert preferences for a
+    // user id (full replace)" contract rather than a partial-field merge.
+    public async Task<NotificationPreferencesRecord> UpsertNotificationPreferencesAsync(NotificationPreferencesRecord preferences)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO notification_preferences
+                    (user_id, task_assigned_in_app, task_assigned_email, task_completed_in_app, task_completed_email, deadline_reminder_in_app, deadline_reminder_email, updated_at)
+                VALUES
+                    (@user_id, @task_assigned_in_app, @task_assigned_email, @task_completed_in_app, @task_completed_email, @deadline_reminder_in_app, @deadline_reminder_email, @updated_at)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    task_assigned_in_app=excluded.task_assigned_in_app,
+                    task_assigned_email=excluded.task_assigned_email,
+                    task_completed_in_app=excluded.task_completed_in_app,
+                    task_completed_email=excluded.task_completed_email,
+                    deadline_reminder_in_app=excluded.deadline_reminder_in_app,
+                    deadline_reminder_email=excluded.deadline_reminder_email,
+                    updated_at=excluded.updated_at
+                """;
+            cmd.Parameters.AddWithValue("@user_id", preferences.UserId);
+            cmd.Parameters.AddWithValue("@task_assigned_in_app", preferences.TaskAssignedInApp ? 1 : 0);
+            cmd.Parameters.AddWithValue("@task_assigned_email", preferences.TaskAssignedEmail ? 1 : 0);
+            cmd.Parameters.AddWithValue("@task_completed_in_app", preferences.TaskCompletedInApp ? 1 : 0);
+            cmd.Parameters.AddWithValue("@task_completed_email", preferences.TaskCompletedEmail ? 1 : 0);
+            cmd.Parameters.AddWithValue("@deadline_reminder_in_app", preferences.DeadlineReminderInApp ? 1 : 0);
+            cmd.Parameters.AddWithValue("@deadline_reminder_email", preferences.DeadlineReminderEmail ? 1 : 0);
+            cmd.Parameters.AddWithValue("@updated_at", now);
+            await cmd.ExecuteNonQueryAsync();
+            return preferences;
+        });
+    }
+
+    private static async Task<NotificationPreferencesRecord> ReadNotificationPreferencesAsync(SqliteConnection connection, SqliteTransaction? tx, string userId)
+    {
+        var result = new NotificationPreferencesRecord { UserId = userId };
+        var cmd = connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            SELECT task_assigned_in_app, task_assigned_email, task_completed_in_app, task_completed_email, deadline_reminder_in_app, deadline_reminder_email
+            FROM notification_preferences WHERE user_id=@user_id
+            """;
+        cmd.Parameters.AddWithValue("@user_id", userId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            result.TaskAssignedInApp = reader.GetInt64(0) == 1;
+            result.TaskAssignedEmail = reader.GetInt64(1) == 1;
+            result.TaskCompletedInApp = reader.GetInt64(2) == 1;
+            result.TaskCompletedEmail = reader.GetInt64(3) == 1;
+            result.DeadlineReminderInApp = reader.GetInt64(4) == 1;
+            result.DeadlineReminderEmail = reader.GetInt64(5) == 1;
+        }
+
+        return result;
     }
 
     public async Task<NotificationFeed> GetNotificationsForRecipientAsync(string recipientUserId, int limit = 50)
@@ -7523,6 +7609,16 @@ public sealed partial class CasePlannerRepository
             is_read INTEGER NOT NULL DEFAULT 0,
             created_at TEXT,
             read_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+            user_id TEXT PRIMARY KEY,
+            task_assigned_in_app INTEGER NOT NULL DEFAULT 1,
+            task_assigned_email INTEGER NOT NULL DEFAULT 1,
+            task_completed_in_app INTEGER NOT NULL DEFAULT 1,
+            task_completed_email INTEGER NOT NULL DEFAULT 1,
+            deadline_reminder_in_app INTEGER NOT NULL DEFAULT 1,
+            deadline_reminder_email INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT
         );
         CREATE TABLE IF NOT EXISTS exhibits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

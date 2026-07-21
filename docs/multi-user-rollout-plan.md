@@ -1,6 +1,24 @@
 # Multi-User Rollout & Reporting — Findings and Phased Plan
 
-Date: 2026-07-20 · Status: **investigation only — nothing built, this is for review**
+Started: 2026-07-20 · Completed: 2026-07-21 · Status: **all phases built, verified, committed, and pushed to `main`**
+
+## Status summary (2026-07-21)
+
+Everything scoped below shipped. The sections after this one are the original investigation/plan and are kept for historical context — a few things were decided or discovered differently once actual building started; those are called out inline where it matters, and summarized here:
+
+| Phase | What shipped | Notable deviations from the original plan |
+|---|---|---|
+| **1** — Roster/assignment/visibility | `case_role`/`assignment_role` on `case_assignments`, admin-gated case deletion (client+server), "My Cases/All Cases" toggle | Matches plan; confirmed SQL-Server-only functional, dormant until Entra is live |
+| **2** — Opposing attorneys, task assignment | `case_opposing_attorneys` child table (full dual-provider); `checklist_items.assigned_user_id` (SQL-Server-only functional) | Matches plan |
+| **3a/3b** — Witness registry | `witness_persons` + fuzzy name matching (`WitnessNameMatcher`) + cross-case lookup with live-pulled trial/deposition dates | No backfill migration, per explicit instruction — registry starts empty and grows from new adds only |
+| **4a/4b/4c** — Notifications | In-app bell + email (SMTP, disabled by default), triggers for task-assigned/task-completed/deadline-reminder, per-user in-app/email preferences, admins as system-wide recipients | Required a new durable `app_users.is_administrator` flag — "admin" was previously a pure per-request claims check with no row a `BackgroundService` could query |
+| **5 (data capture)** | `FinalJudgmentAmount`, `DispositionType`, `TakingType`, `District` fields; a proper Close Case dialog | **District auto-fills from County** via a verified real ARDOT county→district mapping (all 75 counties), not the plan's "new field, not derivable" — still independently overridable |
+| **5 (Staff Directory)** | New dual-provider `attorneys`/`legal_assistants`/tie tables, seeded with the office's real roster; `AssignedAttorney` converted from free text to this directory | **Not in the original plan at all.** Built because "by attorney" reporting needed a stable identity that works without waiting on the dormant Entra roster — deliberately separate from `app_users` |
+| **5 (Manager tier)** | `app_users.is_manager`, admin-grantable, lets Managers edit the Staff Directory alongside Admins | Also not in the original plan — added when the office asked for a middle permission tier distinct from Administrator |
+| **5 (tracking fix)** | Every path that changes `CurrentHolder`/`PipelineStage` now logs to `pipeline_handoffs`, not just the Handoff dialog | Discovered as a data-completeness gap while scoping Report C; historical gaps before the fix are unrecoverable |
+| **5 (Reports A/B/C)** | Caseload & Workload, Just-Compensation/Outcome (with required per-attorney context), Cycle-Time — all as new Reports-tab sub-views | Reports A/B are 100% client-side per the original plan; **Report C needed one new endpoint** (`GET /api/work-queues/pipeline-handoffs`, nullable-`caseId` bulk fetch) since cross-case handoff history didn't exist client-side anywhere |
+
+The original investigation below predates all of this and is left as-is for history; treat the table above as the authoritative current state.
 
 ## Decisions confirmed (2026-07-20)
 
@@ -104,4 +122,4 @@ Two independent tracks:
 4. **Notification delivery** — in-app only (a notification bell/center inside the app, seen next time someone opens it), email (needs IT to provide an SMTP relay or Graph API access), or both? This is a real infrastructure dependency, not just a UI choice.
 5. **Region/district for reporting** — is this `County` (already captured on every case) or a different geographic grouping (a legislative/ARDOT district that doesn't map 1:1 to county)? If it's just County, item B's region reporting is nearly free; if it's a different grouping, that's a new field to capture.
 
-Nothing above has been built. Once these are settled I'll turn this into concrete build batches, the same way the near-term fixes and the earlier UI redesign were done — sequential, verified, and committed one piece at a time.
+*(Historical note: at the time this was written, nothing above had been built yet. See the Status summary at the top of this document for what actually shipped and how a few of these answers evolved once building started — most notably District ended up auto-derived from County after all (Q5), and reporting's "by attorney" grouping ended up powered by a new dual-provider Staff Directory rather than waiting on the dormant Entra roster.)*

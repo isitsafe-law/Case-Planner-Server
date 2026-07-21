@@ -27,6 +27,19 @@ public sealed class CaseRecord
     public string? NextAction { get; set; }
     public string? NextActionDue { get; set; }
     public decimal? DepositAmount { get; set; }
+    // Phase 5 (reporting) data-capture, zero auth/identity dependency - full dual-provider parity.
+    // All three stay nullable at the DB/API level even though the Close Case client dialog treats
+    // DispositionType/FinalJudgmentAmount as required at close-time - that's a client-side UX rule,
+    // not a DB constraint, so existing rows and imports that predate these fields keep working.
+    public decimal? FinalJudgmentAmount { get; set; }
+    // "Jury Trial" | "Settlement" | "Mediation" - captured when a case closes.
+    public string? DispositionType { get; set; }
+    // "Partial" | "Full" | "TCE" - captured at case setup, independent of closing.
+    public string? TakingType { get; set; }
+    // "District 1".."District 10" (ARDOT administrative district) - fixed-dropdown like County,
+    // auto-filled from County via the client's countyDistricts lookup but independently editable/
+    // overridable (multiple counties share a district, so it isn't derived server-side).
+    public string? District { get; set; }
     public string? Owner { get; set; }
     public string? Landowner { get; set; }
     public string? ValuationNotes { get; set; }

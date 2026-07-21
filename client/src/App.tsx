@@ -29,6 +29,7 @@ import { MetricTile } from './ui/MetricTile'
 import { Drawer } from './ui/Drawer'
 import { CommandPalette, ShortcutHelpDialog, type CommandGroup } from './ui/CommandPalette'
 import { ConfirmDialog, type ConfirmOptions } from './ui/ConfirmDialog'
+import { CloseCaseDialog, type CloseCaseDetails } from './ui/CloseCaseDialog'
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 
@@ -109,6 +110,10 @@ type CaseRecord = {
   shortPostureSummary?: string | null
   trialTrack?: boolean
   nextAction?: string | null
+  finalJudgmentAmount?: number | null
+  dispositionType?: string | null
+  takingType?: string | null
+  district?: string | null
 }
 
 type DeadlineHistoryEntry = {
@@ -945,6 +950,7 @@ const reportColumnOptions = [
   { key: 'caseName', label: 'Case name' },
   { key: 'caseNumber', label: 'Case number' },
   { key: 'county', label: 'County' },
+  { key: 'district', label: 'District' },
   { key: 'jobNumber', label: 'Job number' },
   { key: 'tract', label: 'Tract' },
   { key: 'projectName', label: 'Project' },
@@ -953,6 +959,9 @@ const reportColumnOptions = [
   { key: 'nextAction', label: 'Next action' },
   { key: 'nextReviewDate', label: 'Next review' },
   { key: 'trialDate', label: 'Jury Trial' },
+  { key: 'takingType', label: 'Taking type' },
+  { key: 'dispositionType', label: 'Disposition type' },
+  { key: 'finalJudgmentAmount', label: 'Final judgment/settlement amount' },
   { key: 'dateOpened', label: 'Date opened' },
   { key: 'closedDate', label: 'Date closed' },
   { key: 'caseAgeDays', label: 'Age / duration (days)' },
@@ -961,7 +970,7 @@ type ReportColumnKey = typeof reportColumnOptions[number]['key']
 
 // Columns that hold numbers/dates/case numbers get the mono data face + tabular figures in the
 // Preview table; free-text columns (name, status, holder, next action...) stay in the UI font.
-const reportDataColumnKeys = new Set<ReportColumnKey>(['caseNumber', 'jobNumber', 'tract', 'nextReviewDate', 'trialDate', 'dateOpened', 'closedDate', 'caseAgeDays'])
+const reportDataColumnKeys = new Set<ReportColumnKey>(['caseNumber', 'jobNumber', 'tract', 'nextReviewDate', 'trialDate', 'dateOpened', 'closedDate', 'caseAgeDays', 'finalJudgmentAmount'])
 
 const reportAgeBandDefs = [
   { key: 'under90', label: '< 90 days' },
@@ -1093,6 +1102,41 @@ const arkansasCounties = [
   'Polk', 'Pope', 'Prairie', 'Pulaski', 'Randolph', 'Saline', 'Scott', 'Searcy', 'Sebastian', 'Sevier', 'Sharp', 'St. Francis',
   'Stone', 'Union', 'Van Buren', 'Washington', 'White', 'Woodruff', 'Yell',
 ]
+
+// ARDOT's 10 administrative districts - fixed dropdown like County, independent of it (multiple
+// counties fall in one district), but auto-filled from County via countyDistricts below so most
+// cases never need a manual pick. The user can always override afterward; auto-fill only kicks in
+// while District is still blank (see the County <select> onChange in the case editor), so it never
+// clobbers a deliberate manual override on a later County edit.
+const arkansasDistricts = [
+  'District 1', 'District 2', 'District 3', 'District 4', 'District 5',
+  'District 6', 'District 7', 'District 8', 'District 9', 'District 10',
+]
+
+// Verified ARDOT county-to-district mapping - all 75 Arkansas counties accounted for exactly once.
+const countyDistricts: Record<string, string> = {
+  Crittenden: 'District 1', Cross: 'District 1', Lee: 'District 1', Monroe: 'District 1', Phillips: 'District 1', 'St. Francis': 'District 1', Woodruff: 'District 1',
+  Arkansas: 'District 2', Ashley: 'District 2', Chicot: 'District 2', Desha: 'District 2', Drew: 'District 2', Grant: 'District 2', Jefferson: 'District 2', Lincoln: 'District 2',
+  Hempstead: 'District 3', Howard: 'District 3', Lafayette: 'District 3', 'Little River': 'District 3', Miller: 'District 3', Nevada: 'District 3', Pike: 'District 3', Sevier: 'District 3',
+  Crawford: 'District 4', Franklin: 'District 4', Polk: 'District 4', Scott: 'District 4', Sebastian: 'District 4', Washington: 'District 4',
+  Cleburne: 'District 5', Fulton: 'District 5', Independence: 'District 5', Izard: 'District 5', Jackson: 'District 5', Sharp: 'District 5', Stone: 'District 5', White: 'District 5',
+  Garland: 'District 6', 'Hot Spring': 'District 6', Lonoke: 'District 6', Prairie: 'District 6', Pulaski: 'District 6', Saline: 'District 6',
+  Bradley: 'District 7', Calhoun: 'District 7', Clark: 'District 7', Cleveland: 'District 7', Columbia: 'District 7', Dallas: 'District 7', Ouachita: 'District 7', Union: 'District 7',
+  Conway: 'District 8', Faulkner: 'District 8', Johnson: 'District 8', Logan: 'District 8', Montgomery: 'District 8', Perry: 'District 8', Pope: 'District 8', 'Van Buren': 'District 8', Yell: 'District 8',
+  Baxter: 'District 9', Benton: 'District 9', Boone: 'District 9', Carroll: 'District 9', Madison: 'District 9', Marion: 'District 9', Newton: 'District 9', Searcy: 'District 9',
+  Clay: 'District 10', Craighead: 'District 10', Greene: 'District 10', Lawrence: 'District 10', Mississippi: 'District 10', Poinsett: 'District 10', Randolph: 'District 10',
+}
+
+// Pure County -> District auto-fill rule (exported for direct unit testing without rendering the
+// whole App component - see App.districtAutofill.test.ts). Auto-fill only kicks in while District
+// is still blank; a District the user already set (by auto-fill or manual pick) is never
+// overwritten by a later County change, so a deliberate override always wins.
+export function districtForCountyChange(currentDistrict: string | null | undefined, newCounty: string): string | null {
+  if (currentDistrict) return currentDistrict
+  return countyDistricts[newCounty] ?? null
+}
+
+const takingTypes = ['Partial', 'Full', 'TCE'] as const
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {})
@@ -1381,6 +1425,11 @@ function countyOptions(value?: string | null): string[] {
   return trimmed && !arkansasCounties.includes(trimmed) ? [trimmed, ...arkansasCounties] : arkansasCounties
 }
 
+function districtOptions(value?: string | null): string[] {
+  const trimmed = value?.trim()
+  return trimmed && !arkansasDistricts.includes(trimmed) ? [trimmed, ...arkansasDistricts] : arkansasDistricts
+}
+
 function normalizeTextValue(value?: string | null): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
@@ -1534,6 +1583,7 @@ function App() {
   const [shutdownBusy, setShutdownBusy] = useState(false)
   const [reportStatusFilter, setReportStatusFilter] = useState('')
   const [reportCountyFilter, setReportCountyFilter] = useState('')
+  const [reportDistrictFilter, setReportDistrictFilter] = useState('')
   const [reportSearch, setReportSearch] = useState('')
   const [reportOpenedFrom, setReportOpenedFrom] = useState('')
   const [reportOpenedTo, setReportOpenedTo] = useState('')
@@ -1728,6 +1778,31 @@ function App() {
     const resolve = confirmResolverRef.current
     confirmResolverRef.current = null
     setConfirmRequest(null)
+    resolve?.(result)
+  }
+
+  // CloseCaseDialog - same promise-based pattern as confirmAction above, but for the small form
+  // (Closed Date / Disposition Type / Final Judgment Amount) changeStatus() collects on the
+  // Active/Triage -> Closed transition. Resolves null on cancel so callers can bail out without
+  // half-applying the status change.
+  const [closeCaseRequest, setCloseCaseRequest] = useState<{
+    initialClosedDate: string
+    initialDispositionType?: string | null
+    initialFinalJudgmentAmount?: number | null
+  } | null>(null)
+  const closeCaseResolverRef = useRef<((value: CloseCaseDetails | null) => void) | null>(null)
+
+  function requestCloseCaseDetails(request: { initialClosedDate: string; initialDispositionType?: string | null; initialFinalJudgmentAmount?: number | null }): Promise<CloseCaseDetails | null> {
+    return new Promise((resolve) => {
+      closeCaseResolverRef.current = resolve
+      setCloseCaseRequest(request)
+    })
+  }
+
+  function resolveCloseCaseDetails(result: CloseCaseDetails | null) {
+    const resolve = closeCaseResolverRef.current
+    closeCaseResolverRef.current = null
+    setCloseCaseRequest(null)
     resolve?.(result)
   }
   const [paletteCaseQuery, setPaletteCaseQuery] = useState('')
@@ -3038,6 +3113,10 @@ function App() {
       discoveryCompleted: normalizeTextValue(draft.discoveryCompleted),
       updatedAppraisal: normalizeTextValue(draft.updatedAppraisal),
       closedDate: normalizeDateValue(draft.closedDate),
+      district: normalizeTextValue(draft.district),
+      takingType: normalizeTextValue(draft.takingType),
+      dispositionType: normalizeTextValue(draft.dispositionType),
+      finalJudgmentAmount: draft.finalJudgmentAmount == null || Number.isNaN(draft.finalJudgmentAmount) ? null : draft.finalJudgmentAmount,
     }
   }
 
@@ -3204,12 +3283,23 @@ function App() {
     try {
       setErrorMessage('')
       let closedDate = record.closedDate
-      if (newStatus === 'Closed' && !closedDate) {
-        closedDate = window.prompt('Date Closed (YYYY-MM-DD). Leave blank to keep it unset.', new Date().toISOString().slice(0, 10))?.trim() || null
-        if (closedDate && !/^\d{4}-\d{2}-\d{2}$/.test(closedDate)) { setErrorMessage('Date Closed must use YYYY-MM-DD.'); return }
+      let dispositionType = record.dispositionType
+      let finalJudgmentAmount = record.finalJudgmentAmount
+      if (newStatus === 'Closed') {
+        const details = await requestCloseCaseDetails({
+          initialClosedDate: closedDate || new Date().toISOString().slice(0, 10),
+          initialDispositionType: dispositionType,
+          initialFinalJudgmentAmount: finalJudgmentAmount,
+        })
+        // Cancelling the dialog must leave the case's status unchanged - bail out before the
+        // status/closedDate/etc. patch below ever reaches the API.
+        if (!details) return
+        closedDate = details.closedDate
+        dispositionType = details.dispositionType
+        finalJudgmentAmount = details.finalJudgmentAmount
       }
       if (newStatus !== 'Closed' && record.closedDate && await confirmAction({ title: 'Clear Date Closed?', message: 'The prior value remains in audit history.', confirmLabel: 'Clear date', cancelLabel: 'Keep date' })) closedDate = null
-      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify({ ...record, status: newStatus, closedDate }) })
+      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify({ ...record, status: newStatus, closedDate, dispositionType, finalJudgmentAmount }) })
       await refreshAll(record.id)
       setMessage(newStatus === 'Closed' ? 'Case marked Closed.' : 'Case reopened.')
     } catch (error) {
@@ -4817,6 +4907,7 @@ function App() {
       if (includeClosed && ['Pipeline', 'Filed / Service Pending', 'Active Litigation', 'Settlement Pending', 'Trial Preparation'].includes(status)) return false
       if (reportStatusFilter && reportStatusFilter !== '__closed' && status !== reportStatusFilter) return false
       if (reportCountyFilter && record.county !== reportCountyFilter) return false
+      if (reportDistrictFilter && record.district !== reportDistrictFilter) return false
       if (reportOpenedFrom && (!record.dateOpened || record.dateOpened < reportOpenedFrom)) return false
       if (reportOpenedTo && (!record.dateOpened || record.dateOpened > reportOpenedTo)) return false
       if (query && ![record.caseName, record.caseNumber, record.jobNumber, record.tract, record.county, record.projectName].join(' ').toLocaleLowerCase().includes(query)) return false
@@ -4828,7 +4919,7 @@ function App() {
       const comparison = left.localeCompare(right, undefined, { numeric: true })
       return reportSortDirection === 'asc' ? comparison : -comparison
     })
-  }, [reportServerRows, reportStatusFilter, reportCountyFilter, reportOpenedFrom, reportOpenedTo, reportSearch, reportSortColumn, reportSortDirection])
+  }, [reportServerRows, reportStatusFilter, reportCountyFilter, reportDistrictFilter, reportOpenedFrom, reportOpenedTo, reportSearch, reportSortColumn, reportSortDirection])
 
   const reportMetrics = useMemo(() => {
     const closed = reportRows.filter((record) => Boolean(record.closedDate))
@@ -7693,14 +7784,33 @@ function App() {
                 <label><span>Tract</span><input value={caseDraft.tract} onChange={(event) => patchCaseDraft({ tract: event.target.value })} placeholder="Tract" /></label>
                 <label>
                   <span>County</span>
-                  <select value={caseDraft.county || ''} onChange={(event) => patchCaseDraft({ county: event.target.value })}>
+                  <select value={caseDraft.county || ''} onChange={(event) => {
+                    const county = event.target.value
+                    patchCaseDraft({ county, district: districtForCountyChange(caseDraft.district, county) })
+                  }}>
                     <option value="">Select county</option>
                     {countyOptions(caseDraft.county).map((county) => (
                       <option key={county} value={county}>{county}</option>
                     ))}
                   </select>
                 </label>
+                <label>
+                  <span>District</span>
+                  <select value={caseDraft.district || ''} onChange={(event) => patchCaseDraft({ district: event.target.value })}>
+                    <option value="">Select district</option>
+                    {districtOptions(caseDraft.district).map((district) => (
+                      <option key={district} value={district}>{district}</option>
+                    ))}
+                  </select>
+                </label>
                 <label><span>Project Name</span><input value={caseDraft.projectName || ''} onChange={(event) => patchCaseDraft({ projectName: event.target.value })} placeholder="e.g. Highway 5 Widening" /></label>
+                <label>
+                  <span>Taking Type</span>
+                  <select value={caseDraft.takingType || ''} onChange={(event) => patchCaseDraft({ takingType: event.target.value })}>
+                    <option value="">Not set</option>
+                    {takingTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
                 <label>
                   <span>Case Status</span>
                   <select value={caseDraft.caseStatus || 'Pipeline'} onChange={(event) => patchCaseDraft({ caseStatus: event.target.value })}>
@@ -8646,6 +8756,15 @@ function App() {
           onCancel={() => resolveConfirm(false)}
         />
       )}
+      {closeCaseRequest && (
+        <CloseCaseDialog
+          initialClosedDate={closeCaseRequest.initialClosedDate}
+          initialDispositionType={closeCaseRequest.initialDispositionType}
+          initialFinalJudgmentAmount={closeCaseRequest.initialFinalJudgmentAmount}
+          onSubmit={(details) => resolveCloseCaseDetails(details)}
+          onCancel={() => resolveCloseCaseDetails(null)}
+        />
+      )}
 
       {page === 'cases' && (casesView === 'list' ? renderCaseListPage() : renderCaseWorkspace())}
 
@@ -8665,6 +8784,7 @@ function App() {
                 <div className="rep-fields">
                   <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>
                   <label><span>County</span><select value={reportCountyFilter} onChange={(event) => setReportCountyFilter(event.target.value)}><option value="">All counties</option>{arkansasCounties.map((county) => <option key={county}>{county}</option>)}</select></label>
+                  <label><span>District</span><select value={reportDistrictFilter} onChange={(event) => setReportDistrictFilter(event.target.value)}><option value="">All districts</option>{arkansasDistricts.map((district) => <option key={district}>{district}</option>)}</select></label>
                   <label><span>Search cases</span><input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Name, number, job, tract..." /></label>
                   <label><span>Date preset</span><select value={reportPreset} onChange={(event) => applyReportPreset(event.target.value)}><option value="">Custom range</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="6m">Last 6 months</option><option value="12m">Last 12 months</option><option value="thisYear">This calendar year</option><option value="previousYear">Previous calendar year</option></select></label>
                   {reportPreset === '' && <>
@@ -8673,7 +8793,7 @@ function App() {
                   </>}
                 </div>
                 <div className="button-row compact-actions top-gap-small">
-                  <Btn size="sm" variant="ghost" onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset filters</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => { setReportStatusFilter(''); setReportCountyFilter(''); setReportDistrictFilter(''); setReportSearch(''); setReportPreset(''); setReportOpenedFrom(''); setReportOpenedTo('') }}>Reset filters</Btn>
                 </div>
                 <p className="helper-text top-gap-small">Date boundaries are inclusive; presets populate the range automatically.</p>
               </CollapsiblePanel>

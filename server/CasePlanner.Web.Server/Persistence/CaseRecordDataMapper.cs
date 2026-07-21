@@ -87,8 +87,15 @@ internal static class CaseRecordDataMapper
             // column list regardless of whether row_version trails them.
             TrialEndDate = reader.FieldCount > 72 ? Date(reader, 72) : null,
             PropertyDescription = reader.FieldCount > 73 ? String(reader, 73) : null,
-            RowVersion = reader.FieldCount > 74 && !reader.IsDBNull(74)
-                ? Convert.ToBase64String((byte[])reader.GetValue(74))
+            // Phase 5 reporting data-capture fields (migration 037) - appended after
+            // property_description, same FieldCount-guard pattern, row_version (SQL Server only)
+            // shifted from ordinal 74 to 78 to make room.
+            FinalJudgmentAmount = reader.FieldCount > 74 ? Decimal(reader, 74) : null,
+            DispositionType = reader.FieldCount > 75 ? String(reader, 75) : null,
+            TakingType = reader.FieldCount > 76 ? String(reader, 76) : null,
+            District = reader.FieldCount > 77 ? String(reader, 77) : null,
+            RowVersion = reader.FieldCount > 78 && !reader.IsDBNull(78)
+                ? Convert.ToBase64String((byte[])reader.GetValue(78))
                 : null
         };
     }

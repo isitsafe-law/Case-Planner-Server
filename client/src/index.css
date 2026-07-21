@@ -1527,6 +1527,30 @@ code {
   margin-top: 0.4rem;
 }
 
+/* CloseCaseDialog - same shell as ConfirmDialog, wider to fit real form fields (date + two
+   required inputs) instead of just a message + two buttons. */
+.ui-close-case-dialog {
+  width: min(440px, calc(100vw - 2rem));
+}
+
+.ui-close-case-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ui-close-case-form label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: var(--text-base, 13px);
+  color: var(--text-muted);
+}
+
+.ui-close-case-form input,
+.ui-close-case-form select {
+  font: inherit;
+  color: var(--text);
+}
+
 /* Sectioned case editor (SectionedForm, design-system/MASTER.md \8.12) - lives inside the drawer body. */
 .drawer-section-nav {
   position: sticky;

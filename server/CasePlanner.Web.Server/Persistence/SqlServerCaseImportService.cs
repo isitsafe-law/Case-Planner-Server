@@ -24,6 +24,8 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                 model.Status=current is null?(status is "Closed" or "Complete"?status:"Triage"):(current.Status=="Triage"?"Triage":status);
                 model.FilingDate=Date(Field(row,map,"Filing Date"));model.DateOfTaking=Date(Field(row,map,"Date of Taking"));model.TrialDate=Date(Field(row,map,"Trial Date"));
                 model.TrialEndDate=Date(Field(row,map,"Trial End Date"));model.PropertyDescription=Blank(Field(row,map,"Property Description"));
+                model.District=Blank(Field(row,map,"District"));model.TakingType=Blank(Field(row,map,"Taking Type"));
+                model.DispositionType=Blank(Field(row,map,"Disposition Type"));model.FinalJudgmentAmount=Money(Field(row,map,"Final Judgment Amount"));
                 model.NextAction=Blank(Field(row,map,"Next Action"));model.NextActionDue=Date(Field(row,map,"Next Action Due"));model.DepositAmount=Money(Field(row,map,"Deposit Amount"));
                 model.Owner=Blank(Field(row,map,"Owner"));model.Landowner=Blank(Field(row,map,"Landowner"));model.PublicationServiceNotes=Blank(Field(row,map,"Notes"));
                 model.ServiceRequired=Bool(Field(row,map,"Service Required"),true);model.ServicePerfected=Bool(Field(row,map,"Service Perfected"));

@@ -1013,7 +1013,8 @@ public sealed partial class CasePlannerRepository
                    (SELECT COUNT(*) FROM checklist_items ci WHERE ci.case_id = cases.id AND ci.status IN ('Done', 'Complete', 'N/A')) AS checklist_done,
                    COALESCE(case_status, 'Pipeline') AS case_status,
                    COALESCE(status_mapping_review, 0) AS status_mapping_review,
-                   date_opened, trial_end_date, property_description
+                   date_opened, trial_end_date, property_description,
+                   final_judgment_amount, disposition_type, taking_type, district
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -4716,6 +4717,10 @@ public sealed partial class CasePlannerRepository
                         TrialDate = NormalizeDate(GetField(row, map, "Trial Date")),
                         TrialEndDate = NormalizeDate(GetField(row, map, "Trial End Date")),
                         PropertyDescription = BlankToNull(GetField(row, map, "Property Description")),
+                        District = BlankToNull(GetField(row, map, "District")),
+                        TakingType = BlankToNull(GetField(row, map, "Taking Type")),
+                        DispositionType = BlankToNull(GetField(row, map, "Disposition Type")),
+                        FinalJudgmentAmount = ParseMoney(GetField(row, map, "Final Judgment Amount")),
                         NextAction = BlankToNull(GetField(row, map, "Next Action")),
                         NextActionDue = NormalizeDate(GetField(row, map, "Next Action Due")),
                         DepositAmount = ParseMoney(GetField(row, map, "Deposit Amount")),
@@ -5224,6 +5229,10 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "status_mapping_review", "INTEGER DEFAULT 0");
         await AddColumnIfMissingAsync(connection, "cases", "trial_end_date", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "property_description", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "final_judgment_amount", "REAL");
+        await AddColumnIfMissingAsync(connection, "cases", "disposition_type", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "taking_type", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "district", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_by", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
@@ -6942,6 +6951,7 @@ public sealed partial class CasePlannerRepository
                     deferred_until, deferred_reason, deferred_at, deferred_by,
                     case_status, status_mapping_review,
                     trial_end_date, property_description,
+                    final_judgment_amount, disposition_type, taking_type, district,
                     created_at, updated_at
                 ) VALUES (
                     @case_number, @case_name, @job_number, @tract, @county, @status, @stage, @track, @filing_date,
@@ -6960,6 +6970,7 @@ public sealed partial class CasePlannerRepository
                     @deferred_until, @deferred_reason, @deferred_at, @deferred_by,
                     @case_status, @status_mapping_review,
                     @trial_end_date, @property_description,
+                    @final_judgment_amount, @disposition_type, @taking_type, @district,
                     @created_at, @updated_at
                 );
                 SELECT last_insert_rowid();
@@ -7037,6 +7048,10 @@ public sealed partial class CasePlannerRepository
                     status_mapping_review=@status_mapping_review,
                     trial_end_date=@trial_end_date,
                     property_description=@property_description,
+                    final_judgment_amount=@final_judgment_amount,
+                    disposition_type=@disposition_type,
+                    taking_type=@taking_type,
+                    district=@district,
                     updated_at=@updated_at
                 WHERE id=@id;
                 SELECT @id;
@@ -7129,6 +7144,10 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@status_mapping_review", model.StatusMappingReview ? 1 : 0);
         cmd.Parameters.AddWithValue("@trial_end_date", DbValue(model.TrialEndDate));
         cmd.Parameters.AddWithValue("@property_description", DbValue(model.PropertyDescription));
+        cmd.Parameters.AddWithValue("@final_judgment_amount", model.FinalJudgmentAmount.HasValue ? model.FinalJudgmentAmount.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@disposition_type", DbValue(model.DispositionType));
+        cmd.Parameters.AddWithValue("@taking_type", DbValue(model.TakingType));
+        cmd.Parameters.AddWithValue("@district", DbValue(model.District));
         cmd.Parameters.AddWithValue("@created_at", now);
         cmd.Parameters.AddWithValue("@updated_at", now);
     }

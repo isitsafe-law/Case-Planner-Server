@@ -127,15 +127,59 @@ public sealed class SqlServerCaseQuickActionService(
         return result;
     }
 
+    // Not routed through the shared UpdateAsync helper below - it needs the case's previous
+    // holder/stage and the pipeline_handoffs insert to happen inside the same transaction as the
+    // update, the same reason SqlServerPipelineHandoffStore.SaveAsync manages its own transaction.
     public async Task<string?> SetHolderAsync(long caseId, SetHolderRequest request, CancellationToken token = default)
     {
-        var version = await UpdateAsync(caseId, request.RowVersion,
-            "current_holder=@holder,date_sent_to_current_holder=@sent",
-            command =>
-            {
-                command.Parameters.Add(new SqlParameter("@holder", Db(request.CurrentHolder)));
-                command.Parameters.Add(new SqlParameter("@sent", DateTime.UtcNow.ToString("yyyy-MM-dd")));
-            }, "CaseHolderAssigned", token);
+        var expected = ExpectedVersion(request.RowVersion, caseId);
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+
+        string? previousHolder; string? previousStage;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT current_holder,pipeline_stage FROM dbo.cases WHERE id=@id AND row_version=@version AND is_deleted=0";
+            read.Parameters.Add(new SqlParameter("@id", caseId));
+            read.Parameters.Add(new SqlParameter("@version", expected));
+            await using var reader = await read.ExecuteReaderAsync(token);
+            if (!await reader.ReadAsync(token)) throw new CaseConcurrencyException(caseId);
+            previousHolder = reader.IsDBNull(0) ? null : reader.GetString(0);
+            previousStage = reader.IsDBNull(1) ? null : reader.GetString(1);
+        }
+
+        string version;
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE dbo.cases SET current_holder=@holder,date_sent_to_current_holder=@sent,updated_at=@updated OUTPUT INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0";
+            update.Parameters.Add(new SqlParameter("@holder", Db(request.CurrentHolder)));
+            update.Parameters.Add(new SqlParameter("@sent", DateTime.UtcNow.ToString("yyyy-MM-dd")));
+            update.Parameters.Add(new SqlParameter("@updated", DateTime.UtcNow.ToString("O")));
+            update.Parameters.Add(new SqlParameter("@id", caseId));
+            update.Parameters.Add(new SqlParameter("@version", expected));
+            var value = await update.ExecuteScalarAsync(token);
+            if (value is null) throw new CaseConcurrencyException(caseId);
+            version = Convert.ToBase64String((byte[])value);
+        }
+
+        await PipelineHandoffTransitionLogger.RecordIfChangedAsync(
+            connection, transaction, caseId, previousHolder, request.CurrentHolder, previousStage, previousStage,
+            actor.UserId, actor.AuditLabel, token);
+
+        await using (var audit = connection.CreateCommand())
+        {
+            audit.Transaction = transaction;
+            audit.CommandText = "INSERT INTO dbo.audit_events(case_id,actor_user_id,action,entity_type,entity_id) VALUES(@caseId,@actor,'CaseHolderAssigned','Case',@id)";
+            audit.Parameters.Add(new SqlParameter("@caseId", caseId));
+            audit.Parameters.Add(new SqlParameter("@actor", (object?)actor.UserId ?? DBNull.Value));
+            audit.Parameters.Add(new SqlParameter("@id", caseId.ToString()));
+            await audit.ExecuteNonQueryAsync(token);
+        }
+
+        await transaction.CommitAsync(token);
         await activity.RecordAsync(caseId, "HolderAssigned", $"Assigned to {request.CurrentHolder}", null, token);
         return version;
     }

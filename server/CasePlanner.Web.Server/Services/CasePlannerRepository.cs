@@ -2267,6 +2267,38 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    // Logs a pipeline_handoffs row for holder/stage transitions made outside the dedicated
+    // Handoff dialog (the general case-edit save and the quick "Set Holder" action) so the table
+    // stays a complete transition history rather than only covering handoffs recorded through
+    // SavePipelineHandoffAsync. Only inserts when something actually changed, and only ever
+    // within a caller's existing write transaction.
+    private async Task RecordHolderTransitionIfChangedAsync(
+        SqliteConnection connection, SqliteTransaction tx, long caseId,
+        string? previousHolder, string? newHolder, string? previousStage, string? newStage)
+    {
+        var holderChanged = (previousHolder ?? "") != (newHolder ?? "");
+        var stageChanged = (previousStage ?? "") != (newStage ?? "");
+        if (!holderChanged && !stageChanged) return;
+
+        var now = DateTime.UtcNow.ToString("O");
+        var insertCmd = connection.CreateCommand();
+        insertCmd.Transaction = tx;
+        insertCmd.CommandText = """
+            INSERT INTO pipeline_handoffs (case_id, previous_holder, new_holder, previous_stage, new_stage, handoff_date, next_review_date, note, created_at)
+            VALUES (@case_id, @previous_holder, @new_holder, @previous_stage, @new_stage, @handoff_date, @next_review_date, @note, @now);
+            """;
+        insertCmd.Parameters.AddWithValue("@case_id", caseId);
+        insertCmd.Parameters.AddWithValue("@previous_holder", DbValue(previousHolder));
+        insertCmd.Parameters.AddWithValue("@new_holder", newHolder ?? "");
+        insertCmd.Parameters.AddWithValue("@previous_stage", DbValue(previousStage));
+        insertCmd.Parameters.AddWithValue("@new_stage", newStage ?? "");
+        insertCmd.Parameters.AddWithValue("@handoff_date", now[..10]);
+        insertCmd.Parameters.AddWithValue("@next_review_date", DBNull.Value);
+        insertCmd.Parameters.AddWithValue("@note", DBNull.Value);
+        insertCmd.Parameters.AddWithValue("@now", now);
+        await insertCmd.ExecuteNonQueryAsync();
+    }
+
     private static readonly HashSet<string> MeaningfulActivityTypes = new(StringComparer.Ordinal)
     {
         "ComplaintFiled", "AnswerFiled", "ServiceCompleted", "PublicationCompleted", "DiscoveryServed",
@@ -2591,12 +2623,35 @@ public sealed partial class CasePlannerRepository
 
     public async Task SetHolderAsync(long caseId, SetHolderRequest request)
     {
-        await ExecuteCaseUpdateAsync(caseId, "current_holder=@current_holder, date_sent_to_current_holder=@date_sent",
-            cmd =>
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var caseCmd = connection.CreateCommand();
+            caseCmd.Transaction = tx;
+            caseCmd.CommandText = "SELECT current_holder, pipeline_stage FROM cases WHERE id=@id";
+            caseCmd.Parameters.AddWithValue("@id", caseId);
+            string? previousHolder = null;
+            string? previousStage = null;
+            await using (var reader = await caseCmd.ExecuteReaderAsync())
             {
-                cmd.Parameters.AddWithValue("@current_holder", DbValue(request.CurrentHolder));
-                cmd.Parameters.AddWithValue("@date_sent", DateTime.UtcNow.ToString("yyyy-MM-dd"));
-            });
+                if (await reader.ReadAsync())
+                {
+                    previousHolder = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    previousStage = reader.IsDBNull(1) ? null : reader.GetString(1);
+                }
+            }
+
+            var updateCmd = connection.CreateCommand();
+            updateCmd.Transaction = tx;
+            updateCmd.CommandText = "UPDATE cases SET current_holder=@current_holder, date_sent_to_current_holder=@date_sent, updated_at=@updated_at WHERE id=@id";
+            updateCmd.Parameters.AddWithValue("@current_holder", DbValue(request.CurrentHolder));
+            updateCmd.Parameters.AddWithValue("@date_sent", DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            updateCmd.Parameters.AddWithValue("@updated_at", DateTime.UtcNow.ToString("O"));
+            updateCmd.Parameters.AddWithValue("@id", caseId);
+            await updateCmd.ExecuteNonQueryAsync();
+
+            await RecordHolderTransitionIfChangedAsync(connection, tx, caseId, previousHolder, request.CurrentHolder, previousStage, previousStage);
+            return 0;
+        });
         await RecordActivityAsync(caseId, "HolderAssigned", $"Assigned to {request.CurrentHolder}", null);
     }
 
@@ -7136,6 +7191,23 @@ public sealed partial class CasePlannerRepository
         }
 
         var now = DateTime.UtcNow.ToString("O");
+        var isUpdate = model.Id != 0;
+        string? previousHolder = null;
+        string? previousStage = null;
+        if (isUpdate)
+        {
+            var priorCmd = connection.CreateCommand();
+            priorCmd.Transaction = tx;
+            priorCmd.CommandText = "SELECT current_holder, pipeline_stage FROM cases WHERE id=@id";
+            priorCmd.Parameters.AddWithValue("@id", model.Id);
+            await using var priorReader = await priorCmd.ExecuteReaderAsync();
+            if (await priorReader.ReadAsync())
+            {
+                previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
+                previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+            }
+        }
+
         var cmd = connection.CreateCommand();
         cmd.Transaction = tx;
         if (model.Id == 0)
@@ -7268,6 +7340,11 @@ public sealed partial class CasePlannerRepository
 
         AddCaseParameters(cmd, model, now);
         model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+        if (isUpdate)
+        {
+            await RecordHolderTransitionIfChangedAsync(connection, tx, model.Id, previousHolder, model.CurrentHolder, previousStage, model.PipelineStage);
+        }
     }
 
     private static string MapConsolidatedCaseStatus(string? status, string? stage, string? track, string? caseNumber = null, string? pipelineStage = null)

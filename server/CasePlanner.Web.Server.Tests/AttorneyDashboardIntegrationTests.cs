@@ -335,6 +335,83 @@ public class AttorneyDashboardIntegrationTests : IAsyncLifetime
         Assert.Equal("With Attorney", updated.PipelineStage);
     }
 
+    // The general case-edit save path (SaveCaseAsync/SaveCaseInternalAsync) and the quick-action
+    // SetHolderAsync path both change CurrentHolder/PipelineStage without going through
+    // SavePipelineHandoffAsync above - these prove they now log the transition too, so
+    // pipeline_handoffs stays a complete history regardless of which path made the change.
+    [Fact]
+    public async Task SaveCaseAsync_HolderAndStageBothChanged_CreatesSingleCombinedHandoffEntry()
+    {
+        var c = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "General Save Handoff Case";
+            x.CurrentHolder = "Legal Assistant";
+            x.PipelineStage = "With Legal Assistant";
+        });
+
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).First(x => x.Id == c.Id);
+        loaded.CurrentHolder = "Attorney";
+        loaded.PipelineStage = "With Attorney";
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var history = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        var entry = Assert.Single(history);
+        Assert.Equal("Legal Assistant", entry.PreviousHolder);
+        Assert.Equal("Attorney", entry.NewHolder);
+        Assert.Equal("With Legal Assistant", entry.PreviousStage);
+        Assert.Equal("With Attorney", entry.NewStage);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_HolderAndStageUnchanged_CreatesNoHandoffEntry()
+    {
+        var c = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "General Save No-Op Case";
+            x.CurrentHolder = "Attorney";
+            x.PipelineStage = "With Attorney";
+        });
+
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).First(x => x.Id == c.Id);
+        loaded.ValuationNotes = "Unrelated field edit";
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var history = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        Assert.Empty(history);
+    }
+
+    [Fact]
+    public async Task SetHolderAsync_ChangedHolder_CreatesHandoffEntry()
+    {
+        var c = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "Quick Action Handoff Case";
+            x.CurrentHolder = "Legal Assistant";
+        });
+
+        await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
+
+        var history = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        var entry = Assert.Single(history);
+        Assert.Equal("Legal Assistant", entry.PreviousHolder);
+        Assert.Equal("Attorney", entry.NewHolder);
+    }
+
+    [Fact]
+    public async Task SetHolderAsync_UnchangedHolder_CreatesNoHandoffEntry()
+    {
+        var c = await CreateCaseAsync(x =>
+        {
+            x.CaseName = "Quick Action No-Op Case";
+            x.CurrentHolder = "Attorney";
+        });
+
+        await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
+
+        var history = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        Assert.Empty(history);
+    }
+
     // --- Priority sorting ---
 
     [Fact]

@@ -7,7 +7,7 @@ namespace CasePlanner.Web.Server.Persistence;
 
 public sealed class CaseConcurrencyException(long caseId) : Exception($"Case {caseId} was changed by another user. Reload it before saving again.");
 
-public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connectionFactory, IHttpContextAccessor httpContextAccessor) : ICaseCatalogStore
+public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connectionFactory, IHttpContextAccessor httpContextAccessor, IApplicationActorContext actor) : ICaseCatalogStore
 {
     public string Provider => "SqlServer";
 
@@ -54,6 +54,8 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         foreach (var item in assignments)
             command.Parameters.Add(new SqlParameter(item.Parameter, item.Value ?? DBNull.Value));
 
+        string? previousHolder = null;
+        string? previousStage = null;
         if (isNew)
         {
             command.CommandText = $"INSERT INTO dbo.cases ({string.Join(",", assignments.Select(a => $"[{a.Key}]"))}) OUTPUT INSERTED.id, INSERTED.row_version VALUES ({string.Join(",", assignments.Select(a => a.Parameter))})";
@@ -67,6 +69,17 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
             command.Parameters.Add(new SqlParameter("@id", model.Id));
             command.Parameters.Add(new SqlParameter("@rowVersion", expected));
             command.CommandText = $"UPDATE dbo.cases SET {string.Join(",", assignments.Where(a => a.Key != "created_at").Select(a => $"[{a.Key}]={a.Parameter}"))} OUTPUT INSERTED.id, INSERTED.row_version WHERE id=@id AND row_version=@rowVersion";
+
+            await using var prior = connection.CreateCommand();
+            prior.Transaction = transaction;
+            prior.CommandText = "SELECT current_holder,pipeline_stage FROM dbo.cases WHERE id=@id";
+            prior.Parameters.Add(new SqlParameter("@id", model.Id));
+            await using var priorReader = await prior.ExecuteReaderAsync(cancellationToken);
+            if (await priorReader.ReadAsync(cancellationToken))
+            {
+                previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
+                previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+            }
         }
 
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -74,6 +87,13 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
             if (!await reader.ReadAsync(cancellationToken)) throw new CaseConcurrencyException(model.Id);
             model.Id = reader.GetInt64(0);
             model.RowVersion = Convert.ToBase64String((byte[])reader.GetValue(1));
+        }
+
+        if (!isNew)
+        {
+            await PipelineHandoffTransitionLogger.RecordIfChangedAsync(
+                connection, transaction, model.Id, previousHolder, model.CurrentHolder, previousStage, model.PipelineStage,
+                actor.UserId, actor.AuditLabel, cancellationToken);
         }
 
         await using var audit = connection.CreateCommand();

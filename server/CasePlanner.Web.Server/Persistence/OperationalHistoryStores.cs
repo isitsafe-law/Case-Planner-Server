@@ -239,6 +239,44 @@ public sealed class SqlServerPipelineHandoffStore(
     private static object Db(string? value)=>string.IsNullOrWhiteSpace(value)?DBNull.Value:value;
 }
 
+// Shared by the SQL Server case-save (SqlServerCaseCatalogReader) and quick-action holder-set
+// (SqlServerCaseQuickActionService) paths, which - unlike SqlServerPipelineHandoffStore.SaveAsync
+// above - have no dedicated "handoff" concept (no note, no scheduled next-review date) and must
+// not duplicate what that endpoint already logs for its own callers.
+internal static class PipelineHandoffTransitionLogger
+{
+    public static async Task RecordIfChangedAsync(
+        DbConnection connection, DbTransaction transaction, long caseId,
+        string? previousHolder, string? newHolder, string? previousStage, string? newStage,
+        Guid? actorUserId, string? actorDisplay, CancellationToken token = default)
+    {
+        var holderChanged = (previousHolder ?? "") != (newHolder ?? "");
+        var stageChanged = (previousStage ?? "") != (newStage ?? "");
+        if (!holderChanged && !stageChanged) return;
+
+        var now = DateTime.UtcNow.ToString("O");
+        await using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = """
+            INSERT INTO dbo.pipeline_handoffs(case_id,previous_holder,new_holder,previous_stage,new_stage,handoff_date,
+                next_review_date,note,created_at,created_by_user_id,created_by_display)
+            VALUES(@caseId,@previousHolder,@newHolder,@previousStage,@newStage,@handoff,@review,@note,@now,@actor,@display)
+            """;
+        insert.Parameters.Add(new SqlParameter("@caseId", caseId));
+        insert.Parameters.Add(new SqlParameter("@previousHolder", (object?)previousHolder ?? DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@newHolder", newHolder ?? ""));
+        insert.Parameters.Add(new SqlParameter("@previousStage", (object?)previousStage ?? DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@newStage", newStage ?? ""));
+        insert.Parameters.Add(new SqlParameter("@handoff", now[..10]));
+        insert.Parameters.Add(new SqlParameter("@review", DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@note", DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@now", now));
+        insert.Parameters.Add(new SqlParameter("@actor", (object?)actorUserId ?? DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@display", (object?)actorDisplay ?? DBNull.Value));
+        await insert.ExecuteNonQueryAsync(token);
+    }
+}
+
 public sealed class SqlServerActivityService(SqlServerActivityStore store) : IActivityStore
 {
     public string Provider => "SqlServer";

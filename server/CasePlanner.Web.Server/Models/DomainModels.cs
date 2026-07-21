@@ -804,6 +804,29 @@ public sealed class DeadlineTemplateRecord
     public string Track { get; set; } = "Any";
     public bool Active { get; set; } = true;
 }
+// Staff Directory - multi-user rollout Phase 5 (reporting) prerequisite. A fixed list of real
+// attorney/legal-assistant names for case metadata and reporting, deliberately separate from the
+// dormant Entra-provisioned app_users roster (AuthenticatedUserProfile/AppUserSummary above): this
+// has zero auth/identity dependency and works fully on SQLite today, like County/District.
+public sealed class AttorneyRecord
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? Title { get; set; }
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+}
+
+public sealed class LegalAssistantRecord
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+    public List<long> AttorneyIds { get; set; } = [];
+    public List<string> AttorneyNames { get; set; } = [];
+}
+
 public sealed class WorkTemplateCandidate
 {
     public string Kind { get; set; } = "Task";

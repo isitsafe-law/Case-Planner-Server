@@ -48,6 +48,7 @@ public sealed partial class CasePlannerRepository
         await EnsureInterrogatoriesAllIssueTagSectionsAsync(connection);
         var templatesReseeded = await SeedChecklistTemplatesAsync(connection);
         var deadlineTemplatesReseeded = await SeedDeadlineTemplatesAsync(connection);
+        await SeedStaffDirectoryAsync(connection);
         await SeedAsync(connection, !databaseWasPresent);
         await EnsureImportSampleAsync();
         // Must run before the backfill below: it rekeys existing checklist_items to the
@@ -5327,6 +5328,212 @@ public sealed partial class CasePlannerRepository
         model.Id=Convert.ToInt64(await cmd.ExecuteScalarAsync()); return model;
     });
 
+    // Staff Directory (see AttorneyRecord/LegalAssistantRecord) - a fixed list of real names used
+    // for case assignment and reporting, not the dormant Entra-provisioned app_users roster.
+    public async Task<List<AttorneyRecord>> GetAttorneysAsync()
+    {
+        var list = new List<AttorneyRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id,name,title,is_active,sort_order FROM attorneys ORDER BY sort_order,name";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new AttorneyRecord
+            {
+                Id = reader.GetInt64(0),
+                Name = reader.GetString(1),
+                Title = reader.IsDBNull(2) ? null : reader.GetString(2),
+                IsActive = reader.GetInt64(3) == 1,
+                SortOrder = reader.GetInt32(4),
+            });
+        }
+        return list;
+    }
+
+    public async Task<AttorneyRecord> SaveAttorneyAsync(AttorneyRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            var sortOrder = model.SortOrder;
+            if (sortOrder <= 0)
+            {
+                var maxCmd = connection.CreateCommand(); maxCmd.Transaction = tx;
+                maxCmd.CommandText = "SELECT COALESCE(MAX(sort_order),0)+1 FROM attorneys";
+                sortOrder = Convert.ToInt32(await maxCmd.ExecuteScalarAsync());
+            }
+            model.SortOrder = sortOrder;
+            cmd.CommandText = """
+                INSERT INTO attorneys(name,title,is_active,sort_order) VALUES(@name,@title,@active,@sort);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE attorneys SET name=@name,title=@title,is_active=@active,sort_order=@sort WHERE id=@id; SELECT @id;";
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@name", model.Name);
+        cmd.Parameters.AddWithValue("@title", DbValue(model.Title));
+        cmd.Parameters.AddWithValue("@active", model.IsActive ? 1 : 0);
+        cmd.Parameters.AddWithValue("@sort", model.SortOrder);
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        return model;
+    });
+
+    public async Task<List<LegalAssistantRecord>> GetLegalAssistantsAsync()
+    {
+        var list = new List<LegalAssistantRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id,name,is_active,sort_order FROM legal_assistants ORDER BY sort_order,name";
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                list.Add(new LegalAssistantRecord
+                {
+                    Id = reader.GetInt64(0),
+                    Name = reader.GetString(1),
+                    IsActive = reader.GetInt64(2) == 1,
+                    SortOrder = reader.GetInt32(3),
+                });
+            }
+        }
+
+        var tiesCmd = connection.CreateCommand();
+        tiesCmd.CommandText = """
+            SELECT laa.legal_assistant_id, laa.attorney_id, a.name
+            FROM legal_assistant_attorneys laa JOIN attorneys a ON a.id = laa.attorney_id
+            ORDER BY a.sort_order, a.name
+            """;
+        await using var tiesReader = await tiesCmd.ExecuteReaderAsync();
+        while (await tiesReader.ReadAsync())
+        {
+            var legalAssistantId = tiesReader.GetInt64(0);
+            var match = list.FirstOrDefault(la => la.Id == legalAssistantId);
+            if (match is null) continue;
+            match.AttorneyIds.Add(tiesReader.GetInt64(1));
+            match.AttorneyNames.Add(tiesReader.GetString(2));
+        }
+        return list;
+    }
+
+    public async Task<LegalAssistantRecord> SaveLegalAssistantAsync(LegalAssistantRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            var sortOrder = model.SortOrder;
+            if (sortOrder <= 0)
+            {
+                var maxCmd = connection.CreateCommand(); maxCmd.Transaction = tx;
+                maxCmd.CommandText = "SELECT COALESCE(MAX(sort_order),0)+1 FROM legal_assistants";
+                sortOrder = Convert.ToInt32(await maxCmd.ExecuteScalarAsync());
+            }
+            model.SortOrder = sortOrder;
+            cmd.CommandText = """
+                INSERT INTO legal_assistants(name,is_active,sort_order) VALUES(@name,@active,@sort);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE legal_assistants SET name=@name,is_active=@active,sort_order=@sort WHERE id=@id; SELECT @id;";
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@name", model.Name);
+        cmd.Parameters.AddWithValue("@active", model.IsActive ? 1 : 0);
+        cmd.Parameters.AddWithValue("@sort", model.SortOrder);
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+        // Full replace, not a partial merge - reassigning a legal assistant to different
+        // attorneys should drop every prior tie, not just add new ones.
+        var deleteCmd = connection.CreateCommand(); deleteCmd.Transaction = tx;
+        deleteCmd.CommandText = "DELETE FROM legal_assistant_attorneys WHERE legal_assistant_id=@id";
+        deleteCmd.Parameters.AddWithValue("@id", model.Id);
+        await deleteCmd.ExecuteNonQueryAsync();
+
+        model.AttorneyNames.Clear();
+        foreach (var attorneyId in model.AttorneyIds.Distinct())
+        {
+            var insertCmd = connection.CreateCommand(); insertCmd.Transaction = tx;
+            insertCmd.CommandText = "INSERT INTO legal_assistant_attorneys(legal_assistant_id,attorney_id) VALUES(@laId,@attorneyId)";
+            insertCmd.Parameters.AddWithValue("@laId", model.Id);
+            insertCmd.Parameters.AddWithValue("@attorneyId", attorneyId);
+            await insertCmd.ExecuteNonQueryAsync();
+        }
+        return model;
+    });
+
+    private async Task SeedStaffDirectoryAsync(SqliteConnection connection)
+    {
+        var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM attorneys";
+        if (Convert.ToInt64(await countCmd.ExecuteScalarAsync()) > 0) return;
+
+        var attorneySeeds = new (string Name, string? Title)[]
+        {
+            ("Michelle Davenport", "Chief Counsel"),
+            ("Angela Dodson", "Deputy Chief Counsel"),
+            ("Helen Newberry", null),
+            ("Stephen Lowman", null),
+            ("Cody Eenigenburg", null),
+            ("Iván Martínez", null),
+            ("Katie Meister", null),
+            ("Michael Bynum", null),
+            ("Bailey Gambill", null),
+        };
+
+        await using var tx = connection.BeginTransaction();
+        var attorneyIds = new Dictionary<string, long>();
+        var sortOrder = 1;
+        foreach (var (name, title) in attorneySeeds)
+        {
+            var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO attorneys(name,title,is_active,sort_order) VALUES(@name,@title,1,@sort);
+                SELECT last_insert_rowid();
+                """;
+            cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddWithValue("@title", DbValue(title));
+            cmd.Parameters.AddWithValue("@sort", sortOrder++);
+            attorneyIds[name] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        }
+
+        var legalAssistantSeeds = new (string Name, string[] Attorneys)[]
+        {
+            ("Tyler Story", new[] { "Stephen Lowman", "Cody Eenigenburg" }),
+            ("Evelyn Allison", new[] { "Michael Bynum", "Helen Newberry", "Bailey Gambill" }),
+            ("Donna Ramsey", new[] { "Iván Martínez", "Katie Meister" }),
+        };
+
+        var laSortOrder = 1;
+        foreach (var (name, supportedAttorneys) in legalAssistantSeeds)
+        {
+            var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO legal_assistants(name,is_active,sort_order) VALUES(@name,1,@sort);
+                SELECT last_insert_rowid();
+                """;
+            cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddWithValue("@sort", laSortOrder++);
+            var legalAssistantId = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+            foreach (var attorneyName in supportedAttorneys)
+            {
+                var tieCmd = connection.CreateCommand(); tieCmd.Transaction = tx;
+                tieCmd.CommandText = "INSERT INTO legal_assistant_attorneys(legal_assistant_id,attorney_id) VALUES(@laId,@attorneyId)";
+                tieCmd.Parameters.AddWithValue("@laId", legalAssistantId);
+                tieCmd.Parameters.AddWithValue("@attorneyId", attorneyIds[attorneyName]);
+                await tieCmd.ExecuteNonQueryAsync();
+            }
+        }
+
+        await tx.CommitAsync();
+    }
+
     public async Task<List<WorkTemplateCandidate>> GetWorkTemplateCandidatesAsync(long caseId)
     {
         var ws = await GetCaseWorkspaceAsync(caseId) ?? throw new InvalidOperationException("Case not found.");
@@ -7845,6 +8052,24 @@ public sealed partial class CasePlannerRepository
             new_notes TEXT,
             reason TEXT,
             created_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS attorneys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            title TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS legal_assistants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS legal_assistant_attorneys (
+            legal_assistant_id INTEGER NOT NULL,
+            attorney_id INTEGER NOT NULL,
+            PRIMARY KEY (legal_assistant_id, attorney_id)
         );
         CREATE INDEX IF NOT EXISTS idx_discovery_postures_case_id ON discovery_postures(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);

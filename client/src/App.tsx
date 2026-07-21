@@ -718,6 +718,24 @@ type AppUserSummary = {
   updatedUtc: string
   lastLoginUtc?: string | null
 }
+// Staff Directory - a fixed list of real attorney/legal-assistant names for case assignment and
+// reporting, independent of the Entra-provisioned app_users roster above (see AttorneyRecord /
+// LegalAssistantRecord on the server). Zero auth dependency, available even before Entra is on.
+type AttorneyRecord = {
+  id: number
+  name: string
+  title?: string | null
+  isActive: boolean
+  sortOrder: number
+}
+type LegalAssistantRecord = {
+  id: number
+  name: string
+  isActive: boolean
+  sortOrder: number
+  attorneyIds: number[]
+  attorneyNames: string[]
+}
 type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
 type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
 type CaseAssignmentRecord = {
@@ -1430,6 +1448,16 @@ function districtOptions(value?: string | null): string[] {
   return trimmed && !arkansasDistricts.includes(trimmed) ? [trimmed, ...arkansasDistricts] : arkansasDistricts
 }
 
+// Assigned Attorney dropdown grandfathering - same shape as countyOptions/districtOptions above,
+// but parameterized on the active-attorney name list (from the Staff Directory) instead of a
+// hardcoded const array, since that list is user-editable. Any case's existing assignedAttorney
+// value that isn't currently an active attorney name is prepended as a selectable legacy option,
+// so old/free-text data is never silently hidden or clobbered by editing the directory later.
+export function attorneyOptions(activeAttorneyNames: string[], value?: string | null): string[] {
+  const trimmed = value?.trim()
+  return trimmed && !activeAttorneyNames.includes(trimmed) ? [trimmed, ...activeAttorneyNames] : activeAttorneyNames
+}
+
 function normalizeTextValue(value?: string | null): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
@@ -1639,6 +1667,12 @@ function App() {
   const [myAssignedCaseIds, setMyAssignedCaseIds] = useState<Set<number> | null>(null)
   const [caseListScope, setCaseListScope] = useState<'mine' | 'all'>('mine')
   const [staffRoster, setStaffRoster] = useState<AppUserSummary[]>([])
+  const [attorneys, setAttorneys] = useState<AttorneyRecord[]>([])
+  const [legalAssistants, setLegalAssistants] = useState<LegalAssistantRecord[]>([])
+  const [newAttorneyName, setNewAttorneyName] = useState('')
+  const [newAttorneyTitle, setNewAttorneyTitle] = useState('')
+  const [newLegalAssistantName, setNewLegalAssistantName] = useState('')
+  const [newLegalAssistantAttorneyIds, setNewLegalAssistantAttorneyIds] = useState<number[]>([])
   const [caseAssignments, setCaseAssignments] = useState<CaseAssignmentRecord[]>([])
   const [newAssignmentDraft, setNewAssignmentDraft] = useState({ userId: '', caseRole: 'Attorney' as CaseRoleValue, assignmentRole: 'Collaborator' as AssignmentRoleValue })
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null)
@@ -2169,7 +2203,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2186,6 +2220,8 @@ function App() {
         api<IssueTag[]>('/api/issue-tags'),
         api<BackupInfo[]>('/api/backups'),
         api<ReferenceDocument[]>('/api/reference-library'),
+        api<AttorneyRecord[]>('/api/staff-directory/attorneys'),
+        api<LegalAssistantRecord[]>('/api/staff-directory/legal-assistants'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2203,6 +2239,8 @@ function App() {
       setAllIssueTags(issueTagsData)
       setBackups(backupsData)
       setReferenceLibrary(referenceLibraryData)
+      setAttorneys(attorneysData)
+      setLegalAssistants(legalAssistantsData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -2306,6 +2344,59 @@ function App() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update staff status.')
     }
+  }
+
+  // Staff Directory - fixed attorney/legal-assistant names for case assignment and reporting.
+  // Unlike the app_users roster above, this has zero auth dependency and works on SQLite today;
+  // it's loaded once in loadInitial and refreshed here after any local edit.
+  async function loadStaffDirectory() {
+    try {
+      setErrorMessage('')
+      const [attorneysData, legalAssistantsData] = await Promise.all([
+        api<AttorneyRecord[]>('/api/staff-directory/attorneys'),
+        api<LegalAssistantRecord[]>('/api/staff-directory/legal-assistants'),
+      ])
+      setAttorneys(attorneysData)
+      setLegalAssistants(legalAssistantsData)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load the staff directory.')
+    }
+  }
+
+  async function saveAttorney(model: AttorneyRecord) {
+    try {
+      setErrorMessage('')
+      if (model.id === 0) await api('/api/staff-directory/attorneys', { method: 'POST', body: JSON.stringify(model) })
+      else await api(`/api/staff-directory/attorneys/${model.id}`, { method: 'PUT', body: JSON.stringify(model) })
+      await loadStaffDirectory()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the attorney.')
+    }
+  }
+
+  async function addAttorney() {
+    if (!newAttorneyName.trim()) return
+    await saveAttorney({ id: 0, name: newAttorneyName.trim(), title: newAttorneyTitle.trim() || null, isActive: true, sortOrder: 0 })
+    setNewAttorneyName('')
+    setNewAttorneyTitle('')
+  }
+
+  async function saveLegalAssistant(model: LegalAssistantRecord) {
+    try {
+      setErrorMessage('')
+      if (model.id === 0) await api('/api/staff-directory/legal-assistants', { method: 'POST', body: JSON.stringify(model) })
+      else await api(`/api/staff-directory/legal-assistants/${model.id}`, { method: 'PUT', body: JSON.stringify(model) })
+      await loadStaffDirectory()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the legal assistant.')
+    }
+  }
+
+  async function addLegalAssistant() {
+    if (!newLegalAssistantName.trim()) return
+    await saveLegalAssistant({ id: 0, name: newLegalAssistantName.trim(), isActive: true, sortOrder: 0, attorneyIds: newLegalAssistantAttorneyIds, attorneyNames: [] })
+    setNewLegalAssistantName('')
+    setNewLegalAssistantAttorneyIds([])
   }
 
   async function loadCaseAssignments(caseId: number) {
@@ -7826,6 +7917,15 @@ function App() {
             <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.people = node }}>
               <h4 className="form-section-heading">People</h4>
               <div className="form-section-grid">
+                <label>
+                  <span>Assigned Attorney</span>
+                  <select value={caseDraft.assignedAttorney || ''} onChange={(event) => patchCaseDraft({ assignedAttorney: event.target.value })}>
+                    <option value="">Select attorney</option>
+                    {attorneyOptions(attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), caseDraft.assignedAttorney).map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label><span>Landowner</span><input value={caseDraft.landowner || ''} onChange={(event) => patchCaseDraft({ landowner: event.target.value })} placeholder="Landowner" /></label>
                 <label><span>Appraiser</span><input value={caseDraft.appraiser || ''} onChange={(event) => patchCaseDraft({ appraiser: event.target.value })} placeholder="Appraiser" /></label>
                 <label><span>Landowner's Appraiser</span><input value={caseDraft.landownerAppraiserName || ''} onChange={(event) => patchCaseDraft({ landownerAppraiserName: event.target.value })} placeholder="Landowner's appraiser" /></label>
@@ -9480,6 +9580,111 @@ function App() {
                   </tbody>
                 </table>
               </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'staff' && (
+            <Panel title="Staff Directory (Attorneys & Legal Assistants)" className="top-gap">
+              <p className="helper-text">Used for case assignment and reporting — independent of the sign-in roster above, and available even before Entra is enabled.</p>
+
+              <h4 className="top-gap">Attorneys</h4>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>Name</th><th>Title</th><th>Active</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {attorneys.map((attorney) => (
+                      <tr key={attorney.id}>
+                        <td>{attorney.name}</td>
+                        <td>{attorney.title || '—'}</td>
+                        <td><span className={`pill pill-${attorney.isActive ? 'success' : 'neutral'}`}>{attorney.isActive ? 'Active' : 'Inactive'}</span></td>
+                        <td>
+                          {(!currentUser || currentUser.isAdmin) ? (
+                            <button onClick={() => void saveAttorney({ ...attorney, isActive: !attorney.isActive })}>{attorney.isActive ? 'Deactivate' : 'Activate'}</button>
+                          ) : (
+                            <span className="helper-text">Admin only</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {attorneys.length === 0 && <tr><td colSpan={4} className="helper-text">No attorneys yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {(!currentUser || currentUser.isAdmin) && (
+                <div className="form-grid top-gap-small">
+                  <label><span>Name</span><input value={newAttorneyName} onChange={(event) => setNewAttorneyName(event.target.value)} placeholder="Full name" /></label>
+                  <label><span>Title</span><input value={newAttorneyTitle} onChange={(event) => setNewAttorneyTitle(event.target.value)} placeholder="e.g. Chief Counsel (optional)" /></label>
+                  <div className="button-row full-span"><button className="primary" onClick={() => void addAttorney()}>Add Attorney</button></div>
+                </div>
+              )}
+
+              <h4 className="top-gap">Legal Assistants</h4>
+              <p className="helper-text">Who each legal assistant currently supports — editable here any time an assistant gets reassigned. A case's legal assistant is derived from its Assigned Attorney, not entered separately.</p>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>Name</th><th>Active</th><th>Supports</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {legalAssistants.map((legalAssistant) => (
+                      <tr key={legalAssistant.id}>
+                        <td>{legalAssistant.name}</td>
+                        <td><span className={`pill pill-${legalAssistant.isActive ? 'success' : 'neutral'}`}>{legalAssistant.isActive ? 'Active' : 'Inactive'}</span></td>
+                        <td>
+                          {(!currentUser || currentUser.isAdmin) ? (
+                            <div className="chip-row">
+                              {attorneys.map((attorney) => (
+                                <label key={attorney.id} className="toggle-inline">
+                                  <span>{attorney.name}</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={legalAssistant.attorneyIds.includes(attorney.id)}
+                                    onChange={(event) => {
+                                      const attorneyIds = event.target.checked
+                                        ? [...legalAssistant.attorneyIds, attorney.id]
+                                        : legalAssistant.attorneyIds.filter((id) => id !== attorney.id)
+                                      void saveLegalAssistant({ ...legalAssistant, attorneyIds })
+                                    }}
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                          ) : (
+                            legalAssistant.attorneyNames.join(', ') || '—'
+                          )}
+                        </td>
+                        <td>
+                          {(!currentUser || currentUser.isAdmin) ? (
+                            <button onClick={() => void saveLegalAssistant({ ...legalAssistant, isActive: !legalAssistant.isActive })}>{legalAssistant.isActive ? 'Deactivate' : 'Activate'}</button>
+                          ) : (
+                            <span className="helper-text">Admin only</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {legalAssistants.length === 0 && <tr><td colSpan={4} className="helper-text">No legal assistants yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {(!currentUser || currentUser.isAdmin) && (
+                <div className="form-grid top-gap-small">
+                  <label className="full-span"><span>Name</span><input value={newLegalAssistantName} onChange={(event) => setNewLegalAssistantName(event.target.value)} placeholder="Full name" /></label>
+                  <div className="full-span">
+                    <span>Supports</span>
+                    <div className="chip-row top-gap-small">
+                      {attorneys.filter((attorney) => attorney.isActive).map((attorney) => (
+                        <label key={attorney.id} className="toggle-inline">
+                          <span>{attorney.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={newLegalAssistantAttorneyIds.includes(attorney.id)}
+                            onChange={(event) => setNewLegalAssistantAttorneyIds((current) => event.target.checked ? [...current, attorney.id] : current.filter((id) => id !== attorney.id))}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="button-row full-span"><button className="primary" onClick={() => void addLegalAssistant()}>Add Legal Assistant</button></div>
+                </div>
+              )}
             </Panel>
           )}
 

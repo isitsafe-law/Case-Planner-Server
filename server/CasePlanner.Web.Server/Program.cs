@@ -476,6 +476,35 @@ app.MapPut("/api/admin/users/{userId:guid}/active", async (Guid userId, SetUserA
     try { return await assignments.SetUserActiveAsync(userId, request.IsActive, actor.Id, token) ? Results.NoContent() : Results.NotFound(); }
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+// Staff Directory: a fixed list of real attorney/legal-assistant names for case metadata and
+// reporting - separate from the app_users roster above, zero auth/identity dependency, fully
+// usable on SQLite today (see AttorneyRecord/LegalAssistantRecord). GET stays open to any
+// authenticated context; mutation is admin-gated only once Entra is actually enabled, matching
+// the DELETE /api/cases/{id} convention (unrestricted when Entra is disabled/local dev).
+app.MapGet("/api/staff-directory/attorneys", async () => Results.Ok(await repo.GetAttorneysAsync()));
+app.MapPost("/api/staff-directory/attorneys", async (AttorneyRecord model, HttpContext context) =>
+{
+    if (entraOptions.Enabled && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    return Results.Ok(await repo.SaveAttorneyAsync(model));
+});
+app.MapPut("/api/staff-directory/attorneys/{id:long}", async (long id, AttorneyRecord model, HttpContext context) =>
+{
+    if (entraOptions.Enabled && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    model.Id = id;
+    return Results.Ok(await repo.SaveAttorneyAsync(model));
+});
+app.MapGet("/api/staff-directory/legal-assistants", async () => Results.Ok(await repo.GetLegalAssistantsAsync()));
+app.MapPost("/api/staff-directory/legal-assistants", async (LegalAssistantRecord model, HttpContext context) =>
+{
+    if (entraOptions.Enabled && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    return Results.Ok(await repo.SaveLegalAssistantAsync(model));
+});
+app.MapPut("/api/staff-directory/legal-assistants/{id:long}", async (long id, LegalAssistantRecord model, HttpContext context) =>
+{
+    if (entraOptions.Enabled && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    model.Id = id;
+    return Results.Ok(await repo.SaveLegalAssistantAsync(model));
+});
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());

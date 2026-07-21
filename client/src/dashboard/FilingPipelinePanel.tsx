@@ -1,5 +1,23 @@
-import type { FilingPipelineView } from './types'
+import type { FilingPipelineView, PreFilingTractRow } from './types'
 import { EmptyState } from './EmptyState'
+import { HOLDER_STEPS, OTHER_HOLDER, holderStepIndex } from '../ui/HolderPipelineStepper'
+
+export type HolderDistributionEntry = { holder: string; count: number }
+
+// Client-side aggregation over the already-loaded pipeline rows (see HolderPipelineStepper for the
+// same 4-step-plus-Other vocabulary used by the per-case stepper). Anything that isn't one of the 4
+// linear holders - including a blank/unassigned currentHolder or a stray legacy value - is counted
+// under Other, keeping this strip to exactly 5 buckets.
+export function holderDistribution(rows: PreFilingTractRow[]): HolderDistributionEntry[] {
+  const counts = new Map<string, number>()
+  ;[...HOLDER_STEPS, OTHER_HOLDER].forEach((holder) => counts.set(holder, 0))
+  rows.forEach((row) => {
+    const index = holderStepIndex(row.currentHolder)
+    const key = index === -1 ? OTHER_HOLDER : HOLDER_STEPS[index]
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  })
+  return [...HOLDER_STEPS, OTHER_HOLDER].map((holder) => ({ holder, count: counts.get(holder) ?? 0 }))
+}
 
 // Plain calendar-day difference (matches the server's daysSinceMeaningfulActivity convention in
 // AttorneyDashboardEngine.cs: Math.Max(0, today.DayNumber - lastDate.DayNumber)) - floored at 0
@@ -29,8 +47,19 @@ export function FilingPipelinePanel({
     return <EmptyState title="No pre-filing matters right now" description="Pre-filing tracts needing attorney review, revision, or filing will appear here." />
   }
 
+  const distribution = holderDistribution(rows)
+
   return (
-    <div className="pipeline-watch-list">
+    <>
+      <div className="pipeline-holder-summary">
+        {distribution.map(({ holder, count }) => (
+          <div key={holder} className="pipeline-holder-summary-item">
+            <span>{holder}</span>
+            <strong>{count}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="pipeline-watch-list">
       {rows.map((row) => {
         const days = daysWithHolder(row.dateSentToCurrentHolder)
         const priorityTone = row.priority === 'Rushed' ? 'pill-danger' : row.priority === 'Priority' ? 'pill-warn' : null
@@ -51,6 +80,7 @@ export function FilingPipelinePanel({
           </article>
         )
       })}
-    </div>
+      </div>
+    </>
   )
 }

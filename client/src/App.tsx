@@ -19,7 +19,7 @@ import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
 import { ErrorState } from './dashboard/ErrorState'
 import { getApiAccessToken } from './auth'
 import { StatusChip, type StatusTone } from './ui/StatusChip'
-import { HolderChip } from './ui/HolderChip'
+import { HolderPipelineStepper } from './ui/HolderPipelineStepper'
 import { StatusSelect } from './ui/StatusSelect'
 import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
@@ -4372,6 +4372,21 @@ function App() {
     }
   }
 
+  async function setCurrentHolderFromStepper(holder: string) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    // Clicking the already-active step is a no-op by design - skip the write so it doesn't add a
+    // redundant self-to-self entry to pipeline_handoffs.
+    if (!caseId || holder === (selectedCase.currentHolder || '')) return
+    try {
+      const result = await api<{ rowVersion?: string | null }>(`/api/cases/${caseId}/holder`, { method: 'POST', body: JSON.stringify({ rowVersion: selectedCase.rowVersion, currentHolder: holder }) })
+      applyCaseRowVersion(caseId, result.rowVersion)
+      await refreshAll(caseId)
+      setMessage('Holder updated.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the holder.')
+    }
+  }
+
   async function addIssueTag() {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId || !selectedTagId) return
@@ -6489,7 +6504,6 @@ function App() {
                   here (quietly) when Closed; the actual toggle lives on the Status tab. */}
               {selectedCase.status === 'Closed' && <StatusChip tone="neutral">Closed</StatusChip>}
               {selectedCase.statusMappingReview && <StatusChip tone="warn">Status mapping review</StatusChip>}
-              {(selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && selectedCase.currentHolder && <HolderChip holder={selectedCase.currentHolder} />}
               {!isNewCase && <Btn onClick={startEditCase}>Edit Case</Btn>}
               {!isNewCase && (
                 <div className="case-menu" ref={caseMenuRef}>
@@ -6505,6 +6519,12 @@ function App() {
               )}
             </div>
           </div>
+          {!isNewCase && selectedCase.currentHolder && (
+            <div className="workspace-holder-row top-gap-small">
+              <span className="workspace-holder-row-label">Holder</span>
+              <HolderPipelineStepper currentHolder={selectedCase.currentHolder} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
+            </div>
+          )}
           {workspace && workspace.caseIssueTags.length > 0 && (
             <div className="chip-row top-gap-small">
               {workspace.caseIssueTags.map((tag) => (

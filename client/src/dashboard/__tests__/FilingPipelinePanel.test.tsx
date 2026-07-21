@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FilingPipelinePanel } from '../FilingPipelinePanel'
+import { FilingPipelinePanel, holderDistribution } from '../FilingPipelinePanel'
 import type { FilingPipelineView, PreFilingTractRow } from '../types'
 
 function makeRow(overrides: Partial<PreFilingTractRow> = {}): PreFilingTractRow {
@@ -32,7 +32,9 @@ describe('FilingPipelinePanel', () => {
     const pipeline = makePipeline([makeRow()])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
     expect(screen.getByText('Smith Tract 7')).toBeInTheDocument()
-    expect(screen.getByText('Legal Assistant')).toBeInTheDocument()
+    // "Legal Assistant" now also appears once in the new holder distribution summary strip, so
+    // there are 2 matches (summary + card) rather than a single one.
+    expect(screen.getAllByText('Legal Assistant')).toHaveLength(2)
   })
 
   it('shows an empty state when there are no pre-filing matters', () => {
@@ -81,5 +83,58 @@ describe('FilingPipelinePanel', () => {
     const pipeline = makePipeline([makeRow({ priority: 'Rushed' })])
     render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
     expect(screen.getByText('Rushed')).toBeInTheDocument()
+  })
+
+  it('renders a holder distribution summary strip above the card list', () => {
+    const pipeline = makePipeline([
+      makeRow({ caseId: 1, currentHolder: 'Legal Assistant' }),
+      makeRow({ caseId: 2, currentHolder: 'Legal Assistant' }),
+      makeRow({ caseId: 3, currentHolder: 'Attorney' }),
+    ])
+    render(<FilingPipelinePanel pipeline={pipeline} onOpenCase={() => {}} onHandoff={() => {}} />)
+    const summary = document.querySelector('.pipeline-holder-summary')
+    expect(summary).not.toBeNull()
+    expect(summary?.textContent).toContain('Legal Assistant')
+    expect(summary?.textContent).toContain('2')
+  })
+})
+
+describe('holderDistribution', () => {
+  it('buckets rows into the 4 linear holders plus Other, in a fixed order', () => {
+    const rows = [
+      makeRow({ currentHolder: 'Legal Assistant' }),
+      makeRow({ currentHolder: 'Legal Assistant' }),
+      makeRow({ currentHolder: 'Attorney' }),
+      makeRow({ currentHolder: 'Deputy Chief Counsel' }),
+      makeRow({ currentHolder: 'Chief Counsel' }),
+      makeRow({ currentHolder: 'Other' }),
+    ]
+    expect(holderDistribution(rows)).toEqual([
+      { holder: 'Legal Assistant', count: 2 },
+      { holder: 'Attorney', count: 1 },
+      { holder: 'Deputy Chief Counsel', count: 1 },
+      { holder: 'Chief Counsel', count: 1 },
+      { holder: 'Other', count: 1 },
+    ])
+  })
+
+  it('counts a null/blank currentHolder and unrecognized legacy values (e.g. Filing Staff) under Other', () => {
+    const rows = [
+      makeRow({ currentHolder: null }),
+      makeRow({ currentHolder: 'Filing Staff' }),
+    ]
+    const result = holderDistribution(rows)
+    expect(result.find((entry) => entry.holder === 'Other')?.count).toBe(2)
+    expect(result.filter((entry) => entry.holder !== 'Other').every((entry) => entry.count === 0)).toBe(true)
+  })
+
+  it('returns zero counts for every bucket when there are no rows', () => {
+    expect(holderDistribution([])).toEqual([
+      { holder: 'Legal Assistant', count: 0 },
+      { holder: 'Attorney', count: 0 },
+      { holder: 'Deputy Chief Counsel', count: 0 },
+      { holder: 'Chief Counsel', count: 0 },
+      { holder: 'Other', count: 0 },
+    ])
   })
 })

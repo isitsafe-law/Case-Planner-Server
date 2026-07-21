@@ -12,10 +12,10 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         await using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,display_name,email,is_active,created_utc,updated_utc,last_login_utc FROM dbo.app_users ORDER BY display_name,email";
+        command.CommandText = "SELECT id,display_name,email,is_active,created_utc,updated_utc,last_login_utc,is_manager FROM dbo.app_users ORDER BY display_name,email";
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
-            result.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetBoolean(3), reader.GetDateTime(4), reader.GetDateTime(5), reader.IsDBNull(6) ? null : reader.GetDateTime(6)));
+            result.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetBoolean(3), reader.GetDateTime(4), reader.GetDateTime(5), reader.IsDBNull(6) ? null : reader.GetDateTime(6), reader.GetBoolean(7)));
         return result;
     }
 
@@ -164,6 +164,25 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         command.Parameters.Add(new SqlParameter("@id", userId));
         var changed = await command.ExecuteNonQueryAsync(token) > 0;
         if (changed) await AuditAsync(connection, transaction, null, actorUserId, active ? "UserActivated" : "UserDeactivated", userId.ToString(), null, token);
+        await transaction.CommitAsync(token);
+        return changed;
+    }
+
+    // Unlike SetUserActiveAsync, there is no self-service guard here: revoking your own Manager
+    // status doesn't lock anyone out (only an Administrator can call this endpoint in the first
+    // place, and Administrator status is unaffected by it).
+    public async Task<bool> SetUserManagerAsync(Guid userId, bool isManager, Guid actorUserId, CancellationToken token = default)
+    {
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE dbo.app_users SET is_manager=@isManager,updated_utc=SYSUTCDATETIME() WHERE id=@id";
+        command.Parameters.Add(new SqlParameter("@isManager", isManager));
+        command.Parameters.Add(new SqlParameter("@id", userId));
+        var changed = await command.ExecuteNonQueryAsync(token) > 0;
+        if (changed) await AuditAsync(connection, transaction, null, actorUserId, isManager ? "UserManagerGranted" : "UserManagerRevoked", userId.ToString(), null, token);
         await transaction.CommitAsync(token);
         return changed;
     }

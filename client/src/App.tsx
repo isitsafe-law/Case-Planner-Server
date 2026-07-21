@@ -708,6 +708,7 @@ type AuthenticatedUserProfile = {
   email?: string | null
   roles: string[]
   isAdmin: boolean
+  isManager: boolean
 }
 type AppUserSummary = {
   id: string
@@ -717,6 +718,7 @@ type AppUserSummary = {
   createdUtc: string
   updatedUtc: string
   lastLoginUtc?: string | null
+  isManager: boolean
 }
 // Staff Directory - a fixed list of real attorney/legal-assistant names for case assignment and
 // reporting, independent of the Entra-provisioned app_users roster above (see AttorneyRecord /
@@ -2343,6 +2345,15 @@ function App() {
       await loadStaffRoster()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update staff status.')
+    }
+  }
+
+  async function toggleUserManager(user: AppUserSummary) {
+    try {
+      await api(`/api/admin/users/${user.id}/manager`, { method: 'PUT', body: JSON.stringify({ isManager: !user.isManager }) })
+      await loadStaffRoster()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update manager status.')
     }
   }
 
@@ -9560,23 +9571,27 @@ function App() {
               <button className="compact-action-button" onClick={() => void loadStaffRoster()}>Load Staff</button>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Active</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Active</th><th>Manager</th><th>Actions</th></tr></thead>
                   <tbody>
                     {staffRoster.map((user) => (
                       <tr key={user.id}>
                         <td>{user.displayName}</td>
                         <td>{user.email || '—'}</td>
                         <td><span className={`pill pill-${user.isActive ? 'success' : 'neutral'}`}>{user.isActive ? 'Active' : 'Inactive'}</span></td>
+                        <td><span className={`pill pill-${user.isManager ? 'success' : 'neutral'}`}>{user.isManager ? 'Manager' : 'No'}</span></td>
                         <td>
                           {currentUser?.isAdmin ? (
-                            <button onClick={() => void toggleUserActive(user)}>{user.isActive ? 'Deactivate' : 'Activate'}</button>
+                            <div className="button-row">
+                              <button onClick={() => void toggleUserActive(user)}>{user.isActive ? 'Deactivate' : 'Activate'}</button>
+                              <button onClick={() => void toggleUserManager(user)}>{user.isManager ? 'Revoke Manager' : 'Make Manager'}</button>
+                            </div>
                           ) : (
                             <span className="helper-text">Admin only</span>
                           )}
                         </td>
                       </tr>
                     ))}
-                    {staffRoster.length === 0 && <tr><td colSpan={4} className="helper-text">Click "Load Staff" to see everyone on the roster.</td></tr>}
+                    {staffRoster.length === 0 && <tr><td colSpan={5} className="helper-text">Click "Load Staff" to see everyone on the roster.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -9598,10 +9613,10 @@ function App() {
                         <td>{attorney.title || '—'}</td>
                         <td><span className={`pill pill-${attorney.isActive ? 'success' : 'neutral'}`}>{attorney.isActive ? 'Active' : 'Inactive'}</span></td>
                         <td>
-                          {(!currentUser || currentUser.isAdmin) ? (
+                          {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
                             <button onClick={() => void saveAttorney({ ...attorney, isActive: !attorney.isActive })}>{attorney.isActive ? 'Deactivate' : 'Activate'}</button>
                           ) : (
-                            <span className="helper-text">Admin only</span>
+                            <span className="helper-text">Admin or Manager only</span>
                           )}
                         </td>
                       </tr>
@@ -9610,7 +9625,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              {(!currentUser || currentUser.isAdmin) && (
+              {(!currentUser || currentUser.isAdmin || currentUser.isManager) && (
                 <div className="form-grid top-gap-small">
                   <label><span>Name</span><input value={newAttorneyName} onChange={(event) => setNewAttorneyName(event.target.value)} placeholder="Full name" /></label>
                   <label><span>Title</span><input value={newAttorneyTitle} onChange={(event) => setNewAttorneyTitle(event.target.value)} placeholder="e.g. Chief Counsel (optional)" /></label>
@@ -9629,7 +9644,7 @@ function App() {
                         <td>{legalAssistant.name}</td>
                         <td><span className={`pill pill-${legalAssistant.isActive ? 'success' : 'neutral'}`}>{legalAssistant.isActive ? 'Active' : 'Inactive'}</span></td>
                         <td>
-                          {(!currentUser || currentUser.isAdmin) ? (
+                          {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
                             <div className="chip-row">
                               {attorneys.map((attorney) => (
                                 <label key={attorney.id} className="toggle-inline">
@@ -9652,10 +9667,10 @@ function App() {
                           )}
                         </td>
                         <td>
-                          {(!currentUser || currentUser.isAdmin) ? (
+                          {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
                             <button onClick={() => void saveLegalAssistant({ ...legalAssistant, isActive: !legalAssistant.isActive })}>{legalAssistant.isActive ? 'Deactivate' : 'Activate'}</button>
                           ) : (
-                            <span className="helper-text">Admin only</span>
+                            <span className="helper-text">Admin or Manager only</span>
                           )}
                         </td>
                       </tr>
@@ -9664,7 +9679,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              {(!currentUser || currentUser.isAdmin) && (
+              {(!currentUser || currentUser.isAdmin || currentUser.isManager) && (
                 <div className="form-grid top-gap-small">
                   <label className="full-span"><span>Name</span><input value={newLegalAssistantName} onChange={(event) => setNewLegalAssistantName(event.target.value)} placeholder="Full name" /></label>
                   <div className="full-span">

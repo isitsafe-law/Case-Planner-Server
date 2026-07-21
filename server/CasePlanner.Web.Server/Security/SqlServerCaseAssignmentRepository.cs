@@ -61,6 +61,24 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         return Convert.ToString(await command.ExecuteScalarAsync(token));
     }
 
+    // Multi-user rollout Phase 4a (notifications core): resolves the recipients for the
+    // "task completed" trigger - the case's active assignees carrying a given case_role (Attorney,
+    // in practice). Kept separate from the shared notification-insert method so that method stays
+    // generic (just recipient ids in, notifications out) rather than coupled to case_assignments.
+    public async Task<List<Guid>> GetCaseRoleUserIdsAsync(long caseId, string caseRole, CancellationToken token = default)
+    {
+        var result = new List<Guid>();
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ca.user_id FROM dbo.case_assignments ca JOIN dbo.app_users u ON u.id=ca.user_id WHERE ca.case_id=@caseId AND ca.case_role=@caseRole AND u.is_active=1";
+        command.Parameters.Add(new SqlParameter("@caseId", caseId));
+        command.Parameters.Add(new SqlParameter("@caseRole", caseRole));
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(reader.GetGuid(0));
+        return result;
+    }
+
     public async Task<HashSet<long>> GetAssignedCaseIdsAsync(Guid userId, CancellationToken token = default)
     {
         var result = new HashSet<long>();

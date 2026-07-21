@@ -49,6 +49,18 @@ public abstract class SqlServerWorkItemStoreBase(IDatabaseConnectionFactory conn
         command.Parameters.Add(new SqlParameter("@caseId", caseId));
         if (await command.ExecuteScalarAsync(token) is null) throw new InvalidOperationException($"Case {caseId} does not exist in SQL Server.");
     }
+
+    // Used to build a human-readable notification body ("Task 'X' assigned to you on 24-CV-100").
+    // Runs on the same connection after the caller's own transaction has committed, since
+    // notification creation is deliberately not coupled into the checklist item's transaction.
+    protected static async Task<string?> GetCaseNumberAsync(DbConnection connection, long caseId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT case_number FROM dbo.cases WHERE id=@caseId";
+        command.Parameters.Add(new SqlParameter("@caseId", caseId));
+        var result = await command.ExecuteScalarAsync(token);
+        return result is null or DBNull ? null : Convert.ToString(result);
+    }
 }
 
 public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor)
@@ -200,7 +212,7 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
     }
 }
 
-public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor)
+public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor, SqlServerNotificationStore notifications, SqlServerCaseAssignmentRepository assignments)
     : SqlServerWorkItemStoreBase(connections, accessor), IChecklistStore
 {
     public string Provider => "SqlServer";
@@ -218,10 +230,11 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     {
         if(string.IsNullOrWhiteSpace(model.Task)) throw new ArgumentException("Checklist task is required."); var isNew=model.Id==0;
         await using var connection=Connections.CreateConnection(); await connection.OpenAsync(token); await using var transaction=await connection.BeginTransactionAsync(token);
-        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null;
+        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null,previousAssignedUserId=null;
         if(isNew) await EnsureCaseExistsAsync(connection,transaction,model.CaseId,token);
-        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);}}
-        var completed=model.Status is "Done" or "Complete"?(previousStatus is "Done" or "Complete"?previousCompleted:now):null;
+        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id,assigned_user_id FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);previousAssignedUserId=reader.IsDBNull(3)?null:reader.GetGuid(3).ToString();}}
+        var isNowDone=model.Status is "Done" or "Complete"; var wasAlreadyDone=previousStatus is "Done" or "Complete";
+        var completed=isNowDone?(wasAlreadyDone?previousCompleted:now):null;
         await using var command=connection.CreateCommand();command.Transaction=transaction;
         if(isNew) command.CommandText="""
             INSERT INTO dbo.checklist_items (case_id,phase,task,due_date,status,notes,source_type,is_manual,created_at,updated_at,completed_at,source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_user_id)
@@ -232,7 +245,30 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
             OUTPUT INSERTED.id,INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0
             """;command.Parameters.Add(new SqlParameter("@id",model.Id));command.Parameters.Add(new SqlParameter("@version",ExpectedVersion(model.RowVersion,"checklist item",model.Id)));}
         AddParameters(command,model,completed,now);await using(var reader=await command.ExecuteReaderAsync(token)){if(!await reader.ReadAsync(token))throw new WorkItemConcurrencyException("Checklist item",model.Id);model.Id=reader.GetInt64(0);model.RowVersion=Convert.ToBase64String((byte[])reader.GetValue(1));}
-        model.CompletedAt=completed;await AuditAsync(connection,transaction,model.CaseId,isNew?"ChecklistItemCreated":"ChecklistItemUpdated","ChecklistItem",model.Id,token);await transaction.CommitAsync(token);return model;
+        model.CompletedAt=completed;await AuditAsync(connection,transaction,model.CaseId,isNew?"ChecklistItemCreated":"ChecklistItemUpdated","ChecklistItem",model.Id,token);await transaction.CommitAsync(token);
+
+        // Notification triggers run after the checklist transaction commits - deliberately not
+        // coupled into it, so a notification failure can never roll back the actual task save.
+        var normalizedPreviousAssigned=string.IsNullOrWhiteSpace(previousAssignedUserId)?null:previousAssignedUserId;
+        var normalizedNewAssigned=string.IsNullOrWhiteSpace(model.AssignedUserId)?null:model.AssignedUserId;
+        if(normalizedNewAssigned is not null && !string.Equals(normalizedNewAssigned,normalizedPreviousAssigned,StringComparison.OrdinalIgnoreCase))
+        {
+            var caseNumber=await GetCaseNumberAsync(connection,model.CaseId,token);
+            var body=string.IsNullOrWhiteSpace(caseNumber)?$"Task '{model.Task}' assigned to you.":$"Task '{model.Task}' assigned to you on {caseNumber}.";
+            await notifications.CreateAsync([normalizedNewAssigned],"TaskAssigned",model.CaseId,"Task assigned",body,token);
+        }
+        if(isNowDone && !wasAlreadyDone)
+        {
+            var recipients=await assignments.GetCaseRoleUserIdsAsync(model.CaseId,"Attorney",token);
+            if(recipients.Count>0)
+            {
+                var caseNumber=await GetCaseNumberAsync(connection,model.CaseId,token);
+                var body=string.IsNullOrWhiteSpace(caseNumber)?$"Task '{model.Task}' completed.":$"Task '{model.Task}' completed on {caseNumber}.";
+                await notifications.CreateAsync(recipients.Select(r=>r.ToString()).ToList(),"TaskCompleted",model.CaseId,"Task completed",body,token);
+            }
+        }
+
+        return model;
     }
 
     public async Task DeleteAsync(long id,string? rowVersion=null,CancellationToken token=default)
@@ -248,6 +284,108 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     // FK'd to dbo.app_users(id)); only ever meaningfully populated once Entra/roster assignment is
     // in use, so an unparsable/blank value is stored as NULL rather than failing the save.
     private static void AddParameters(DbCommand c,ChecklistItemRecord m,string? completed,string now){c.Parameters.Add(new SqlParameter("@caseId",m.CaseId));c.Parameters.Add(new SqlParameter("@phase",m.Phase));c.Parameters.Add(new SqlParameter("@task",m.Task.Trim()));c.Parameters.Add(new SqlParameter("@due",Db(Date(m.DueDate))));c.Parameters.Add(new SqlParameter("@status",m.Status));c.Parameters.Add(new SqlParameter("@notes",Db(m.Notes)));c.Parameters.Add(new SqlParameter("@sourceType",m.SourceType));c.Parameters.Add(new SqlParameter("@manual",m.IsManual?1L:0L));c.Parameters.Add(new SqlParameter("@now",now));c.Parameters.Add(new SqlParameter("@completed",Db(completed)));c.Parameters.Add(new SqlParameter("@sourceKind",m.SourceKind));c.Parameters.Add(new SqlParameter("@templateId",Db(m.SourceTemplateId)));c.Parameters.Add(new SqlParameter("@templateVersion",(object?)m.SourceTemplateVersion??DBNull.Value));c.Parameters.Add(new SqlParameter("@sourceStage",Db(m.SourceStage)));c.Parameters.Add(new SqlParameter("@generatedAt",Db(m.GeneratedAt)));c.Parameters.Add(new SqlParameter("@generatedBy",Db(m.GeneratedBy)));c.Parameters.Add(new SqlParameter("@assignedUserId",Guid.TryParse(m.AssignedUserId,out var assignedGuid)?assignedGuid:DBNull.Value));}
+}
+
+// Multi-user rollout Phase 4a (notifications core). The "shared insert" from the phase's
+// requirements: CreateAsync takes plain recipient ids and text, with no knowledge of case_assignments
+// or checklist_items - SqlServerChecklistStore is the only current caller and does its own
+// case_role='Attorney' resolution via SqlServerCaseAssignmentRepository before calling in. Cannot be
+// exercised against a live SQL Server in this sandbox - compile/review-only, like the rest of this
+// project's SqlServer*-prefixed code.
+public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connections) : INotificationStore
+{
+    public string Provider => "SqlServer";
+
+    public async Task CreateAsync(IReadOnlyCollection<string> recipientUserIds, string notificationType, long? caseId, string title, string body, CancellationToken token = default)
+    {
+        var recipients = recipientUserIds
+            .Select(r => Guid.TryParse(r, out var parsed) ? parsed : (Guid?)null)
+            .Where(g => g is not null)
+            .Select(g => g!.Value)
+            .Distinct()
+            .ToList();
+        if (recipients.Count == 0) return;
+
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        foreach (var recipient in recipients)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO dbo.notifications (recipient_user_id,case_id,notification_type,title,body) VALUES (@recipient,@caseId,@type,@title,@body)";
+            command.Parameters.Add(new SqlParameter("@recipient", recipient));
+            command.Parameters.Add(new SqlParameter("@caseId", (object?)caseId ?? DBNull.Value));
+            command.Parameters.Add(new SqlParameter("@type", notificationType));
+            command.Parameters.Add(new SqlParameter("@title", title));
+            command.Parameters.Add(new SqlParameter("@body", (object?)body ?? DBNull.Value));
+            await command.ExecuteNonQueryAsync(token);
+        }
+        await transaction.CommitAsync(token);
+    }
+
+    public async Task<NotificationFeed> GetForRecipientAsync(string recipientUserId, int limit = 50, CancellationToken token = default)
+    {
+        var feed = new NotificationFeed();
+        if (!Guid.TryParse(recipientUserId, out var recipient)) return feed;
+
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT TOP (@limit) id,recipient_user_id,case_id,notification_type,title,body,is_read,created_at,read_at
+                FROM dbo.notifications WHERE recipient_user_id=@recipient ORDER BY created_at DESC, id DESC
+                """;
+            command.Parameters.Add(new SqlParameter("@limit", limit));
+            command.Parameters.Add(new SqlParameter("@recipient", recipient));
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+            {
+                feed.Items.Add(new NotificationRecord
+                {
+                    Id = reader.GetInt64(0),
+                    RecipientUserId = reader.GetGuid(1).ToString(),
+                    CaseId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                    NotificationType = reader.GetString(3),
+                    Title = reader.GetString(4),
+                    Body = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    IsRead = reader.GetBoolean(6),
+                    CreatedAt = reader.GetDateTime(7).ToString("O"),
+                    ReadAt = reader.IsDBNull(8) ? null : reader.GetDateTime(8).ToString("O"),
+                });
+            }
+        }
+
+        await using var countCommand = connection.CreateCommand();
+        countCommand.CommandText = "SELECT COUNT(*) FROM dbo.notifications WHERE recipient_user_id=@recipient AND is_read=0";
+        countCommand.Parameters.Add(new SqlParameter("@recipient", recipient));
+        feed.UnreadCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(token));
+        return feed;
+    }
+
+    public async Task<bool> MarkReadAsync(long id, string recipientUserId, CancellationToken token = default)
+    {
+        if (!Guid.TryParse(recipientUserId, out var recipient)) return false;
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE dbo.notifications SET is_read=1,read_at=SYSUTCDATETIME() WHERE id=@id AND recipient_user_id=@recipient";
+        command.Parameters.Add(new SqlParameter("@id", id));
+        command.Parameters.Add(new SqlParameter("@recipient", recipient));
+        return await command.ExecuteNonQueryAsync(token) > 0;
+    }
+
+    public async Task MarkAllReadAsync(string recipientUserId, CancellationToken token = default)
+    {
+        if (!Guid.TryParse(recipientUserId, out var recipient)) return;
+        await using var connection = connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE dbo.notifications SET is_read=1,read_at=SYSUTCDATETIME() WHERE recipient_user_id=@recipient AND is_read=0";
+        command.Parameters.Add(new SqlParameter("@recipient", recipient));
+        await command.ExecuteNonQueryAsync(token);
+    }
 }
 
 public sealed class SqlServerDiscoveryTrackingStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor)

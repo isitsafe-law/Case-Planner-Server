@@ -1522,17 +1522,19 @@ public sealed partial class CasePlannerRepository
             var now = DateTime.UtcNow.ToString("O");
             string? previousStatus = null;
             string? previousCompletedAt = null;
+            string? previousAssignedUserId = null;
             if (model.Id != 0)
             {
                 var lookup = connection.CreateCommand();
                 lookup.Transaction = tx;
-                lookup.CommandText = "SELECT status, completed_at FROM checklist_items WHERE id=@id";
+                lookup.CommandText = "SELECT status, completed_at, assigned_user_id FROM checklist_items WHERE id=@id";
                 lookup.Parameters.AddWithValue("@id", model.Id);
                 await using var lookupReader = await lookup.ExecuteReaderAsync();
                 if (await lookupReader.ReadAsync())
                 {
                     previousStatus = lookupReader.IsDBNull(0) ? null : lookupReader.GetString(0);
                     previousCompletedAt = lookupReader.IsDBNull(1) ? null : lookupReader.GetString(1);
+                    previousAssignedUserId = lookupReader.IsDBNull(2) ? null : lookupReader.GetString(2);
                 }
             }
 
@@ -1583,8 +1585,161 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@assigned_user_id", DbValue(model.AssignedUserId));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CompletedAt = completedAt;
+
+            // Notification trigger 1 (task assigned): only fires when assigned_user_id actually
+            // transitions to a new non-blank value, not on every no-op re-save of an already-assigned
+            // task. Trigger 2 (task completed -> notify the case's assigned attorneys) is NOT hooked
+            // here: it depends on case_assignments/case_role, which is SQL-Server-only (see
+            // SqlServerChecklistStore.SaveAsync) - there is no SQLite equivalent, so this path
+            // correctly resolves zero recipients and creates nothing.
+            var normalizedPreviousAssigned = BlankToNull(previousAssignedUserId);
+            var normalizedNewAssigned = BlankToNull(model.AssignedUserId);
+            if (normalizedNewAssigned is not null && normalizedNewAssigned != normalizedPreviousAssigned)
+            {
+                var caseNumber = await GetCaseNumberAsync(connection, tx, model.CaseId);
+                var body = string.IsNullOrWhiteSpace(caseNumber)
+                    ? $"Task '{model.Task}' assigned to you."
+                    : $"Task '{model.Task}' assigned to you on {caseNumber}.";
+                await InsertNotificationsAsync(connection, tx, [normalizedNewAssigned], "TaskAssigned", model.CaseId, "Task assigned", body);
+            }
+
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved checklist task {model.Task} at {DateTime.Now:G}");
             return model;
+        });
+    }
+
+    private static async Task<string?> GetCaseNumberAsync(SqliteConnection connection, SqliteTransaction tx, long caseId)
+    {
+        var cmd = connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT case_number FROM cases WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", caseId);
+        var result = await cmd.ExecuteScalarAsync();
+        return result is null or DBNull ? null : Convert.ToString(result);
+    }
+
+    // Shared, dual-provider notification insert. Public entry point acquires its own write
+    // transaction (for standalone callers/tests); SaveChecklistItemAsync above calls the private
+    // core directly against its already-open transaction instead of re-entering this method, since
+    // WithWriteAsync's write gate is not reentrant.
+    public async Task CreateNotificationsAsync(IReadOnlyCollection<string> recipientUserIds, string notificationType, long? caseId, string title, string body)
+    {
+        if (recipientUserIds.Count == 0)
+        {
+            return;
+        }
+
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            await InsertNotificationsAsync(connection, tx, recipientUserIds, notificationType, caseId, title, body);
+            return 0;
+        });
+    }
+
+    private static async Task InsertNotificationsAsync(SqliteConnection connection, SqliteTransaction tx, IEnumerable<string> recipientUserIds, string notificationType, long? caseId, string title, string body)
+    {
+        var now = DateTime.UtcNow.ToString("O");
+        foreach (var recipientUserId in recipientUserIds)
+        {
+            if (string.IsNullOrWhiteSpace(recipientUserId))
+            {
+                continue;
+            }
+
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO notifications (recipient_user_id, case_id, notification_type, title, body, is_read, created_at)
+                VALUES (@recipient_user_id, @case_id, @notification_type, @title, @body, 0, @created_at)
+                """;
+            cmd.Parameters.AddWithValue("@recipient_user_id", recipientUserId);
+            cmd.Parameters.AddWithValue("@case_id", caseId is null ? DBNull.Value : caseId);
+            cmd.Parameters.AddWithValue("@notification_type", notificationType);
+            cmd.Parameters.AddWithValue("@title", title);
+            cmd.Parameters.AddWithValue("@body", DbValue(body));
+            cmd.Parameters.AddWithValue("@created_at", now);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    public async Task<NotificationFeed> GetNotificationsForRecipientAsync(string recipientUserId, int limit = 50)
+    {
+        var feed = new NotificationFeed();
+        if (string.IsNullOrWhiteSpace(recipientUserId))
+        {
+            return feed;
+        }
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, recipient_user_id, case_id, notification_type, title, body, is_read, created_at, read_at
+            FROM notifications
+            WHERE recipient_user_id = @recipient_user_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT @limit
+            """;
+        cmd.Parameters.AddWithValue("@recipient_user_id", recipientUserId);
+        cmd.Parameters.AddWithValue("@limit", limit);
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                feed.Items.Add(new NotificationRecord
+                {
+                    Id = reader.GetInt64(0),
+                    RecipientUserId = reader.GetString(1),
+                    CaseId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                    NotificationType = reader.GetString(3),
+                    Title = reader.GetString(4),
+                    Body = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    IsRead = !reader.IsDBNull(6) && reader.GetInt64(6) == 1,
+                    CreatedAt = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                    ReadAt = reader.IsDBNull(8) ? null : reader.GetString(8),
+                });
+            }
+        }
+
+        var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM notifications WHERE recipient_user_id = @recipient_user_id AND is_read = 0";
+        countCmd.Parameters.AddWithValue("@recipient_user_id", recipientUserId);
+        feed.UnreadCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+        return feed;
+    }
+
+    public async Task<bool> MarkNotificationReadAsync(long id, string recipientUserId)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE notifications SET is_read=1, read_at=@read_at WHERE id=@id AND recipient_user_id=@recipient_user_id";
+            cmd.Parameters.AddWithValue("@read_at", now);
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@recipient_user_id", recipientUserId);
+            return await cmd.ExecuteNonQueryAsync() > 0;
+        });
+    }
+
+    public async Task MarkAllNotificationsReadAsync(string recipientUserId)
+    {
+        if (string.IsNullOrWhiteSpace(recipientUserId))
+        {
+            return;
+        }
+
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE notifications SET is_read=1, read_at=@read_at WHERE recipient_user_id=@recipient_user_id AND is_read=0";
+            cmd.Parameters.AddWithValue("@read_at", now);
+            cmd.Parameters.AddWithValue("@recipient_user_id", recipientUserId);
+            await cmd.ExecuteNonQueryAsync();
+            return 0;
         });
     }
 
@@ -7358,6 +7513,17 @@ public sealed partial class CasePlannerRepository
             created_at TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient_user_id TEXT NOT NULL,
+            case_id INTEGER,
+            notification_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT,
+            read_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS exhibits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
@@ -7568,6 +7734,7 @@ public sealed partial class CasePlannerRepository
         CREATE INDEX IF NOT EXISTS idx_discovery_postures_case_id ON discovery_postures(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_history_activity_id ON activity_log_history(activity_id);
+        CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read_created ON notifications(recipient_user_id, is_read, created_at);
         """;
 
     // These indexes touch cases columns added via AddColumnIfMissingAsync below, so they must run

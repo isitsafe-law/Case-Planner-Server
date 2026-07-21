@@ -258,6 +258,30 @@ public sealed class ChecklistItemRecord
     public string? AssignedUserId { get; set; }
 }
 
+// Multi-user rollout Phase 4a (notifications core). recipient_user_id follows the same opaque
+// passthrough convention as checklist_items.assigned_user_id above (TEXT on SQLite, uniqueidentifier
+// FK'd to dbo.app_users on SQL Server). NotificationType is a plain validated string (TaskAssigned/
+// TaskCompleted today; DeadlineReminder is Phase 4b) rather than a DB enum, matching case_role/
+// assignment_role/checklist status.
+public sealed class NotificationRecord
+{
+    public long Id { get; set; }
+    public string RecipientUserId { get; set; } = "";
+    public long? CaseId { get; set; }
+    public string NotificationType { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? Body { get; set; }
+    public bool IsRead { get; set; }
+    public string CreatedAt { get; set; } = "";
+    public string? ReadAt { get; set; }
+}
+
+public sealed class NotificationFeed
+{
+    public List<NotificationRecord> Items { get; set; } = [];
+    public int UnreadCount { get; set; }
+}
+
 public sealed class DiscoveryItemRecord
 {
     public long Id { get; set; }

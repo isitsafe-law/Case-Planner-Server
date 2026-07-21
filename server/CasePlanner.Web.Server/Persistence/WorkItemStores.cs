@@ -27,6 +27,18 @@ public interface IDiscoveryTrackingStore
     Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default);
 }
 
+// Multi-user rollout Phase 4a (notifications core). CreateAsync is the "shared insert" - it just
+// takes recipient ids and text, with no knowledge of where those ids came from (checklist
+// assignment, case_assignments' Attorney role, or a test calling it directly).
+public interface INotificationStore
+{
+    string Provider { get; }
+    Task CreateAsync(IReadOnlyCollection<string> recipientUserIds, string notificationType, long? caseId, string title, string body, CancellationToken token = default);
+    Task<NotificationFeed> GetForRecipientAsync(string recipientUserId, int limit = 50, CancellationToken token = default);
+    Task<bool> MarkReadAsync(long id, string recipientUserId, CancellationToken token = default);
+    Task MarkAllReadAsync(string recipientUserId, CancellationToken token = default);
+}
+
 public sealed class SqliteDeadlineStore(CasePlannerRepository repository) : IDeadlineStore
 {
     public string Provider => "Sqlite";
@@ -49,4 +61,17 @@ public sealed class SqliteDiscoveryTrackingStore(CasePlannerRepository repositor
     public Task<List<DiscoveryItemRecord>> GetAsync(long? caseId, CancellationToken token = default) => repository.GetDiscoveryItemsAsync(caseId);
     public Task<DiscoveryItemRecord> SaveAsync(DiscoveryItemRecord model, CancellationToken token = default) => repository.SaveDiscoveryItemAsync(model);
     public Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default) => repository.DeleteDiscoveryItemAsync(id);
+}
+
+public sealed class SqliteNotificationStore(CasePlannerRepository repository) : INotificationStore
+{
+    public string Provider => "Sqlite";
+    public Task CreateAsync(IReadOnlyCollection<string> recipientUserIds, string notificationType, long? caseId, string title, string body, CancellationToken token = default) =>
+        repository.CreateNotificationsAsync(recipientUserIds, notificationType, caseId, title, body);
+    public Task<NotificationFeed> GetForRecipientAsync(string recipientUserId, int limit = 50, CancellationToken token = default) =>
+        repository.GetNotificationsForRecipientAsync(recipientUserId, limit);
+    public Task<bool> MarkReadAsync(long id, string recipientUserId, CancellationToken token = default) =>
+        repository.MarkNotificationReadAsync(id, recipientUserId);
+    public Task MarkAllReadAsync(string recipientUserId, CancellationToken token = default) =>
+        repository.MarkAllNotificationsReadAsync(recipientUserId);
 }

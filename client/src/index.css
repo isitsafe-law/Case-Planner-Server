@@ -350,6 +350,135 @@ label span {
   border-color: rgba(255, 255, 255, 0.5);
 }
 
+/* Notification bell (multi-user rollout Phase 4a, mockup .appbar): sits between the search form
+   and the command-palette hint, matching the kbd-hit chip's 36px hit area. The unread badge uses a
+   light chip on the dark app bar rather than --danger or --brand-crimson - an unread count isn't a
+   warning/destructive state, and brand-crimson is reserved for the app-bar tick only. */
+.notification-bell {
+  position: relative;
+}
+
+.notification-bell-trigger {
+  position: relative;
+  color: var(--appbar-text);
+}
+
+.notification-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: var(--r-full, 999px);
+  background: var(--text-on-dark);
+  color: var(--appbar-bg);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.notification-dropdown {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  z-index: 60;
+  color: var(--text);
+}
+
+.notification-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notification-mark-all {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.notification-mark-all:hover {
+  color: var(--primary-strong);
+  text-decoration: underline;
+}
+
+.notification-empty {
+  padding: 1.1rem 0.8rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.notification-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.notification-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.notification-row:hover {
+  background: var(--surface-subtle);
+}
+
+.notification-row.unread {
+  background: var(--primary-soft);
+}
+
+.notification-row.unread:hover {
+  background: var(--primary-soft);
+  filter: brightness(0.97);
+}
+
+.notification-row-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.notification-row-body {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.notification-row-time {
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 .search-suggestions {
   position: absolute;
   top: calc(100% + 0.35rem);

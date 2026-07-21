@@ -29,6 +29,7 @@ import { MetricTile } from './ui/MetricTile'
 import { Drawer } from './ui/Drawer'
 import { CommandPalette, ShortcutHelpDialog, type CommandGroup } from './ui/CommandPalette'
 import { ConfirmDialog, type ConfirmOptions } from './ui/ConfirmDialog'
+import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
@@ -159,6 +160,14 @@ type ChecklistItem = {
   // locally - always round-trips structurally, but only meaningfully populated/selectable when
   // Entra is enabled.
   assignedUserId?: string | null
+}
+
+// Multi-user rollout Phase 4a (notifications core). Empty items/zero unread when there's no
+// resolvable actor (Entra disabled / local dev) - the server returns an empty feed rather than an
+// error in that case, so the client never needs a separate "no actor" branch here.
+type NotificationFeed = {
+  items: NotificationItem[]
+  unreadCount: number
 }
 
 // Multi-user rollout Phase 2, item 1: case.opposingCounsel (a single free-text string with no
@@ -1668,6 +1677,9 @@ function App() {
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false)
+  const [notificationItems, setNotificationItems] = useState<NotificationItem[]>([])
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmOptions | null>(null)
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null)
 
@@ -2451,6 +2463,55 @@ function App() {
     setSelectedChecklistIds([])
     setBulkDeadlineDueDate('')
     setBulkChecklistDueDate('')
+  }
+
+  // Multi-user rollout Phase 4a: polls on a 60s interval plus on-load/on-open, per the phase's
+  // "don't over-engineer a websocket/SSE push mechanism" guidance. Errors are swallowed rather than
+  // surfaced via setErrorMessage - a notification refresh failing shouldn't interrupt whatever the
+  // user is doing elsewhere in the app.
+  async function loadNotifications() {
+    try {
+      const feed = await api<NotificationFeed>('/api/notifications')
+      setNotificationItems(feed.items)
+      setNotificationUnreadCount(feed.unreadCount)
+    } catch {
+      // best-effort only
+    }
+  }
+
+  useEffect(() => {
+    void loadNotifications()
+    const interval = window.setInterval(() => { void loadNotifications() }, 60_000)
+    return () => window.clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function markNotificationRead(item: NotificationItem) {
+    setNotificationItems((current) => current.map((n) => (n.id === item.id ? { ...n, isRead: true } : n)))
+    setNotificationUnreadCount((current) => (item.isRead ? current : Math.max(0, current - 1)))
+    if (!item.isRead) {
+      try {
+        await api(`/api/notifications/${item.id}/read`, { method: 'POST' })
+      } catch {
+        // best-effort only
+      }
+    }
+  }
+
+  async function selectNotification(item: NotificationItem) {
+    setNotificationsOpen(false)
+    await markNotificationRead(item)
+    if (item.caseId) openCase(item.caseId, 'work')
+  }
+
+  async function markAllNotificationsRead() {
+    setNotificationItems((current) => current.map((n) => ({ ...n, isRead: true })))
+    setNotificationUnreadCount(0)
+    try {
+      await api('/api/notifications/read-all', { method: 'POST' })
+    } catch {
+      // best-effort only
+    }
   }
 
   async function loadAttorneyDashboard(filters: AttorneyDashboardFilters) {
@@ -7472,6 +7533,21 @@ function App() {
             </div>
           )}
         </form>
+        <NotificationBell
+          items={notificationItems}
+          unreadCount={notificationUnreadCount}
+          open={notificationsOpen}
+          onToggle={() => {
+            setNotificationsOpen((current) => {
+              const next = !current
+              if (next) void loadNotifications()
+              return next
+            })
+          }}
+          onClose={() => setNotificationsOpen(false)}
+          onSelect={(item) => void selectNotification(item)}
+          onMarkAllRead={() => void markAllNotificationsRead()}
+        />
         <button type="button" className="kbd-hit" aria-label="Open command palette" onClick={() => setCommandPaletteOpen(true)}>
           <span className="kbd">Ctrl K</span>
         </button>

@@ -133,6 +133,12 @@ builder.Services.AddSingleton<IDeadlineStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerDeadlineStore>()
         : services.GetRequiredService<SqliteDeadlineStore>());
+builder.Services.AddSingleton<SqliteNotificationStore>();
+builder.Services.AddSingleton<SqlServerNotificationStore>();
+builder.Services.AddSingleton<INotificationStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerNotificationStore>()
+        : services.GetRequiredService<SqliteNotificationStore>());
 builder.Services.AddSingleton<SqliteChecklistStore>();
 builder.Services.AddSingleton<SqlServerChecklistStore>();
 builder.Services.AddSingleton<IChecklistStore>(services =>
@@ -692,6 +698,30 @@ app.MapDelete("/api/checklist/{id:long}", async (long id,IChecklistStore checkli
     var caseId=await children.GetCaseIdAsync("checklist",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
     await checklist.DeleteAsync(id, token: token);
     return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Multi-user rollout Phase 4a (notifications core): mirrors the CaseAccessService "unrestricted
+// when there's no resolvable actor" convention used throughout this app - Entra disabled / local
+// dev has no UserId, so the bell just shows empty/zero rather than erroring. These routes aren't
+// case-id-scoped (they self-scope by actor, not by case), so - like /api/admin/case-assignments
+// etc. above - they need AssignmentAwareEndpointMetadata to pass the ordinary-user middleware gate
+// once Entra's non-admin-pilot mode is active; otherwise every non-admin user would be Forbidden
+// from ever seeing their own notifications.
+app.MapGet("/api/notifications", async (INotificationStore notifications, IApplicationActorContext actor, CancellationToken token) =>
+{
+    var recipientUserId = actor.UserId?.ToString();
+    return Results.Ok(recipientUserId is null ? new NotificationFeed() : await notifications.GetForRecipientAsync(recipientUserId, 50, token));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/notifications/{id:long}/read", async (long id, INotificationStore notifications, IApplicationActorContext actor, CancellationToken token) =>
+{
+    var recipientUserId = actor.UserId?.ToString();
+    if (recipientUserId is null) return Results.NotFound();
+    return await notifications.MarkReadAsync(id, recipientUserId, token) ? Results.NoContent() : Results.NotFound();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/notifications/read-all", async (INotificationStore notifications, IApplicationActorContext actor, CancellationToken token) =>
+{
+    var recipientUserId = actor.UserId?.ToString();
+    if (recipientUserId is not null) await notifications.MarkAllReadAsync(recipientUserId, token);
+    return Results.NoContent();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapDelete("/api/deadlines/{id:long}", async (long id,IDeadlineStore deadlines,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
 {

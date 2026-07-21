@@ -155,6 +155,21 @@ type ChecklistItem = {
   generatedBy?: string | null
   isManual: boolean
   completedAt?: string | null
+  // Multi-user rollout Phase 2, item 2: SQL-Server-only functional (like Phase 1's roster), inert
+  // locally - always round-trips structurally, but only meaningfully populated/selectable when
+  // Entra is enabled.
+  assignedUserId?: string | null
+}
+
+// Multi-user rollout Phase 2, item 1: case.opposingCounsel (a single free-text string with no
+// document-generation coupling anywhere) converted to a one-to-many child table, following the
+// same simple per-case-list shape as PublicationEntry/Witness.
+type OpposingAttorney = {
+  id: number
+  caseId: number
+  name: string
+  sortOrder?: number
+  rowVersion?: string | null
 }
 
 type DiscoveryItem = {
@@ -478,6 +493,7 @@ type WorkspaceResponse = {
   publicationEntries: PublicationEntry[]
   publication: PublicationRecord
   serviceLogEntries: ServiceLogEntry[]
+  opposingAttorneys: OpposingAttorney[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -1595,6 +1611,10 @@ function App() {
   const [publicationEntries, setPublicationEntries] = useState<PublicationEntry[]>([])
   const [publicationEntryDraft, setPublicationEntryDraft] = useState<PublicationEntry>(() => emptyPublicationEntry(0))
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
+  const [opposingAttorneys, setOpposingAttorneys] = useState<OpposingAttorney[]>([])
+  // Work Queue task rows span many cases at once - cache each case's assignable staff (its
+  // existing Phase 1 case-assignment list) on demand rather than loading the whole office roster.
+  const [queueAssigneeOptions, setQueueAssigneeOptions] = useState<Record<number, CaseAssignmentRecord[]>>({})
   const [narrativeInputDraft, setNarrativeInputDraft] = useState<RiskNarrativeManualInputs | null>(null)
   const [narrativeGenerating, setNarrativeGenerating] = useState(false)
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([])
@@ -2050,6 +2070,7 @@ function App() {
       setPublicationEntries(data.publicationEntries ?? [])
       setPublicationEntryDraft(emptyPublicationEntry(caseId))
       setPublicationEntryFormOpen(false)
+      setOpposingAttorneys(data.opposingAttorneys ?? [])
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -2121,6 +2142,52 @@ function App() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to add assignment.')
     }
+  }
+
+  // Multi-user rollout Phase 2, item 2: task assignment scopes its picker to people already on
+  // the case's assigned staff (Phase 1's per-case assignment list) rather than the whole office
+  // roster - lower-noise, and "assign to someone already working the case" is the useful case.
+  // The per-case Work tab already has this loaded via caseAssignments (loadWorkspace calls
+  // loadCaseAssignments); the cross-case Work Queue fetches and caches it per case on demand.
+  function assigneeOptionsForCase(caseId: number): CaseAssignmentRecord[] {
+    if (caseId === (workspace?.case.id ?? selectedCaseId)) return caseAssignments
+    return queueAssigneeOptions[caseId] ?? []
+  }
+
+  async function ensureQueueAssigneeOptions(caseId: number) {
+    if (caseId === (workspace?.case.id ?? selectedCaseId) || queueAssigneeOptions[caseId]) return
+    try {
+      const options = await api<CaseAssignmentRecord[]>(`/api/admin/case-assignments?caseId=${caseId}`)
+      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: options }))
+    } catch {
+      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: [] }))
+    }
+  }
+
+  // Shared assignee display + picker for a checklist task row, reused by both the per-case Work
+  // tab and the cross-case Work Queue. Any signed-in user can assign a task (unlike case
+  // assignment itself, which stays a manager/admin action) - the original request was "tasks
+  // should be assignable to a legal assistant" with no admin qualifier. Degrades gracefully to a
+  // bare "Unassigned" option when Entra is disabled or the case has no assigned staff yet.
+  function renderTaskAssigneeControl(item: ChecklistItem) {
+    const options = assigneeOptionsForCase(item.caseId)
+    const currentKnown = options.some((o) => o.userId === item.assignedUserId)
+    return (
+      <div className="ui-sub work-assignee">
+        <span className="visually-hidden">Assignee</span>
+        <select
+          className="inline-edit-select"
+          aria-label={`Assign ${item.task}`}
+          value={item.assignedUserId || ''}
+          onFocus={() => void ensureQueueAssigneeOptions(item.caseId)}
+          onChange={(event) => void persistChecklist({ ...item, assignedUserId: event.target.value || null }, 'Task assignee updated.', false)}
+        >
+          <option value="">Unassigned</option>
+          {!currentKnown && item.assignedUserId && <option value={item.assignedUserId}>Assigned (not on case list)</option>}
+          {options.map((o) => <option key={o.userId} value={o.userId}>{o.displayName}</option>)}
+        </select>
+      </div>
+    )
   }
 
   async function removeCaseAssignment(assignment: CaseAssignmentRecord) {
@@ -4371,6 +4438,50 @@ function App() {
     }
   }
 
+  // Multi-user rollout Phase 2, item 1: opposing attorneys are a small repeatable list of plain
+  // text-input rows (add/remove), persisted immediately per row - each row is its own case-child
+  // record (case_opposing_attorneys), not part of the case-editor's single Save button.
+  function addOpposingAttorneyRow() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    setOpposingAttorneys((prev) => [...prev, { id: 0, caseId, name: '', sortOrder: prev.length }])
+  }
+
+  function updateOpposingAttorneyName(index: number, name: string) {
+    setOpposingAttorneys((prev) => prev.map((row, i) => (i === index ? { ...row, name } : row)))
+  }
+
+  async function commitOpposingAttorneyRow(index: number) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    const row = opposingAttorneys[index]
+    if (!caseId || !row || !row.name.trim()) return
+    try {
+      setErrorMessage('')
+      const saved = await api<OpposingAttorney>(`/api/cases/${caseId}/opposing-attorneys`, { method: 'POST', body: JSON.stringify({ ...row, caseId }) })
+      setOpposingAttorneys((prev) => prev.map((r, i) => (i === index ? saved : r)))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save opposing attorney.')
+    }
+  }
+
+  async function removeOpposingAttorneyRow(index: number) {
+    const row = opposingAttorneys[index]
+    if (!row) return
+    if (row.id === 0) {
+      setOpposingAttorneys((prev) => prev.filter((_, i) => i !== index))
+      return
+    }
+    if (!(await confirmAction({ title: 'Remove opposing attorney?', message: `${row.name || 'This entry'} will be removed from the case.`, confirmLabel: 'Remove', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/opposing-attorneys/${row.id}`, { method: 'DELETE' })
+      setOpposingAttorneys((prev) => prev.filter((_, i) => i !== index))
+      setMessage('Opposing attorney removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove opposing attorney.')
+    }
+  }
+
   function startNarrativeGeneration() {
     setNarrativeInputDraft(emptyRiskNarrativeInputs())
   }
@@ -5157,6 +5268,7 @@ function App() {
                 {item.task}
                 <div className="ui-sub">{item.phase || 'General'}</div>
                 {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
+                {renderTaskAssigneeControl(item)}
               </td>
               {renderCaseCell(item.caseId, 'work')}
               <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
@@ -5295,6 +5407,7 @@ function App() {
     const commandDeadlines = workspace ? workspace.deadlines.filter((item) => !isDeadlineDone(item)).sort((a, b) => (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31')).slice(0, 3) : []
     const commandChecklist = workspace ? sortChecklistForDisplay(workspace.checklistItems.filter((item) => !isChecklistDone(item))).slice(0, 3) : []
     const commandDiscovery = workspace ? workspace.discoveryItems.filter((item) => item.status.includes('Follow-Up') || item.status.includes('Waiting')).slice(0, 3) : []
+    const opposingAttorneyNames = opposingAttorneys.map((row) => row.name.trim()).filter(Boolean).join(', ')
     const coreRecordFields = [
       { label: 'Filing Date', value: displayDate(selectedCase.filingDate), important: Boolean(selectedCase.filingDate), always: false },
       { label: 'Date of Taking', value: displayDate(selectedCase.dateOfTaking), important: Boolean(selectedCase.dateOfTaking), always: false },
@@ -5304,7 +5417,7 @@ function App() {
     ]
     const peopleRecordFields = [
       { label: 'Assigned Attorney', value: selectedCase.assignedAttorney || '', important: Boolean(selectedCase.assignedAttorney) },
-      { label: 'Opposing Counsel', value: selectedCase.opposingCounsel || '', important: Boolean(selectedCase.opposingCounsel) },
+      { label: 'Opposing Attorneys', value: opposingAttorneyNames, important: Boolean(opposingAttorneyNames) },
       { label: 'Owner', value: selectedCase.owner || '', important: Boolean(selectedCase.owner) },
       { label: 'Landowner', value: selectedCase.landowner || '', important: Boolean(selectedCase.landowner) },
       { label: 'Appraiser', value: selectedCase.appraiser || '', important: Boolean(selectedCase.appraiser) },
@@ -6314,7 +6427,7 @@ function App() {
               </div>
               <div className="metric-tile-row top-gap-small">
                 <div className="metric-tile"><span>Assigned Attorney</span><strong>{selectedCase.assignedAttorney || '—'}</strong></div>
-                <div className="metric-tile"><span>Opposing Counsel</span><strong>{selectedCase.opposingCounsel || '—'}</strong></div>
+                <div className="metric-tile"><span>Opposing Attorneys</span><strong>{opposingAttorneyNames || '—'}</strong></div>
                 <div className="metric-tile"><span>Appraiser (ASHC)</span><strong>{selectedCase.appraiser || '—'}</strong></div>
                 <div className="metric-tile"><span>Appraiser (Landowner)</span><strong>{selectedCase.landownerAppraiserName || '—'}</strong></div>
               </div>
@@ -6643,6 +6756,7 @@ function App() {
             <button className="ui-case-link" style={isDone ? { textDecoration: 'line-through' } : undefined} onClick={() => startChecklistModal(item)}>{item.task}</button>
             {item.completedAt && <div className="ui-sub">Completed {displayDateTime(item.completedAt)}</div>}
             <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
+            {renderTaskAssigneeControl(item)}
           </td>
           <td>
             <input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.task}`} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
@@ -7291,9 +7405,24 @@ function App() {
               <h4 className="form-section-heading">People</h4>
               <div className="form-section-grid">
                 <label><span>Landowner</span><input value={caseDraft.landowner || ''} onChange={(event) => patchCaseDraft({ landowner: event.target.value })} placeholder="Landowner" /></label>
-                <label><span>Opposing Counsel</span><input value={caseDraft.opposingCounsel || ''} onChange={(event) => patchCaseDraft({ opposingCounsel: event.target.value })} placeholder="Opposing counsel" /></label>
                 <label><span>Appraiser</span><input value={caseDraft.appraiser || ''} onChange={(event) => patchCaseDraft({ appraiser: event.target.value })} placeholder="Appraiser" /></label>
                 <label><span>Landowner's Appraiser</span><input value={caseDraft.landownerAppraiserName || ''} onChange={(event) => patchCaseDraft({ landownerAppraiserName: event.target.value })} placeholder="Landowner's appraiser" /></label>
+                <div className="full-span">
+                  <span>Opposing Attorneys</span>
+                  {opposingAttorneys.map((row, index) => (
+                    <div key={row.id || `new-${index}`} className="button-row compact-actions top-gap-small">
+                      <input
+                        value={row.name}
+                        placeholder="Opposing attorney name"
+                        onChange={(event) => updateOpposingAttorneyName(index, event.target.value)}
+                        onBlur={() => void commitOpposingAttorneyRow(index)}
+                      />
+                      <button type="button" onClick={() => void removeOpposingAttorneyRow(index)}>Remove</button>
+                    </div>
+                  ))}
+                  {opposingAttorneys.length === 0 && <p className="helper-text top-gap-small">No opposing attorneys added.</p>}
+                  <button type="button" className="top-gap-small" onClick={addOpposingAttorneyRow}>+ Add Opposing Attorney</button>
+                </div>
               </div>
             </section>
 

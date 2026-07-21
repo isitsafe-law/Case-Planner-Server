@@ -166,6 +166,12 @@ builder.Services.AddSingleton<IWitnessStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerWitnessStore>()
         : services.GetRequiredService<SqliteWitnessStore>());
+builder.Services.AddSingleton<SqliteOpposingAttorneyStore>();
+builder.Services.AddSingleton<SqlServerOpposingAttorneyStore>();
+builder.Services.AddSingleton<IOpposingAttorneyStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerOpposingAttorneyStore>()
+        : services.GetRequiredService<SqliteOpposingAttorneyStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -715,6 +721,18 @@ app.MapDelete("/api/witnesses/{id:long}", async (long id,IWitnessStore witnesses
 {
     var caseId=await children.GetCaseIdAsync("witness",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
     await witnesses.DeleteAsync(id);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/opposing-attorneys", async (long id, IOpposingAttorneyStore opposingAttorneys) => Results.Ok(await opposingAttorneys.GetAsync(id)));
+app.MapPost("/api/cases/{id:long}/opposing-attorneys", async (long id, OpposingAttorneyRecord model,IOpposingAttorneyStore opposingAttorneys,CaseAccessService access,CancellationToken token) =>
+{
+    model.CaseId = id;
+    return await access.CanWriteAsync(id,token)?Results.Ok(await opposingAttorneys.SaveAsync(model,token)):Results.Forbid();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/opposing-attorneys/{id:long}", async (long id,IOpposingAttorneyStore opposingAttorneys,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("opposing-attorney",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await opposingAttorneys.DeleteAsync(id);
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/exhibits", async (long id, IExhibitStore exhibits) => Results.Ok(await exhibits.GetAsync(id)));

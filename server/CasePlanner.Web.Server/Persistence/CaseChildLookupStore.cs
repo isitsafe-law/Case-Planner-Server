@@ -22,7 +22,7 @@ public sealed class SqlServerCaseChildLookupStore(IDatabaseConnectionFactory con
     {
         ["case-note"]="case_notes",["hearing"]="hearings",["checklist"]="checklist_items",["deadline"]="deadlines",
         ["comparable-sale"]="comparable_sales",["witness"]="witnesses",["exhibit"]="exhibits",["trial-motion"]="trial_motions",
-        ["discovery"]="discovery_tracking"
+        ["discovery"]="discovery_tracking",["opposing-attorney"]="case_opposing_attorneys"
     };
     public string Provider=>"SqlServer";
     public async Task<long?> GetCaseIdAsync(string kind,long id,CancellationToken token=default)

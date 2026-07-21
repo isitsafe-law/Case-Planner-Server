@@ -67,6 +67,7 @@ public sealed partial class CasePlannerRepository
         await BackfillServicePerfectedForAdvancedStagesAsync(connection);
         await CleanupOrphanedComputedDeadlinesAsync(connection);
         await CleanupRetired31DayServiceReminderAsync(connection);
+        await MigrateOpposingCounselToAttorneysAsync(connection);
         await ApplyDeadlineClosureRulesRetroactivelyAsync(connection);
     }
 
@@ -355,6 +356,61 @@ public sealed partial class CasePlannerRepository
         if (deadlineIds.Count > 0 || checklistIds.Count > 0)
         {
             await LogAsync($"Data-quality cleanup: retired the 31-day service status reminder - deleted {deadlineIds.Count} open deadline row(s) and {checklistIds.Count} open checklist task row(s). Completed rows were left in place.");
+        }
+    }
+
+    // One-time migration (multi-user rollout Item 1): case.opposing_counsel is converted from a
+    // single free-text field to the case_opposing_attorneys child table. The old column is kept
+    // (not dropped) and the case editor stops writing to it going forward, but any case that
+    // already has a non-blank opposing_counsel value needs that value preserved as a first row in
+    // the new table so no existing data is silently lost. Only inserts when the case doesn't
+    // already have any opposing-attorney rows, so re-runs (or a case that already migrated) never
+    // duplicate the entry.
+    private async Task MigrateOpposingCounselToAttorneysAsync(SqliteConnection connection)
+    {
+        const string flagKey = "opposing_counsel_migrated_v1";
+        if (await GetAppSettingAsync(connection, flagKey) is not null)
+        {
+            return;
+        }
+
+        var candidates = new List<(long CaseId, string Name)>();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, opposing_counsel FROM cases
+            WHERE opposing_counsel IS NOT NULL AND TRIM(opposing_counsel) <> ''
+              AND NOT EXISTS (SELECT 1 FROM case_opposing_attorneys WHERE case_id = cases.id)
+            """;
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                candidates.Add((reader.GetInt64(0), reader.GetString(1).Trim()));
+            }
+        }
+
+        await using var tx = connection.BeginTransaction();
+        var now = DateTime.UtcNow.ToString("O");
+        foreach (var (caseId, name) in candidates)
+        {
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO case_opposing_attorneys (case_id, name, sort_order, created_at, updated_at)
+                VALUES (@case_id, @name, 0, @now, @now)
+                """;
+            insert.Parameters.AddWithValue("@case_id", caseId);
+            insert.Parameters.AddWithValue("@name", name);
+            insert.Parameters.AddWithValue("@now", now);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        await SetAppSettingAsync(connection, tx, flagKey, $"Migrated {candidates.Count} existing opposing_counsel value(s) into case_opposing_attorneys at {DateTime.Now:G}");
+        await tx.CommitAsync();
+
+        if (candidates.Count > 0)
+        {
+            await LogAsync($"Data migration: copied {candidates.Count} existing case(s)' opposing_counsel value into the new case_opposing_attorneys table.");
         }
     }
 
@@ -1069,6 +1125,7 @@ public sealed partial class CasePlannerRepository
             PublicationEntries = publicationEntries,
             Publication = publication,
             ServiceLogEntries = await GetServiceLogEntriesAsync(caseId),
+            OpposingAttorneys = await GetOpposingAttorneysAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
             CaseIssueTags = await GetCaseIssueTagsAsync(caseId),
             CaseNotes = await GetCaseNotesAsync(caseId),
@@ -1146,6 +1203,7 @@ public sealed partial class CasePlannerRepository
             "exhibit"=>"exhibits","trial-motion"=>"trial_motions","case-issue-tag"=>"case_issue_tags",
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
             "service-log"=>"service_log_entries","publication-entry"=>"publication_dates","discovery"=>"discovery_tracking",
+            "opposing-attorney"=>"case_opposing_attorneys",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -1423,7 +1481,7 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, phase, task, due_date, status, notes, source_type, is_manual, completed_at,
-                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by
+                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id
             FROM checklist_items
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY phase, task
@@ -1449,7 +1507,8 @@ public sealed partial class CasePlannerRepository
                 SourceTemplateVersion = reader.IsDBNull(12) ? null : reader.GetInt32(12),
                 SourceStage = reader.IsDBNull(13) ? null : reader.GetString(13),
                 GeneratedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
-                GeneratedBy = reader.IsDBNull(15) ? null : reader.GetString(15)
+                GeneratedBy = reader.IsDBNull(15) ? null : reader.GetString(15),
+                AssignedUserId = reader.IsDBNull(16) ? null : reader.GetString(16)
             });
         }
 
@@ -1487,9 +1546,9 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     INSERT INTO checklist_items (case_id, phase, task, due_date, status, notes, source_type, is_manual, created_at, updated_at, completed_at,
-                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by)
+                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id)
                     VALUES (@case_id, @phase, @task, @due_date, @status, @notes, @source_type, @is_manual, @created_at, @updated_at, @completed_at,
-                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by);
+                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -1497,7 +1556,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE checklist_items
-                    SET phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at
+                    SET phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1521,6 +1580,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@source_stage", DbValue(model.SourceStage));
             cmd.Parameters.AddWithValue("@generated_at", DbValue(model.GeneratedAt));
             cmd.Parameters.AddWithValue("@generated_by", DbValue(model.GeneratedBy));
+            cmd.Parameters.AddWithValue("@assigned_user_id", DbValue(model.AssignedUserId));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CompletedAt = completedAt;
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved checklist task {model.Task} at {DateTime.Now:G}");
@@ -2747,6 +2807,91 @@ public sealed partial class CasePlannerRepository
             cmd.CommandText = "DELETE FROM publication_dates WHERE id=@id";
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
+            return 0;
+        });
+    }
+
+    public async Task<List<OpposingAttorneyRecord>> GetOpposingAttorneysAsync(long? caseId)
+    {
+        var list = new List<OpposingAttorneyRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, name, sort_order
+            FROM case_opposing_attorneys
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY sort_order, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new OpposingAttorneyRecord
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                Name = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                SortOrder = reader.IsDBNull(3) ? 0 : reader.GetInt32(3)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task<OpposingAttorneyRecord> SaveOpposingAttorneyAsync(OpposingAttorneyRecord model)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            if (model.Id == 0)
+            {
+                var nextOrderCmd = connection.CreateCommand();
+                nextOrderCmd.Transaction = tx;
+                nextOrderCmd.CommandText = "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM case_opposing_attorneys WHERE case_id=@case_id";
+                nextOrderCmd.Parameters.AddWithValue("@case_id", model.CaseId);
+                model.SortOrder = Convert.ToInt32(await nextOrderCmd.ExecuteScalarAsync());
+
+                cmd.CommandText = """
+                    INSERT INTO case_opposing_attorneys (case_id, name, sort_order, created_at, updated_at)
+                    VALUES (@case_id, @name, @sort_order, @created_at, @updated_at);
+                    SELECT last_insert_rowid();
+                    """;
+            }
+            else
+            {
+                cmd.CommandText = """
+                    UPDATE case_opposing_attorneys
+                    SET name=@name, sort_order=@sort_order, updated_at=@updated_at
+                    WHERE id=@id;
+                    SELECT @id;
+                    """;
+                cmd.Parameters.AddWithValue("@id", model.Id);
+            }
+
+            cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@name", model.Name);
+            cmd.Parameters.AddWithValue("@sort_order", model.SortOrder);
+            cmd.Parameters.AddWithValue("@created_at", now);
+            cmd.Parameters.AddWithValue("@updated_at", now);
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved opposing attorney {model.Name} at {DateTime.Now:G}");
+            return model;
+        });
+    }
+
+    public async Task DeleteOpposingAttorneyAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM case_opposing_attorneys WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted opposing attorney {id} at {DateTime.Now:G}");
             return 0;
         });
     }
@@ -4470,6 +4615,9 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "case_type", "TEXT DEFAULT 'Standard'");
         await AddColumnIfMissingAsync(connection, "cases", "track", "TEXT DEFAULT 'Contested'");
         await AddColumnIfMissingAsync(connection, "checklist_templates", "track", "TEXT DEFAULT 'Any'");
+        // Item 2 (multi-user rollout Phase 2): opaque passthrough on SQLite (no app_users table
+        // here to validate against) - only meaningfully populated/selectable once Entra is enabled.
+        await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_user_id", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "assigned_attorney", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "appraiser", "TEXT");
@@ -6895,6 +7043,14 @@ public sealed partial class CasePlannerRepository
             size_acres REAL,
             adjustment_notes TEXT,
             notes TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS case_opposing_attorneys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT,
             updated_at TEXT
         );

@@ -11,7 +11,8 @@ public sealed class SqlServerWorkspaceQuery(
     IDatabaseConnectionFactory connections,SqlServerCaseCatalogReader cases,SqlServerDeadlineStore deadlines,
     SqlServerChecklistStore checklist,SqlServerDiscoveryTrackingStore discovery,SqlServerCaseNoteStore notes,
     SqlServerHearingStore hearings,SqlServerPublicationEntryStore publicationEntries,
-    SqlServerActivityStore activities,SqlServerDocumentExportStore documents,SqlServerIssueTagStore issueTags) : IOperationalWorkspaceQuery
+    SqlServerActivityStore activities,SqlServerDocumentExportStore documents,SqlServerIssueTagStore issueTags,
+    SqlServerOpposingAttorneyStore opposingAttorneys) : IOperationalWorkspaceQuery
 {
     public async Task<CaseWorkspaceResponse?> GetWorkspaceAsync(long caseId,IReadOnlySet<long>? visibleCaseIds=null,CancellationToken token=default)
     {
@@ -27,6 +28,7 @@ public sealed class SqlServerWorkspaceQuery(
             Publication=publication,AvailableIssueTags=await issueTags.GetCatalogAsync(token),CaseIssueTags=await issueTags.GetCaseTagsAsync(caseId,token),
             CaseNotes=await notes.GetAsync(caseId,token),Hearings=await hearings.GetAsync(caseId,token),
             DocumentExports=await documents.GetAsync(caseId,token),ServiceStatus=ServiceStatusEngine.Build(record,publication),
+            OpposingAttorneys=await opposingAttorneys.GetAsync(caseId,token),
             OverviewSummary=dashboard
         };
     }

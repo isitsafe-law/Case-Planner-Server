@@ -250,6 +250,12 @@ public sealed class ChecklistItemRecord
     public string? GeneratedBy { get; set; }
     public bool IsManual { get; set; } = true;
     public string? CompletedAt { get; set; }
+    // Item 2 (multi-user rollout Phase 2): a legal assistant this task is assigned to. Nullable and
+    // opaque on SQLite (no app_users table there to validate against - just a passthrough GUID
+    // string so the column round-trips structurally on both providers); only meaningfully
+    // populated/selectable when Entra is enabled and a real app_users/case_assignments roster
+    // exists (SQL Server pilot schema), same "inert locally" pattern as Phase 1's roster UI.
+    public string? AssignedUserId { get; set; }
 }
 
 public sealed class DiscoveryItemRecord
@@ -284,6 +290,20 @@ public sealed class PublicationEntryRecord
     public string? ProofFiledDate { get; set; }
     public bool ServiceResolved { get; set; }
     public string? Notes { get; set; }
+}
+
+// Item 2 (multi-user rollout Phase 2): case.opposingCounsel was a single free-text string with no
+// document-generation coupling anywhere - pure case-record display. Converted to a one-to-many
+// child table (case_opposing_attorneys) mirroring the simple per-case list pattern used by
+// witnesses/publication_dates. The old opposing_counsel column on cases is kept (not dropped) and
+// a one-time startup migration copies any existing non-blank value into a first row here.
+public sealed class OpposingAttorneyRecord
+{
+    public long Id { get; set; }
+    public string? RowVersion { get; set; }
+    public long CaseId { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
 }
 
 public sealed class UpcomingWorkItemRecord
@@ -1323,6 +1343,7 @@ public sealed class CaseWorkspaceResponse
     public List<PublicationEntryRecord> PublicationEntries { get; set; } = [];
     public PublicationRecord Publication { get; set; } = new();
     public List<ServiceLogEntry> ServiceLogEntries { get; set; } = [];
+    public List<OpposingAttorneyRecord> OpposingAttorneys { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];
     public List<IssueTagRecord> AvailableIssueTags { get; set; } = [];
     public List<CaseNoteRecord> CaseNotes { get; set; } = [];

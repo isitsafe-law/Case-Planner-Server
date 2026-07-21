@@ -63,6 +63,10 @@ public sealed class SqliteDiscoveryTrackingStore(CasePlannerRepository repositor
     public Task DeleteAsync(long id, string? rowVersion = null, CancellationToken token = default) => repository.DeleteDiscoveryItemAsync(id);
 }
 
+// Phase 4b (email delivery): deliberately sends no email. Email requires a real address, resolvable
+// only from app_users.email (SQL Server only - see SqlServerNotificationStore.CreateAsync); SQLite
+// has no such table, so there is nothing to look up here. Not a gap, just the correct behavior for
+// this provider - same "inert locally" pattern as the rest of this rollout's SQL-Server-only pieces.
 public sealed class SqliteNotificationStore(CasePlannerRepository repository) : INotificationStore
 {
     public string Provider => "Sqlite";

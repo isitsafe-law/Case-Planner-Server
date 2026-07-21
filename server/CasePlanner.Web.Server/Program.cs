@@ -133,12 +133,23 @@ builder.Services.AddSingleton<IDeadlineStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerDeadlineStore>()
         : services.GetRequiredService<SqliteDeadlineStore>());
+// Multi-user rollout Phase 4b (deadline reminders + email delivery): mirrors the EntraOptions
+// registration above - disabled by default, config-bound from "Notifications" in appsettings.json.
+var notificationsOptions = builder.Configuration.GetSection(NotificationsOptions.SectionName).Get<NotificationsOptions>() ?? new NotificationsOptions();
+builder.Services.AddSingleton(notificationsOptions);
 builder.Services.AddSingleton<SqliteNotificationStore>();
 builder.Services.AddSingleton<SqlServerNotificationStore>();
 builder.Services.AddSingleton<INotificationStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerNotificationStore>()
         : services.GetRequiredService<SqliteNotificationStore>());
+// Deadline-reminder scanning needs case_assignments (SQL-Server-only, see DeadlineReminderScanner's
+// header comment) and is pointless work when the feature is switched off, so it's only registered
+// when both conditions hold - same "only register what's needed" spirit as the provider switch above.
+if (activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase) && notificationsOptions.Enabled)
+{
+    builder.Services.AddHostedService<DeadlineReminderBackgroundService>();
+}
 builder.Services.AddSingleton<SqliteChecklistStore>();
 builder.Services.AddSingleton<SqlServerChecklistStore>();
 builder.Services.AddSingleton<IChecklistStore>(services =>

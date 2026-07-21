@@ -79,6 +79,22 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         return result;
     }
 
+    // Multi-user rollout Phase 4b (deadline reminders): resolves EVERY active assignee on a case,
+    // regardless of case_role - unlike GetCaseRoleUserIdsAsync above (Attorney-only, used by the
+    // task-completed trigger), a deadline reminder is relevant to all assigned staff.
+    public async Task<List<Guid>> GetAllAssignedUserIdsAsync(long caseId, CancellationToken token = default)
+    {
+        var result = new List<Guid>();
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ca.user_id FROM dbo.case_assignments ca JOIN dbo.app_users u ON u.id=ca.user_id WHERE ca.case_id=@caseId AND u.is_active=1";
+        command.Parameters.Add(new SqlParameter("@caseId", caseId));
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token)) result.Add(reader.GetGuid(0));
+        return result;
+    }
+
     public async Task<HashSet<long>> GetAssignedCaseIdsAsync(Guid userId, CancellationToken token = default)
     {
         var result = new HashSet<long>();

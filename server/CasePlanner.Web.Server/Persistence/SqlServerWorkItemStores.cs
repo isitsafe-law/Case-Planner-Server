@@ -2,7 +2,9 @@ using System.Data.Common;
 using CasePlanner.Data;
 using CasePlanner.Web.Server.Models;
 using CasePlanner.Web.Server.Security;
+using CasePlanner.Web.Server.Services;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 
 namespace CasePlanner.Web.Server.Persistence;
 
@@ -286,13 +288,13 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     private static void AddParameters(DbCommand c,ChecklistItemRecord m,string? completed,string now){c.Parameters.Add(new SqlParameter("@caseId",m.CaseId));c.Parameters.Add(new SqlParameter("@phase",m.Phase));c.Parameters.Add(new SqlParameter("@task",m.Task.Trim()));c.Parameters.Add(new SqlParameter("@due",Db(Date(m.DueDate))));c.Parameters.Add(new SqlParameter("@status",m.Status));c.Parameters.Add(new SqlParameter("@notes",Db(m.Notes)));c.Parameters.Add(new SqlParameter("@sourceType",m.SourceType));c.Parameters.Add(new SqlParameter("@manual",m.IsManual?1L:0L));c.Parameters.Add(new SqlParameter("@now",now));c.Parameters.Add(new SqlParameter("@completed",Db(completed)));c.Parameters.Add(new SqlParameter("@sourceKind",m.SourceKind));c.Parameters.Add(new SqlParameter("@templateId",Db(m.SourceTemplateId)));c.Parameters.Add(new SqlParameter("@templateVersion",(object?)m.SourceTemplateVersion??DBNull.Value));c.Parameters.Add(new SqlParameter("@sourceStage",Db(m.SourceStage)));c.Parameters.Add(new SqlParameter("@generatedAt",Db(m.GeneratedAt)));c.Parameters.Add(new SqlParameter("@generatedBy",Db(m.GeneratedBy)));c.Parameters.Add(new SqlParameter("@assignedUserId",Guid.TryParse(m.AssignedUserId,out var assignedGuid)?assignedGuid:DBNull.Value));}
 }
 
-// Multi-user rollout Phase 4a (notifications core). The "shared insert" from the phase's
-// requirements: CreateAsync takes plain recipient ids and text, with no knowledge of case_assignments
-// or checklist_items - SqlServerChecklistStore is the only current caller and does its own
-// case_role='Attorney' resolution via SqlServerCaseAssignmentRepository before calling in. Cannot be
-// exercised against a live SQL Server in this sandbox - compile/review-only, like the rest of this
-// project's SqlServer*-prefixed code.
-public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connections) : INotificationStore
+// Multi-user rollout Phase 4a (notifications core), extended in Phase 4b (email delivery). The
+// "shared insert" from the phase's requirements: CreateAsync takes plain recipient ids and text,
+// with no knowledge of case_assignments or checklist_items - SqlServerChecklistStore and (as of 4b)
+// DeadlineReminderBackgroundService are the current callers, each doing its own recipient resolution
+// before calling in. Cannot be exercised against a live SQL Server in this sandbox - compile/review-
+// only, like the rest of this project's SqlServer*-prefixed code.
+public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connections, NotificationsOptions notificationsOptions, ILogger<SqlServerNotificationStore> logger) : INotificationStore
 {
     public string Provider => "SqlServer";
 
@@ -322,6 +324,32 @@ public sealed class SqlServerNotificationStore(IDatabaseConnectionFactory connec
             await command.ExecuteNonQueryAsync(token);
         }
         await transaction.CommitAsync(token);
+
+        // Email is best-effort and only ever attempted here, after the in-app rows are safely
+        // committed - app_users.email is the only place a real recipient address can be resolved
+        // from (SQLite has no such table at all, hence SqliteNotificationStore sends no email). A
+        // failed/slow SMTP relay must never roll back or block the notification that's already saved.
+        if (notificationsOptions.Enabled)
+        {
+            foreach (var recipient in recipients)
+            {
+                var (email, displayName) = await GetRecipientEmailAsync(connection, recipient, token);
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    await NotificationEmailSender.SendBestEffortAsync(notificationsOptions.Email, email, displayName, title, body, logger, token);
+                }
+            }
+        }
+    }
+
+    private static async Task<(string? Email, string DisplayName)> GetRecipientEmailAsync(DbConnection connection, Guid recipient, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT email,display_name FROM dbo.app_users WHERE id=@id";
+        command.Parameters.Add(new SqlParameter("@id", recipient));
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return (null, "");
+        return (reader.IsDBNull(0) ? null : reader.GetString(0), reader.GetString(1));
     }
 
     public async Task<NotificationFeed> GetForRecipientAsync(string recipientUserId, int limit = 50, CancellationToken token = default)

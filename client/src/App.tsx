@@ -29,7 +29,7 @@ import { MetricTile } from './ui/MetricTile'
 import { Drawer } from './ui/Drawer'
 import { CommandPalette, ShortcutHelpDialog, type CommandGroup } from './ui/CommandPalette'
 import { ConfirmDialog, type ConfirmOptions } from './ui/ConfirmDialog'
-import { CloseCaseDialog, type CloseCaseDetails } from './ui/CloseCaseDialog'
+import { CloseCaseDialog, dispositionTypeOptions, type CloseCaseDetails } from './ui/CloseCaseDialog'
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 
@@ -1090,6 +1090,129 @@ export function legalAssistantLoad(cases: { assignedAttorney?: string | null; ca
     }))
 }
 
+// ---- Report B: Just-Compensation / Outcome Reporting (reportView === 'outcomes') --------------
+// A closed case only participates once it has both a real deposit and a captured final judgment/
+// settlement amount. depositAmount must be strictly > 0 (not just non-null) because a zero or
+// missing deposit can't support a meaningful ratio (division by zero, or "infinite" improvement) -
+// excluded entirely rather than counted with a nonsensical ratio. Many historical closed cases
+// predate FinalJudgmentAmount capture, so this is expected to exclude a large share of closed
+// cases - see the coverage line in the Outcomes view, which surfaces that gap rather than letting
+// it silently skew averages.
+export type OutcomeEligibleRecord = {
+  caseStatus?: string | null
+  status?: string | null
+  depositAmount?: number | null
+  finalJudgmentAmount?: number | null
+}
+
+export function isOutcomeEligible(record: OutcomeEligibleRecord): boolean {
+  if (isOpenCase(record)) return false
+  if (!(typeof record.depositAmount === 'number' && record.depositAmount > 0)) return false
+  if (record.finalJudgmentAmount == null) return false
+  return true
+}
+
+// Only ever call these on a record that has already passed isOutcomeEligible - they assume
+// depositAmount/finalJudgmentAmount are present numbers, not the general nullable CaseRecord shape.
+export function outcomeDelta(record: { depositAmount?: number | null; finalJudgmentAmount?: number | null }): number {
+  return (record.finalJudgmentAmount as number) - (record.depositAmount as number)
+}
+
+export function outcomeRatio(record: { depositAmount?: number | null; finalJudgmentAmount?: number | null }): number {
+  return (record.finalJudgmentAmount as number) / (record.depositAmount as number)
+}
+
+// closedDate is an ISO "YYYY-MM-DD..." string (same shape lifecycleDays/caseloadAgeBucket parse
+// elsewhere in this file); an unparseable or missing date yields null rather than a guessed period.
+export function outcomeClosePeriod(closedDate: string | null | undefined, granularity: 'quarter' | 'year'): string | null {
+  if (!closedDate) return null
+  const match = closedDate.match(/^(\d{4})-(\d{2})-\d{2}/)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  if (month < 1 || month > 12) return null
+  if (granularity === 'year') return String(year)
+  return `${year}-Q${Math.floor((month - 1) / 3) + 1}`
+}
+
+export type OutcomeAggregateRow = { key: string; count: number; avgFinal: number; avgDeposit: number; avgDelta: number; avgRatio: number }
+
+function outcomeAverage(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+// Generic breakdown used for disposition type, taking type, district, and time period - all four
+// group the same outcome-eligible record shape by a different keyFn. Records where keyFn returns
+// null/empty are dropped from every group (not folded into an "Unknown" bucket): the four callers
+// each have their own answer for what to do about a missing key (force-zero-pad a fixed small
+// enumeration vs. only show groups that actually have data - see the Outcomes JSX), which this
+// shared function stays agnostic to by just not emitting a group for it.
+export function aggregateOutcomes<T extends { depositAmount?: number | null; finalJudgmentAmount?: number | null }>(
+  records: T[],
+  keyFn: (record: T) => string | null | undefined,
+): OutcomeAggregateRow[] {
+  const groups = new Map<string, T[]>()
+  for (const record of records) {
+    const key = keyFn(record)
+    if (!key) continue
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(record)
+  }
+  return [...groups.entries()].map(([key, rows]) => ({
+    key,
+    count: rows.length,
+    avgFinal: outcomeAverage(rows.map((row) => row.finalJudgmentAmount as number)),
+    avgDeposit: outcomeAverage(rows.map((row) => row.depositAmount as number)),
+    avgDelta: outcomeAverage(rows.map((row) => outcomeDelta(row))),
+    avgRatio: outcomeAverage(rows.map((row) => outcomeRatio(row))),
+  }))
+}
+
+export type AttorneyOutcomeRow = OutcomeAggregateRow & {
+  takingTypeMix: { Partial: number; Full: number; TCE: number }
+  depositRange: { min: number; max: number } | null
+}
+
+// Separate from aggregateOutcomes on purpose: per-attorney is the one breakdown with a "required
+// context" rule (case count, taking-type mix, deposit range must always ride alongside the delta,
+// so a higher average delta on a harder/higher-value docket doesn't read as underperformance) - the
+// other four breakdowns have no such requirement. Unlike aggregateOutcomes's generic keyFn, a blank
+// assignedAttorney becomes its own "Unassigned" group rather than being dropped, matching how
+// caseloadCasesByRow (Report A) treats a blank assignedAttorney as a real, visible bucket rather
+// than silently-excluded data.
+export function aggregateOutcomesByAttorney<T extends {
+  assignedAttorney?: string | null
+  depositAmount?: number | null
+  finalJudgmentAmount?: number | null
+  takingType?: string | null
+}>(records: T[]): AttorneyOutcomeRow[] {
+  const groups = new Map<string, T[]>()
+  for (const record of records) {
+    const key = record.assignedAttorney || 'Unassigned'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(record)
+  }
+  return [...groups.entries()].map(([key, rows]) => {
+    const deposits = rows.map((row) => row.depositAmount as number)
+    const takingTypeMix = { Partial: 0, Full: 0, TCE: 0 }
+    for (const row of rows) {
+      if (row.takingType === 'Partial') takingTypeMix.Partial++
+      else if (row.takingType === 'Full') takingTypeMix.Full++
+      else if (row.takingType === 'TCE') takingTypeMix.TCE++
+    }
+    return {
+      key,
+      count: rows.length,
+      avgFinal: outcomeAverage(rows.map((row) => row.finalJudgmentAmount as number)),
+      avgDeposit: outcomeAverage(deposits),
+      avgDelta: outcomeAverage(rows.map((row) => outcomeDelta(row))),
+      avgRatio: outcomeAverage(rows.map((row) => outcomeRatio(row))),
+      takingTypeMix,
+      depositRange: deposits.length ? { min: Math.min(...deposits), max: Math.max(...deposits) } : null,
+    }
+  })
+}
+
 const caseTabs: { key: CaseTabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'work', label: 'Work' },
@@ -1437,6 +1560,13 @@ function displayCurrency(value?: number | null): string {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// Report B ratio display: consistently "1.34x" everywhere in the Outcomes view (headline tiles,
+// per-case table, every breakdown table) rather than mixing in a percentage form anywhere.
+function formatOutcomeRatio(ratio: number | null): string {
+  if (ratio == null || !Number.isFinite(ratio)) return '—'
+  return `${ratio.toFixed(2)}x`
+}
+
 function sortQueueItems<T>(items: T[], mode: QueueSortMode, getCase: (item: T) => string | null | undefined, getDue: (item: T) => string | null | undefined): T[] {
   return [...items].sort((a, b) => {
     const caseA = (getCase(a) || '').toLocaleLowerCase()
@@ -1482,6 +1612,50 @@ function sortCases(list: CaseRecord[], column: CaseSortColumn, direction: 'asc' 
   return [...list].sort((a, b) => {
     const aValue = caseSortValue(a, column)
     const bValue = caseSortValue(b, column)
+    if (aValue === '' && bValue === '') return 0
+    if (aValue === '') return 1
+    if (bValue === '') return -1
+    return sign * aValue.localeCompare(bValue, undefined, { numeric: true, sensitivity: 'base' })
+  })
+}
+
+type OutcomeCaseSortColumn = 'caseNumber' | 'caseName' | 'closedDate' | 'dispositionType' | 'takingType' | 'district' | 'assignedAttorney' | 'depositAmount' | 'finalJudgmentAmount' | 'delta' | 'ratio'
+
+const outcomeCaseColumns: { key: OutcomeCaseSortColumn; label: string }[] = [
+  { key: 'caseNumber', label: 'Case Number' },
+  { key: 'caseName', label: 'Case Name' },
+  { key: 'closedDate', label: 'Closed' },
+  { key: 'dispositionType', label: 'Disposition' },
+  { key: 'takingType', label: 'Taking Type' },
+  { key: 'district', label: 'District' },
+  { key: 'assignedAttorney', label: 'Attorney' },
+  { key: 'depositAmount', label: 'Deposit' },
+  { key: 'finalJudgmentAmount', label: 'Final Judgment' },
+  { key: 'delta', label: 'Delta' },
+  { key: 'ratio', label: 'Ratio' },
+]
+
+function outcomeCaseSortValue(item: CaseRecord, column: OutcomeCaseSortColumn): string {
+  switch (column) {
+    case 'caseNumber': return item.caseNumber || ''
+    case 'caseName': return item.caseName || ''
+    case 'closedDate': return item.closedDate || ''
+    case 'dispositionType': return item.dispositionType || ''
+    case 'takingType': return item.takingType || ''
+    case 'district': return item.district || ''
+    case 'assignedAttorney': return item.assignedAttorney || ''
+    case 'depositAmount': return String(item.depositAmount ?? 0)
+    case 'finalJudgmentAmount': return String(item.finalJudgmentAmount ?? 0)
+    case 'delta': return String(outcomeDelta(item))
+    case 'ratio': return String(outcomeRatio(item))
+  }
+}
+
+function sortOutcomeCases(list: CaseRecord[], column: OutcomeCaseSortColumn, direction: 'asc' | 'desc'): CaseRecord[] {
+  const sign = direction === 'asc' ? 1 : -1
+  return [...list].sort((a, b) => {
+    const aValue = outcomeCaseSortValue(a, column)
+    const bValue = outcomeCaseSortValue(b, column)
     if (aValue === '' && bValue === '') return 0
     if (aValue === '') return 1
     if (bValue === '') return -1
@@ -1694,14 +1868,19 @@ function App() {
   const [reportColumns, setReportColumns] = useState<ReportColumnKey[]>(['caseName', 'caseNumber', 'county', 'caseStatus', 'currentHolder', 'nextAction', 'trialDate'])
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
-  // Reports sub-nav (Report A phase): 'export' is today's existing case-list-export view,
-  // unchanged; 'caseload' is the new Caseload & Workload view. Deliberately no stub keys yet for
-  // the later outcome/cycle-time report families.
-  const [reportView, setReportView] = useState<'export' | 'caseload'>('export')
+  // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
+  // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting).
+  // Deliberately no stub key yet for the later cycle-time report family (Report C).
+  const [reportView, setReportView] = useState<'export' | 'caseload' | 'outcomes'>('export')
   // '' = Division-wide (every open case, attorney as a breakdown dimension); otherwise scoped to
   // one attorney's open cases via assignedAttorney match. Manual stand-in for per-login scoping
   // until Entra is live - a display filter only, no access restriction.
   const [caseloadViewAttorney, setCaseloadViewAttorney] = useState('')
+  // Report B state: Trends-over-time granularity toggle, plus click-to-sort state for the
+  // per-case table (same toggle/indicator convention as caseSortColumn/caseSortDirection above).
+  const [outcomesPeriodGranularity, setOutcomesPeriodGranularity] = useState<'quarter' | 'year'>('quarter')
+  const [outcomeSortColumn, setOutcomeSortColumn] = useState<OutcomeCaseSortColumn | null>(null)
+  const [outcomeSortDirection, setOutcomeSortDirection] = useState<'asc' | 'desc'>('asc')
   const [attorneyDashboard, setAttorneyDashboard] = useState<AttorneyDashboardResponse | null>(null)
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
@@ -2353,6 +2532,15 @@ function App() {
     } else {
       setCaseSortColumn(column)
       setCaseSortDirection('asc')
+    }
+  }
+
+  function toggleOutcomeSort(column: OutcomeCaseSortColumn) {
+    if (outcomeSortColumn === column) {
+      setOutcomeSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setOutcomeSortColumn(column)
+      setOutcomeSortDirection('asc')
     }
   }
 
@@ -5228,6 +5416,57 @@ function App() {
   }, [caseloadAgeBuckets, caseloadViewAttorney])
   // Legal-assistant load is inherently division-wide - not affected by caseloadViewAttorney.
   const caseloadLegalAssistantLoad = useMemo(() => legalAssistantLoad(allCases, legalAssistants), [allCases, legalAssistants])
+
+  // ---- Report B: Just-Compensation / Outcome Reporting (reportView === 'outcomes') ------------
+  const outcomeClosedCases = useMemo(() => allCases.filter((record) => !isOpenCase(record)), [allCases])
+  // Filtered once here and reused across every breakdown below, rather than each breakdown
+  // re-deriving eligibility from allCases - mirrors caseloadScopedCases being computed once and
+  // shared across Report A's several per-attorney breakdowns.
+  const outcomeEligibleCases = useMemo(() => outcomeClosedCases.filter(isOutcomeEligible), [outcomeClosedCases])
+  const outcomeCoverage = useMemo(() => ({ eligible: outcomeEligibleCases.length, closed: outcomeClosedCases.length }), [outcomeEligibleCases, outcomeClosedCases])
+  const outcomeHeadline = useMemo(() => {
+    if (outcomeEligibleCases.length === 0) return { count: 0, avgDeposit: null as number | null, avgFinal: null as number | null, avgDelta: null as number | null, avgRatio: null as number | null }
+    return {
+      count: outcomeEligibleCases.length,
+      avgDeposit: outcomeAverage(outcomeEligibleCases.map((record) => record.depositAmount as number)),
+      avgFinal: outcomeAverage(outcomeEligibleCases.map((record) => record.finalJudgmentAmount as number)),
+      avgDelta: outcomeAverage(outcomeEligibleCases.map((record) => outcomeDelta(record))),
+      avgRatio: outcomeAverage(outcomeEligibleCases.map((record) => outcomeRatio(record))),
+    }
+  }, [outcomeEligibleCases])
+  // Sortable per-case table (click-to-sort, same convention as caseSortColumn/toggleCaseSort);
+  // falls back to closed-date-descending (most recently closed first) when no column is picked.
+  const outcomeCaseRows = useMemo(() => {
+    if (outcomeSortColumn) return sortOutcomeCases(outcomeEligibleCases, outcomeSortColumn, outcomeSortDirection)
+    return [...outcomeEligibleCases].sort((a, b) => (b.closedDate || '').localeCompare(a.closedDate || ''))
+  }, [outcomeEligibleCases, outcomeSortColumn, outcomeSortDirection])
+  // Disposition type and taking type are both small fixed enumerations (3 values each) - always
+  // show all three rows, zero-padding any type with no eligible cases, so a "does X resolve higher
+  // than Y" comparison is always a complete picture rather than only whichever types have data.
+  const outcomeByDisposition = useMemo(() => {
+    const rows = aggregateOutcomes(outcomeEligibleCases, (record) => record.dispositionType || null)
+    return dispositionTypeOptions.map((type) => rows.find((row) => row.key === type) ?? { key: type, count: 0, avgFinal: 0, avgDeposit: 0, avgDelta: 0, avgRatio: 0 })
+  }, [outcomeEligibleCases])
+  const outcomeByTakingType = useMemo(() => {
+    const rows = aggregateOutcomes(outcomeEligibleCases, (record) => record.takingType || null)
+    return takingTypes.map((type) => rows.find((row) => row.key === type) ?? { key: type, count: 0, avgFinal: 0, avgDeposit: 0, avgDelta: 0, avgRatio: 0 })
+  }, [outcomeEligibleCases])
+  // District has 10 possible fixed values (unlike disposition/taking type's 3) - forcing all 10
+  // rows would mostly be empty noise, so only districts that actually have an eligible case show
+  // up here, ordered by the fixed arkansasDistricts list (District 1..10 numerically, not the
+  // lexical "District 10" < "District 2" order string-sorting the label would produce).
+  const outcomeByDistrict = useMemo(() => {
+    const rows = aggregateOutcomes(outcomeEligibleCases, (record) => record.district || null)
+    return arkansasDistricts.map((district) => rows.find((row) => row.key === district)).filter((row): row is OutcomeAggregateRow => Boolean(row))
+  }, [outcomeEligibleCases])
+  const outcomeByPeriod = useMemo(() => {
+    const rows = aggregateOutcomes(outcomeEligibleCases, (record) => outcomeClosePeriod(record.closedDate, outcomesPeriodGranularity))
+    return [...rows].sort((a, b) => a.key.localeCompare(b.key))
+  }, [outcomeEligibleCases, outcomesPeriodGranularity])
+  // Per-attorney, like District, only shows attorneys who actually have an eligible case (not the
+  // full active-attorney roster) - same "who actually has data" judgment Report A's status matrix
+  // uses for its extra/legacy attorney rows, just without force-zero-padding anyone with zero.
+  const outcomeByAttorney = useMemo(() => [...aggregateOutcomesByAttorney(outcomeEligibleCases)].sort((a, b) => a.key.localeCompare(b.key)), [outcomeEligibleCases])
 
   function exportReportCsv() {
     const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
@@ -9080,6 +9319,7 @@ function App() {
           <div className="segmented-tabs">
             <button className={reportView === 'export' ? 'segment active' : 'segment'} onClick={() => setReportView('export')}>Case List Export</button>
             <button className={reportView === 'caseload' ? 'segment active' : 'segment'} onClick={() => setReportView('caseload')}>Caseload &amp; Workload</button>
+            <button className={reportView === 'outcomes' ? 'segment active' : 'segment'} onClick={() => setReportView('outcomes')}>Outcomes</button>
           </div>
 
           {reportView === 'export' && (
@@ -9301,6 +9541,182 @@ function App() {
                         <UiEmptyState colSpan={2} title="No active legal assistants" />
                       ) : caseloadLegalAssistantLoad.map((row) => (
                         <tr key={row.id}><td>{row.name}</td><td className="ui-data">{row.openCaseCount}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </div>
+          )}
+
+          {reportView === 'outcomes' && (
+            <div className="top-gap-small">
+              <Panel title="Data Coverage">
+                <p>{outcomeCoverage.eligible} of {outcomeCoverage.closed} closed case{outcomeCoverage.closed === 1 ? '' : 's'} have complete deposit + final judgment data.</p>
+                <p className="helper-text top-gap-small">Every breakdown below uses only these {outcomeCoverage.eligible} outcome-eligible cases, not all {outcomeCoverage.closed} closed cases - many historical closed cases predate final-judgment capture, so this gap is expected rather than a data problem to chase down.</p>
+              </Panel>
+
+              <Panel title="Final Amount vs. Deposit — All Eligible Cases" className="top-gap-small">
+                <div className="ui-tiles">
+                  <MetricTile label="Eligible cases" value={outcomeHeadline.count} />
+                  <MetricTile label="Avg deposit" value={displayCurrency(outcomeHeadline.avgDeposit)} />
+                  <MetricTile label="Avg final amount" value={displayCurrency(outcomeHeadline.avgFinal)} />
+                  <MetricTile label="Avg delta" value={displayCurrency(outcomeHeadline.avgDelta)} />
+                  <MetricTile label="Avg ratio" value={formatOutcomeRatio(outcomeHeadline.avgRatio)} />
+                </div>
+              </Panel>
+
+              <Panel title="Final Amount vs. Deposit — Per Case" className="top-gap-small" headerAction={<span className="pill pill-neutral">{outcomeCaseRows.length} case{outcomeCaseRows.length === 1 ? '' : 's'}</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead>
+                      <tr>
+                        {outcomeCaseColumns.map((column) => (
+                          <th
+                            key={column.key}
+                            className="sortable-header"
+                            onClick={() => toggleOutcomeSort(column.key)}
+                            aria-sort={outcomeSortColumn === column.key ? (outcomeSortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
+                          >
+                            {column.label}
+                            {outcomeSortColumn === column.key && <span className="sort-indicator">{outcomeSortDirection === 'asc' ? ' ▲' : ' ▼'}</span>}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {outcomeCaseRows.length === 0 ? (
+                        <UiEmptyState colSpan={outcomeCaseColumns.length} title="No outcome-eligible cases yet" />
+                      ) : outcomeCaseRows.map((record) => (
+                        <tr key={record.id} className="clickable-row" onClick={() => openCase(record.id, 'overview')}>
+                          <td className="ui-data">{record.caseNumber || <span className="ui-cell-faint">—</span>}</td>
+                          <td>{record.caseName}</td>
+                          <td className="ui-data">{displayDate(record.closedDate)}</td>
+                          <td>{record.dispositionType || <span className="ui-cell-faint">—</span>}</td>
+                          <td>{record.takingType || <span className="ui-cell-faint">—</span>}</td>
+                          <td>{record.district || <span className="ui-cell-faint">—</span>}</td>
+                          <td>{record.assignedAttorney || <span className="ui-cell-faint">—</span>}</td>
+                          <td className="ui-data">{displayCurrency(record.depositAmount)}</td>
+                          <td className="ui-data">{displayCurrency(record.finalJudgmentAmount)}</td>
+                          <td className="ui-data">{displayCurrency(outcomeDelta(record))}</td>
+                          <td className="ui-data">{formatOutcomeRatio(outcomeRatio(record))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Outcome by Disposition Type" className="top-gap-small">
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Disposition Type</th><th>Count</th><th>Avg Deposit</th><th>Avg Final</th><th>Avg Delta</th><th>Avg Ratio</th></tr></thead>
+                    <tbody>
+                      {outcomeByDisposition.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgDeposit)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgFinal)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgDelta)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <CollapsiblePanel title="Trends Over Time" className="top-gap-small">
+                <div className="rep-fields">
+                  <FilterChip active={outcomesPeriodGranularity === 'quarter'} onClick={() => setOutcomesPeriodGranularity('quarter')}>Quarterly</FilterChip>
+                  <FilterChip active={outcomesPeriodGranularity === 'year'} onClick={() => setOutcomesPeriodGranularity('year')}>Annually</FilterChip>
+                </div>
+                <div className="table-wrap top-gap-small">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Period</th><th>Count</th><th>Avg Deposit</th><th>Avg Final</th><th>Avg Delta</th><th>Avg Ratio</th></tr></thead>
+                    <tbody>
+                      {outcomeByPeriod.length === 0 ? (
+                        <UiEmptyState colSpan={6} title="No outcome-eligible cases yet" />
+                      ) : outcomeByPeriod.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDeposit)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgFinal)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDelta)}</td>
+                          <td className="ui-data">{formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsiblePanel>
+
+              <Panel title="Outcome by Attorney" className="top-gap-small" headerAction={<span className="helper-text">Case count, taking-type mix, and deposit range always shown alongside delta</span>}>
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>Attorney</th><th>Count</th><th>Taking-Type Mix</th><th>Deposit Range</th><th>Avg Final</th><th>Avg Deposit</th><th>Avg Delta</th><th>Avg Ratio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {outcomeByAttorney.length === 0 ? (
+                        <UiEmptyState colSpan={8} title="No outcome-eligible cases yet" />
+                      ) : outcomeByAttorney.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{row.takingTypeMix.Partial} Partial / {row.takingTypeMix.Full} Full / {row.takingTypeMix.TCE} TCE</td>
+                          <td className="ui-data">{row.depositRange ? `${displayCurrency(row.depositRange.min)} – ${displayCurrency(row.depositRange.max)}` : '—'}</td>
+                          <td className="ui-data">{displayCurrency(row.avgFinal)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDeposit)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDelta)}</td>
+                          <td className="ui-data">{formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Outcome by District" className="top-gap-small">
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>District</th><th>Count</th><th>Avg Deposit</th><th>Avg Final</th><th>Avg Delta</th><th>Avg Ratio</th></tr></thead>
+                    <tbody>
+                      {outcomeByDistrict.length === 0 ? (
+                        <UiEmptyState colSpan={6} title="No outcome-eligible cases yet" />
+                      ) : outcomeByDistrict.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDeposit)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgFinal)}</td>
+                          <td className="ui-data">{displayCurrency(row.avgDelta)}</td>
+                          <td className="ui-data">{formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+
+              <Panel title="Outcome by Taking Type" className="top-gap-small">
+                <div className="table-wrap">
+                  <table className="ui-table compact-table">
+                    <thead><tr><th>Taking Type</th><th>Count</th><th>Avg Deposit</th><th>Avg Final</th><th>Avg Delta</th><th>Avg Ratio</th></tr></thead>
+                    <tbody>
+                      {outcomeByTakingType.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.key}</td>
+                          <td className="ui-data">{row.count}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgDeposit)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgFinal)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : displayCurrency(row.avgDelta)}</td>
+                          <td className="ui-data">{row.count === 0 ? '—' : formatOutcomeRatio(row.avgRatio)}</td>
+                        </tr>
                       ))}
                     </tbody>
                   </table>

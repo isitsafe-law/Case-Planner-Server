@@ -1484,7 +1484,7 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, phase, task, due_date, status, notes, source_type, is_manual, completed_at,
-                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id
+                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name
             FROM checklist_items
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY phase, task
@@ -1511,7 +1511,8 @@ public sealed partial class CasePlannerRepository
                 SourceStage = reader.IsDBNull(13) ? null : reader.GetString(13),
                 GeneratedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
                 GeneratedBy = reader.IsDBNull(15) ? null : reader.GetString(15),
-                AssignedUserId = reader.IsDBNull(16) ? null : reader.GetString(16)
+                AssignedUserId = reader.IsDBNull(16) ? null : reader.GetString(16),
+                AssignedStaffName = reader.IsDBNull(17) ? null : reader.GetString(17)
             });
         }
 
@@ -1551,9 +1552,9 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     INSERT INTO checklist_items (case_id, phase, task, due_date, status, notes, source_type, is_manual, created_at, updated_at, completed_at,
-                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id)
+                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name)
                     VALUES (@case_id, @phase, @task, @due_date, @status, @notes, @source_type, @is_manual, @created_at, @updated_at, @completed_at,
-                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id);
+                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id,@assigned_staff_name);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -1561,7 +1562,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE checklist_items
-                    SET phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id
+                    SET phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id, assigned_staff_name=@assigned_staff_name
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1586,6 +1587,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@generated_at", DbValue(model.GeneratedAt));
             cmd.Parameters.AddWithValue("@generated_by", DbValue(model.GeneratedBy));
             cmd.Parameters.AddWithValue("@assigned_user_id", DbValue(model.AssignedUserId));
+            cmd.Parameters.AddWithValue("@assigned_staff_name", DbValue(model.AssignedStaffName));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CompletedAt = completedAt;
 
@@ -5289,6 +5291,11 @@ public sealed partial class CasePlannerRepository
         // Item 2 (multi-user rollout Phase 2): opaque passthrough on SQLite (no app_users table
         // here to validate against) - only meaningfully populated/selectable once Entra is enabled.
         await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_user_id", "TEXT");
+        // Test-build feedback batch (task assignment): a second, separate assignee column - a
+        // plain name snapshot (no FK, same convention as cases.assigned_attorney) sourced from the
+        // case's Assigned Attorney/Legal Assistants and actually driven by the UI today. Added
+        // alongside, not instead of, assigned_user_id above, which remains completely untouched.
+        await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_staff_name", "TEXT");
         // Multi-user rollout Phase 3 (shared witness registry): links a per-case witness row to
         // the new global witness_persons identity. Nullable so pre-existing rows (and the
         // one-time migration that backfills them) can be told apart from never-linked ones.

@@ -269,6 +269,12 @@ public sealed class ChecklistItemRecord
     // populated/selectable when Entra is enabled and a real app_users/case_assignments roster
     // exists (SQL Server pilot schema), same "inert locally" pattern as Phase 1's roster UI.
     public string? AssignedUserId { get; set; }
+    // Test-build feedback batch (task assignment): a plain name snapshot, not a foreign key -
+    // same "opaque name" convention as cases.assigned_attorney / case_legal_assistants.name. This
+    // is the field the UI actually reads/writes today (assignable from the case's Assigned
+    // Attorney plus its Legal Assistants); AssignedUserId above stays fully dormant, reserved for
+    // a future real Entra deployment, and is intentionally left untouched by this field.
+    public string? AssignedStaffName { get; set; }
 }
 
 // Multi-user rollout Phase 4a (notifications core). recipient_user_id follows the same opaque

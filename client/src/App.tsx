@@ -163,8 +163,13 @@ type ChecklistItem = {
   completedAt?: string | null
   // Multi-user rollout Phase 2, item 2: SQL-Server-only functional (like Phase 1's roster), inert
   // locally - always round-trips structurally, but only meaningfully populated/selectable when
-  // Entra is enabled.
+  // Entra is enabled. Dormant - no UI reads or writes this field going forward; see
+  // assignedStaffName below for the field that actually drives the visible assignee picker.
   assignedUserId?: string | null
+  // Test-build feedback batch (task assignment): a plain name snapshot (no FK), assignable from
+  // the case's Assigned Attorney and Legal Assistants (assignableStaffNames below) - the dual-
+  // provider field that actually works locally, unlike assignedUserId above.
+  assignedStaffName?: string | null
 }
 
 // Multi-user rollout Phase 4a (notifications core). Empty items/zero unread when there's no
@@ -1579,8 +1584,11 @@ function emptyDeadline(caseId = 0): DeadlineItem {
 
 const deadlineSeverities = ['normal', 'soft', 'urgent', 'critical']
 
-function emptyChecklist(caseId = 0): ChecklistItem {
-  return { id: 0, caseId, phase: 'General', task: '', dueDate: '', status: 'Not Started', notes: '', sourceType: 'Manual', isManual: true }
+// assignedStaffName defaults a brand-new task to the case's current Assigned Attorney (see
+// defaultAssignedStaffNameForCase's callers) - purely a default for a fresh draft, never applied
+// retroactively to an existing task.
+function emptyChecklist(caseId = 0, assignedStaffName: string | null = null): ChecklistItem {
+  return { id: 0, caseId, phase: 'General', task: '', dueDate: '', status: 'Not Started', notes: '', sourceType: 'Manual', isManual: true, assignedStaffName }
 }
 
 function emptyDiscovery(caseId = 0): DiscoveryItem {
@@ -1852,6 +1860,23 @@ export function legalAssistantNamesForAttorneyChange(
 ): string[] {
   if (currentNames.length > 0) return currentNames
   return legalAssistantDirectory.filter((la) => la.attorneyNames.includes(newAttorneyName)).map((la) => la.name)
+}
+
+// Test-build feedback batch (task assignment): pure, exported for direct unit testing (see
+// App.taskAssigneeOptions.test.ts) - who a task on a given case can be assigned to. Replaces the
+// old case_assignments-backed roster (assigneeOptionsForCase used to return caseAssignments,
+// always empty locally) with the case's own Assigned Attorney plus its Legal Assistant(s) - the
+// people already known to be working the case. Attorney sorts first (the case's lead), then each
+// legal assistant in list order; de-duplicated in case an attorney is also entered as an LA.
+export function assignableStaffNames(assignedAttorney: string | null | undefined, legalAssistantNames: string[]): string[] {
+  const names: string[] = []
+  const attorney = assignedAttorney?.trim()
+  if (attorney) names.push(attorney)
+  for (const raw of legalAssistantNames) {
+    const name = raw?.trim()
+    if (name && !names.includes(name)) names.push(name)
+  }
+  return names
 }
 
 function normalizeTextValue(value?: string | null): string | null {
@@ -2181,7 +2206,10 @@ function App() {
   const [caseLegalAssistants, setCaseLegalAssistants] = useState<CaseLegalAssistant[]>([])
   // Work Queue task rows span many cases at once - cache each case's assignable staff (its
   // existing Phase 1 case-assignment list) on demand rather than loading the whole office roster.
-  const [queueAssigneeOptions, setQueueAssigneeOptions] = useState<Record<number, CaseAssignmentRecord[]>>({})
+  // Test-build feedback batch (task assignment): cached per-case assignable-name lists for the
+  // cross-case Work Queue (a row's case isn't the currently-open workspace, so its Assigned
+  // Attorney/Legal Assistants aren't already in state) - see ensureQueueAssigneeOptions.
+  const [queueAssigneeOptions, setQueueAssigneeOptions] = useState<Record<number, string[]>>({})
   const [narrativeInputDraft, setNarrativeInputDraft] = useState<RiskNarrativeManualInputs | null>(null)
   const [narrativeGenerating, setNarrativeGenerating] = useState(false)
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([])
@@ -2717,7 +2745,7 @@ function App() {
       void loadPlatformGenerationHistory(caseId)
       void loadCaseAssignments(caseId)
       setDeadlineDraft(emptyDeadline(caseId))
-      setChecklistDraft(emptyChecklist(caseId))
+      setChecklistDraft(emptyChecklist(caseId, data.case.assignedAttorney ?? null))
       setDiscoveryDraft(emptyDiscovery(caseId))
       setPublicationDraft(data.publication ?? emptyPublication(caseId))
       setServiceLogEntries(data.serviceLogEntries ?? [])
@@ -2862,21 +2890,35 @@ function App() {
     }
   }
 
-  // Multi-user rollout Phase 2, item 2: task assignment scopes its picker to people already on
-  // the case's assigned staff (Phase 1's per-case assignment list) rather than the whole office
-  // roster - lower-noise, and "assign to someone already working the case" is the useful case.
-  // The per-case Work tab already has this loaded via caseAssignments (loadWorkspace calls
-  // loadCaseAssignments); the cross-case Work Queue fetches and caches it per case on demand.
-  function assigneeOptionsForCase(caseId: number): CaseAssignmentRecord[] {
-    if (caseId === (workspace?.case.id ?? selectedCaseId)) return caseAssignments
+  // Default for a brand-new task's assignedStaffName - the case's current Assigned Attorney, or
+  // blank if the case has none yet. Only used when initializing a fresh checklist draft (never
+  // retroactively applied to an existing task); the caseId passed in every caller below is always
+  // the currently-open case, so workspace.case is the right source when it matches.
+  function defaultAssignedStaffNameForCase(caseId: number): string | null {
+    if (workspace && workspace.case.id === caseId) return workspace.case.assignedAttorney ?? null
+    if (caseDraft.id === caseId) return caseDraft.assignedAttorney ?? null
+    return null
+  }
+
+  // Test-build feedback batch (task assignment): task assignment scopes its picker to the case's
+  // Assigned Attorney plus its Legal Assistant(s) - the people already known to be working the
+  // case - rather than the dormant Phase 1 case_assignments roster (always empty locally, which
+  // used to degrade this picker to a bare "Unassigned"). The per-case Work tab already has both
+  // halves loaded via workspace.case.assignedAttorney and caseLegalAssistants (loadWorkspace loads
+  // both); the cross-case Work Queue fetches and caches the combined list per case on demand.
+  function assigneeOptionsForCase(caseId: number): string[] {
+    if (caseId === (workspace?.case.id ?? selectedCaseId)) {
+      return assignableStaffNames(workspace?.case.assignedAttorney ?? caseDraft.assignedAttorney, caseLegalAssistants.map((row) => row.name))
+    }
     return queueAssigneeOptions[caseId] ?? []
   }
 
   async function ensureQueueAssigneeOptions(caseId: number) {
     if (caseId === (workspace?.case.id ?? selectedCaseId) || queueAssigneeOptions[caseId]) return
     try {
-      const options = await api<CaseAssignmentRecord[]>(`/api/admin/case-assignments?caseId=${caseId}`)
-      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: options }))
+      const attorney = allCases.find((c) => c.id === caseId)?.assignedAttorney
+      const legalAssistants = await api<CaseLegalAssistant[]>(`/api/cases/${caseId}/legal-assistants`)
+      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: assignableStaffNames(attorney, legalAssistants.map((row) => row.name)) }))
     } catch {
       setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: [] }))
     }
@@ -2886,23 +2928,23 @@ function App() {
   // tab and the cross-case Work Queue. Any signed-in user can assign a task (unlike case
   // assignment itself, which stays a manager/admin action) - the original request was "tasks
   // should be assignable to a legal assistant" with no admin qualifier. Degrades gracefully to a
-  // bare "Unassigned" option when Entra is disabled or the case has no assigned staff yet.
+  // bare "Unassigned" option when the case has no assigned attorney or legal assistants yet.
   function renderTaskAssigneeControl(item: ChecklistItem) {
     const options = assigneeOptionsForCase(item.caseId)
-    const currentKnown = options.some((o) => o.userId === item.assignedUserId)
+    const currentKnown = !item.assignedStaffName || options.includes(item.assignedStaffName)
     return (
       <div className="ui-sub work-assignee">
         <span className="visually-hidden">Assignee</span>
         <select
           className="inline-edit-select"
           aria-label={`Assign ${item.task}`}
-          value={item.assignedUserId || ''}
+          value={item.assignedStaffName || ''}
           onFocus={() => void ensureQueueAssigneeOptions(item.caseId)}
-          onChange={(event) => void persistChecklist({ ...item, assignedUserId: event.target.value || null }, 'Task assignee updated.', false)}
+          onChange={(event) => void persistChecklist({ ...item, assignedStaffName: event.target.value || null }, 'Task assignee updated.', false)}
         >
           <option value="">Unassigned</option>
-          {!currentKnown && item.assignedUserId && <option value={item.assignedUserId}>Assigned (not on case list)</option>}
-          {options.map((o) => <option key={o.userId} value={o.userId}>{o.displayName}</option>)}
+          {!currentKnown && item.assignedStaffName && <option value={item.assignedStaffName}>{item.assignedStaffName} (not on case list)</option>}
+          {options.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>
       </div>
     )
@@ -2924,7 +2966,7 @@ function App() {
   // caseAssignments state, and the server-side case_assignments plumbing are intentionally kept,
   // not deleted, in case a future phase gives this capability a new home; nothing currently renders
   // them, so this reference only keeps noUnusedLocals from flagging otherwise-dead code.
-  void caseRoleOptions; void assignmentRoleOptions; void addCaseAssignment; void removeCaseAssignment
+  void caseRoleOptions; void assignmentRoleOptions; void addCaseAssignment; void removeCaseAssignment; void caseAssignments
 
   function clearModalFeedback() {
     setModalErrorSummary('')
@@ -2958,7 +3000,7 @@ function App() {
     } else if (kind === 'deadline') {
       setDeadlineDraft(mode === 'edit' ? deadlineDraft : emptyDeadline(caseId))
     } else if (kind === 'checklist') {
-      setChecklistDraft(mode === 'edit' ? checklistDraft : emptyChecklist(caseId))
+      setChecklistDraft(mode === 'edit' ? checklistDraft : emptyChecklist(caseId, defaultAssignedStaffNameForCase(caseId)))
     } else if (kind === 'discovery') {
       setDiscoveryDraft(mode === 'edit' ? discoveryDraft : emptyDiscovery(caseId))
     } else if (kind === 'comparableSale') {
@@ -2998,7 +3040,8 @@ function App() {
     } else if (kind === 'deadline') {
       setDeadlineDraft(emptyDeadline(selectedCaseId ?? caseDraft.id))
     } else if (kind === 'checklist') {
-      setChecklistDraft(emptyChecklist(selectedCaseId ?? caseDraft.id))
+      const caseId = selectedCaseId ?? caseDraft.id
+      setChecklistDraft(emptyChecklist(caseId, defaultAssignedStaffNameForCase(caseId)))
     } else if (kind === 'discovery') {
       setDiscoveryDraft(emptyDiscovery(selectedCaseId ?? caseDraft.id))
     } else if (kind === 'comparableSale') {
@@ -3487,7 +3530,8 @@ function App() {
       openModal('checklist', 'edit')
       return
     }
-    setChecklistDraft(emptyChecklist(selectedCaseId ?? caseDraft.id))
+    const caseId = selectedCaseId ?? caseDraft.id
+    setChecklistDraft(emptyChecklist(caseId, defaultAssignedStaffNameForCase(caseId)))
     openModal('checklist', 'create')
   }
 
@@ -3681,6 +3725,7 @@ function App() {
       status: draft.status.trim() || 'Not Started',
       notes: normalizeTextValue(draft.notes),
       sourceType: draft.sourceType.trim() || 'Manual',
+      assignedStaffName: normalizeTextValue(draft.assignedStaffName),
     }
   }
 
@@ -3929,7 +3974,7 @@ function App() {
       clearModalFeedback()
       await api<ChecklistItem>('/api/checklist', { method: 'POST', body: JSON.stringify(payload) })
       await refreshAll(caseId)
-      setChecklistDraft(emptyChecklist(caseId))
+      setChecklistDraft(emptyChecklist(caseId, defaultAssignedStaffNameForCase(caseId)))
       if (closeAfterSave) setActiveModal(null)
       setModalDirty(false)
       setMessage(successMessage)
@@ -8869,6 +8914,24 @@ function App() {
                 <span>Due Date</span>
                 <input type="date" value={checklistDraft.dueDate || ''} onChange={(event) => patchChecklistDraft({ dueDate: event.target.value })} onInput={(event) => patchChecklistDraft({ dueDate: event.currentTarget.value })} />
                 {modalFieldErrors.dueDate && <small className="field-error">{modalFieldErrors.dueDate}</small>}
+              </label>
+              <label>
+                <span>Assignee</span>
+                <select
+                  value={checklistDraft.assignedStaffName || ''}
+                  onFocus={() => void ensureQueueAssigneeOptions(checklistDraft.caseId)}
+                  onChange={(event) => patchChecklistDraft({ assignedStaffName: event.target.value || null })}
+                >
+                  <option value="">Unassigned</option>
+                  {(() => {
+                    const options = assigneeOptionsForCase(checklistDraft.caseId)
+                    const current = checklistDraft.assignedStaffName
+                    return <>
+                      {current && !options.includes(current) && <option value={current}>{current} (not on case list)</option>}
+                      {options.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </>
+                  })()}
+                </select>
               </label>
               <label className="full-span"><span>Notes</span><textarea value={checklistDraft.notes || ''} onChange={(event) => patchChecklistDraft({ notes: event.target.value })} placeholder="Checklist notes" /></label>
               <div className="button-row compact-actions full-span modal-footer">

@@ -217,4 +217,92 @@ public class OpposingAttorneyAndChecklistAssignmentTests : IAsyncLifetime
         var reloaded = await _fixture.Repository.GetChecklistItemsAsync(c.Id);
         Assert.Single(reloaded, x => x.Id == saved.Id && x.AssignedUserId == null);
     }
+
+    // ---- Test-build feedback batch (task assignment): checklist_items.assigned_staff_name
+    // round-trips independently of assigned_user_id above, which must keep behaving exactly as
+    // before (still covered by the two tests immediately above, plus NotificationsTests'
+    // SaveChecklistItem_NewAssignment_CreatesTaskAssignedNotification for the trigger itself). ----
+
+    [Fact]
+    public async Task ChecklistItem_AssignedStaffName_RoundTripsOnSaveAndRead()
+    {
+        var c = await CreateCaseAsync();
+
+        var saved = await _fixture.Repository.SaveChecklistItemAsync(new ChecklistItemRecord
+        {
+            CaseId = c.Id,
+            Phase = "General",
+            Task = "Draft interrogatories",
+            Status = "Not Started",
+            AssignedStaffName = "Tyler Story",
+        });
+
+        Assert.Equal("Tyler Story", saved.AssignedStaffName);
+
+        var reloaded = await _fixture.Repository.GetChecklistItemsAsync(c.Id);
+        Assert.Single(reloaded, x => x.Id == saved.Id && x.AssignedStaffName == "Tyler Story");
+    }
+
+    [Fact]
+    public async Task ChecklistItem_AssignedStaffName_CanBeClearedByUpdating()
+    {
+        var c = await CreateCaseAsync();
+        var saved = await _fixture.Repository.SaveChecklistItemAsync(new ChecklistItemRecord
+        {
+            CaseId = c.Id,
+            Phase = "General",
+            Task = "Draft interrogatories",
+            Status = "Not Started",
+            AssignedStaffName = "Tyler Story",
+        });
+
+        var updated = await _fixture.Repository.SaveChecklistItemAsync(new ChecklistItemRecord
+        {
+            Id = saved.Id,
+            CaseId = c.Id,
+            Phase = "General",
+            Task = "Draft interrogatories",
+            Status = "Not Started",
+            AssignedStaffName = null,
+        });
+
+        Assert.Null(updated.AssignedStaffName);
+        var reloaded = await _fixture.Repository.GetChecklistItemsAsync(c.Id);
+        Assert.Single(reloaded, x => x.Id == saved.Id && x.AssignedStaffName == null);
+    }
+
+    [Fact]
+    public async Task ChecklistItem_AssignedStaffNameAndAssignedUserId_AreIndependentOfEachOther()
+    {
+        var c = await CreateCaseAsync();
+        var userId = Guid.NewGuid().ToString();
+
+        var saved = await _fixture.Repository.SaveChecklistItemAsync(new ChecklistItemRecord
+        {
+            CaseId = c.Id,
+            Phase = "General",
+            Task = "Draft interrogatories",
+            Status = "Not Started",
+            AssignedUserId = userId,
+            AssignedStaffName = "Tyler Story",
+        });
+
+        Assert.Equal(userId, saved.AssignedUserId);
+        Assert.Equal("Tyler Story", saved.AssignedStaffName);
+
+        // Changing AssignedStaffName alone must not disturb the dormant AssignedUserId column.
+        var updated = await _fixture.Repository.SaveChecklistItemAsync(new ChecklistItemRecord
+        {
+            Id = saved.Id,
+            CaseId = c.Id,
+            Phase = "General",
+            Task = "Draft interrogatories",
+            Status = "Not Started",
+            AssignedUserId = userId,
+            AssignedStaffName = "Evelyn Allison",
+        });
+
+        Assert.Equal(userId, updated.AssignedUserId);
+        Assert.Equal("Evelyn Allison", updated.AssignedStaffName);
+    }
 }

@@ -1906,6 +1906,18 @@ code {
   text-transform: uppercase;
 }
 
+.workspace-people-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.workspace-people-row-text {
+  color: var(--text-muted);
+  font-size: var(--text-xs, 11px);
+}
+
 .holder-stepper {
   display: flex;
   align-items: center;

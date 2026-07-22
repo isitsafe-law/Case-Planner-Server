@@ -1128,6 +1128,7 @@ public sealed partial class CasePlannerRepository
             Publication = publication,
             ServiceLogEntries = await GetServiceLogEntriesAsync(caseId),
             OpposingAttorneys = await GetOpposingAttorneysAsync(caseId),
+            CaseLegalAssistants = await GetCaseLegalAssistantsAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
             CaseIssueTags = await GetCaseIssueTagsAsync(caseId),
             CaseNotes = await GetCaseNotesAsync(caseId),
@@ -1205,7 +1206,7 @@ public sealed partial class CasePlannerRepository
             "exhibit"=>"exhibits","trial-motion"=>"trial_motions","case-issue-tag"=>"case_issue_tags",
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
             "service-log"=>"service_log_entries","publication-entry"=>"publication_dates","discovery"=>"discovery_tracking",
-            "opposing-attorney"=>"case_opposing_attorneys",
+            "opposing-attorney"=>"case_opposing_attorneys","legal-assistant"=>"case_legal_assistants",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -3473,6 +3474,91 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted opposing attorney {id} at {DateTime.Now:G}");
+            return 0;
+        });
+    }
+
+    public async Task<List<CaseLegalAssistantRecord>> GetCaseLegalAssistantsAsync(long? caseId)
+    {
+        var list = new List<CaseLegalAssistantRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, name, sort_order
+            FROM case_legal_assistants
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY sort_order, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new CaseLegalAssistantRecord
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                Name = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                SortOrder = reader.IsDBNull(3) ? 0 : reader.GetInt32(3)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task<CaseLegalAssistantRecord> SaveCaseLegalAssistantAsync(CaseLegalAssistantRecord model)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            if (model.Id == 0)
+            {
+                var nextOrderCmd = connection.CreateCommand();
+                nextOrderCmd.Transaction = tx;
+                nextOrderCmd.CommandText = "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM case_legal_assistants WHERE case_id=@case_id";
+                nextOrderCmd.Parameters.AddWithValue("@case_id", model.CaseId);
+                model.SortOrder = Convert.ToInt32(await nextOrderCmd.ExecuteScalarAsync());
+
+                cmd.CommandText = """
+                    INSERT INTO case_legal_assistants (case_id, name, sort_order, created_at, updated_at)
+                    VALUES (@case_id, @name, @sort_order, @created_at, @updated_at);
+                    SELECT last_insert_rowid();
+                    """;
+            }
+            else
+            {
+                cmd.CommandText = """
+                    UPDATE case_legal_assistants
+                    SET name=@name, sort_order=@sort_order, updated_at=@updated_at
+                    WHERE id=@id;
+                    SELECT @id;
+                    """;
+                cmd.Parameters.AddWithValue("@id", model.Id);
+            }
+
+            cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@name", model.Name);
+            cmd.Parameters.AddWithValue("@sort_order", model.SortOrder);
+            cmd.Parameters.AddWithValue("@created_at", now);
+            cmd.Parameters.AddWithValue("@updated_at", now);
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved legal assistant {model.Name} at {DateTime.Now:G}");
+            return model;
+        });
+    }
+
+    public async Task DeleteCaseLegalAssistantAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM case_legal_assistants WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted legal assistant {id} at {DateTime.Now:G}");
             return 0;
         });
     }
@@ -7878,6 +7964,14 @@ public sealed partial class CasePlannerRepository
             updated_at TEXT
         );
         CREATE TABLE IF NOT EXISTS case_opposing_attorneys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS case_legal_assistants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
             name TEXT NOT NULL,

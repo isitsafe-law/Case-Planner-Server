@@ -203,6 +203,12 @@ builder.Services.AddSingleton<IOpposingAttorneyStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerOpposingAttorneyStore>()
         : services.GetRequiredService<SqliteOpposingAttorneyStore>());
+builder.Services.AddSingleton<SqliteCaseLegalAssistantStore>();
+builder.Services.AddSingleton<SqlServerCaseLegalAssistantStore>();
+builder.Services.AddSingleton<ICaseLegalAssistantStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerCaseLegalAssistantStore>()
+        : services.GetRequiredService<SqliteCaseLegalAssistantStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -873,6 +879,18 @@ app.MapDelete("/api/opposing-attorneys/{id:long}", async (long id,IOpposingAttor
 {
     var caseId=await children.GetCaseIdAsync("opposing-attorney",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
     await opposingAttorneys.DeleteAsync(id);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/legal-assistants", async (long id, ICaseLegalAssistantStore legalAssistants) => Results.Ok(await legalAssistants.GetAsync(id)));
+app.MapPost("/api/cases/{id:long}/legal-assistants", async (long id, CaseLegalAssistantRecord model,ICaseLegalAssistantStore legalAssistants,CaseAccessService access,CancellationToken token) =>
+{
+    model.CaseId = id;
+    return await access.CanWriteAsync(id,token)?Results.Ok(await legalAssistants.SaveAsync(model,token)):Results.Forbid();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/legal-assistants/{id:long}", async (long id,ICaseLegalAssistantStore legalAssistants,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("legal-assistant",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await legalAssistants.DeleteAsync(id);
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/exhibits", async (long id, IExhibitStore exhibits) => Results.Ok(await exhibits.GetAsync(id)));

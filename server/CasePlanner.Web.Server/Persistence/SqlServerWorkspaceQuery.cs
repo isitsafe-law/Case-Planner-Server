@@ -12,7 +12,7 @@ public sealed class SqlServerWorkspaceQuery(
     SqlServerChecklistStore checklist,SqlServerDiscoveryTrackingStore discovery,SqlServerCaseNoteStore notes,
     SqlServerHearingStore hearings,SqlServerPublicationEntryStore publicationEntries,
     SqlServerActivityStore activities,SqlServerDocumentExportStore documents,SqlServerIssueTagStore issueTags,
-    SqlServerOpposingAttorneyStore opposingAttorneys) : IOperationalWorkspaceQuery
+    SqlServerOpposingAttorneyStore opposingAttorneys,SqlServerCaseLegalAssistantStore caseLegalAssistants) : IOperationalWorkspaceQuery
 {
     public async Task<CaseWorkspaceResponse?> GetWorkspaceAsync(long caseId,IReadOnlySet<long>? visibleCaseIds=null,CancellationToken token=default)
     {
@@ -29,6 +29,7 @@ public sealed class SqlServerWorkspaceQuery(
             CaseNotes=await notes.GetAsync(caseId,token),Hearings=await hearings.GetAsync(caseId,token),
             DocumentExports=await documents.GetAsync(caseId,token),ServiceStatus=ServiceStatusEngine.Build(record,publication),
             OpposingAttorneys=await opposingAttorneys.GetAsync(caseId,token),
+            CaseLegalAssistants=await caseLegalAssistants.GetAsync(caseId,token),
             OverviewSummary=dashboard
         };
     }

@@ -369,6 +369,23 @@ public sealed class OpposingAttorneyRecord
     public int SortOrder { get; set; }
 }
 
+// Test-build feedback item: case.assignedAttorney's tied legal assistant used to be derived live
+// (whichever Staff Directory legal assistant lists this case's attorney) and shown as a single
+// read-only value - unable to represent two attorneys on one case each needing their own legal
+// assistant, or a manual override. Converted to a one-to-many child table (case_legal_assistants)
+// mirroring OpposingAttorneyRecord/case_opposing_attorneys column-for-column. Unlike opposing
+// attorneys, Name is chosen client-side from the Staff Directory's active legal assistants via a
+// dropdown rather than typed as free text, but is still stored as a plain name snapshot (not a
+// foreign key) so a name later deactivated/removed from the directory stays intact here.
+public sealed class CaseLegalAssistantRecord
+{
+    public long Id { get; set; }
+    public string? RowVersion { get; set; }
+    public long CaseId { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
+}
+
 public sealed class UpcomingWorkItemRecord
 {
     public string Key { get; set; } = "";
@@ -1500,6 +1517,7 @@ public sealed class CaseWorkspaceResponse
     public PublicationRecord Publication { get; set; } = new();
     public List<ServiceLogEntry> ServiceLogEntries { get; set; } = [];
     public List<OpposingAttorneyRecord> OpposingAttorneys { get; set; } = [];
+    public List<CaseLegalAssistantRecord> CaseLegalAssistants { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];
     public List<IssueTagRecord> AvailableIssueTags { get; set; } = [];
     public List<CaseNoteRecord> CaseNotes { get; set; } = [];

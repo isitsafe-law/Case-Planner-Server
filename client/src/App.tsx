@@ -209,6 +209,19 @@ type OpposingAttorney = {
   rowVersion?: string | null
 }
 
+// Test-build feedback item: the Case Record's "Legal Assistant" field used to be derived live -
+// whichever Staff Directory legal assistant lists the case's Assigned Attorney - and shown as a
+// single read-only value. Converted to a one-to-many child table (mirrors OpposingAttorney's
+// shape one-for-one) so a case can hold more than one legal assistant and support a manual
+// override (see legalAssistantNamesForAttorneyChange below for the auto-populate-while-blank rule).
+type CaseLegalAssistant = {
+  id: number
+  caseId: number
+  name: string
+  sortOrder?: number
+  rowVersion?: string | null
+}
+
 type DiscoveryItem = {
   id: number
   caseId: number
@@ -567,6 +580,7 @@ type WorkspaceResponse = {
   publication: PublicationRecord
   serviceLogEntries: ServiceLogEntry[]
   opposingAttorneys: OpposingAttorney[]
+  caseLegalAssistants: CaseLegalAssistant[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -1817,6 +1831,29 @@ export function attorneyOptions(activeAttorneyNames: string[], value?: string | 
   return trimmed && !activeAttorneyNames.includes(trimmed) ? [trimmed, ...activeAttorneyNames] : activeAttorneyNames
 }
 
+// Legal Assistant row dropdown grandfathering - identical shape to attorneyOptions above, since
+// each row is also sourced from a user-editable Staff Directory list rather than a hardcoded array.
+export function legalAssistantOptions(activeLegalAssistantNames: string[], value?: string | null): string[] {
+  const trimmed = value?.trim()
+  return trimmed && !activeLegalAssistantNames.includes(trimmed) ? [trimmed, ...activeLegalAssistantNames] : activeLegalAssistantNames
+}
+
+// Pure auto-populate-while-blank rule (exported for direct unit testing - see
+// App.legalAssistantAutofill.test.ts), mirroring districtForCountyChange's contract exactly: fires
+// only while the case's legal-assistant list is still empty, so a later Assigned Attorney change
+// never clobbers a list that was already auto-populated or manually built up (the explicit "allow
+// manual override" requirement - two attorneys on a case can each have their own legal assistant).
+// There can be zero matches (some attorneys have no tied LA), one, or in principle more than one if
+// the Staff Directory has an ambiguous tie - all matches are returned, not just the first.
+export function legalAssistantNamesForAttorneyChange(
+  currentNames: string[],
+  newAttorneyName: string,
+  legalAssistantDirectory: { name: string; attorneyNames: string[] }[],
+): string[] {
+  if (currentNames.length > 0) return currentNames
+  return legalAssistantDirectory.filter((la) => la.attorneyNames.includes(newAttorneyName)).map((la) => la.name)
+}
+
 function normalizeTextValue(value?: string | null): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
@@ -2141,6 +2178,7 @@ function App() {
   const [publicationEntryDraft, setPublicationEntryDraft] = useState<PublicationEntry>(() => emptyPublicationEntry(0))
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
   const [opposingAttorneys, setOpposingAttorneys] = useState<OpposingAttorney[]>([])
+  const [caseLegalAssistants, setCaseLegalAssistants] = useState<CaseLegalAssistant[]>([])
   // Work Queue task rows span many cases at once - cache each case's assignable staff (its
   // existing Phase 1 case-assignment list) on demand rather than loading the whole office roster.
   const [queueAssigneeOptions, setQueueAssigneeOptions] = useState<Record<number, CaseAssignmentRecord[]>>({})
@@ -2689,6 +2727,7 @@ function App() {
       setPublicationEntryDraft(emptyPublicationEntry(caseId))
       setPublicationEntryFormOpen(false)
       setOpposingAttorneys(data.opposingAttorneys ?? [])
+      setCaseLegalAssistants(data.caseLegalAssistants ?? [])
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -2879,6 +2918,13 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to remove assignment.')
     }
   }
+  // Test-build feedback item: the "Assigned Staff" panel (Phase 1 case_assignments roster) was
+  // removed from the case workspace view - it always showed empty locally (Entra-only) and, per
+  // explicit feedback, wasn't useful in that placement. addCaseAssignment/removeCaseAssignment,
+  // caseAssignments state, and the server-side case_assignments plumbing are intentionally kept,
+  // not deleted, in case a future phase gives this capability a new home; nothing currently renders
+  // them, so this reference only keeps noUnusedLocals from flagging otherwise-dead code.
+  void caseRoleOptions; void assignmentRoleOptions; void addCaseAssignment; void removeCaseAssignment
 
   function clearModalFeedback() {
     setModalErrorSummary('')
@@ -3035,6 +3081,11 @@ function App() {
     setSelectedCaseId(null)
     setWorkspace(null)
     setCaseDraft(emptyCase())
+    // Unlike opposingAttorneys (which the new-case modal cannot add to at all until the case has
+    // an id - see addOpposingAttorneyRow's caseId guard), the Legal Assistant list must start
+    // genuinely empty here so the auto-populate-while-blank rule behaves correctly the first time
+    // Assigned Attorney is set on a brand-new case.
+    setCaseLegalAssistants([])
     setCaseTab('overview')
     setDeadlineDraft(emptyDeadline())
     setChecklistDraft(emptyChecklist())
@@ -4280,6 +4331,17 @@ function App() {
         if ((previous.shortPostureSummary || '') !== (saved.shortPostureSummary || '')) changes.push('Pipeline note updated.')
         for (const notes of changes) await api(`/api/cases/${saved.id}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'PipelineUpdated', notes }) })
       }
+      // Any Legal Assistant rows added (manually, or via the auto-populate-while-blank rule)
+      // before this case had an id are still local drafts (id: 0) - persist them now that a real
+      // caseId exists, before refreshAll below reloads the workspace from the server.
+      const pendingLegalAssistants = caseLegalAssistants.filter((row) => row.id === 0 && row.name.trim())
+      for (const row of pendingLegalAssistants) {
+        try {
+          await api(`/api/cases/${saved.id}/legal-assistants`, { method: 'POST', body: JSON.stringify({ ...row, caseId: saved.id }) })
+        } catch {
+          // best effort - the workspace reload below simply shows fewer legal assistants if this fails
+        }
+      }
       setSelectedCaseId(saved.id)
       setCasesView('workspace')
       setCaseTab('overview')
@@ -5324,6 +5386,76 @@ function App() {
       setMessage('Opposing attorney removed.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to remove opposing attorney.')
+    }
+  }
+
+  // Test-build feedback item: Legal Assistant rows are a small repeatable list (case_legal_assistants),
+  // same shape as opposing attorneys above, but each row is a dropdown sourced from the Staff
+  // Directory's active legal assistants rather than free text (see legalAssistantOptions). Unlike
+  // addOpposingAttorneyRow, adding a row here is not gated on already having a caseId - a
+  // brand-new unsaved case needs to be able to hold auto-populated/manually-added rows locally
+  // (id: 0) so the auto-populate-while-blank rule (legalAssistantNamesForAttorneyChange) has
+  // something to check before the case is first saved; saveCase persists any such pending rows
+  // once the case gets a real id.
+  function addCaseLegalAssistantRow() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    setCaseLegalAssistants((prev) => [...prev, { id: 0, caseId: caseId || 0, name: '', sortOrder: prev.length }])
+  }
+
+  async function changeCaseLegalAssistantName(index: number, name: string) {
+    setCaseLegalAssistants((prev) => prev.map((row, i) => (i === index ? { ...row, name } : row)))
+    const caseId = selectedCaseId ?? caseDraft.id
+    const row = caseLegalAssistants[index]
+    if (!caseId || !row || !name.trim()) return
+    try {
+      setErrorMessage('')
+      const saved = await api<CaseLegalAssistant>(`/api/cases/${caseId}/legal-assistants`, { method: 'POST', body: JSON.stringify({ ...row, name, caseId }) })
+      setCaseLegalAssistants((prev) => prev.map((r, i) => (i === index ? saved : r)))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save legal assistant.')
+    }
+  }
+
+  async function removeCaseLegalAssistantRow(index: number) {
+    const row = caseLegalAssistants[index]
+    if (!row) return
+    if (row.id === 0) {
+      setCaseLegalAssistants((prev) => prev.filter((_, i) => i !== index))
+      return
+    }
+    if (!(await confirmAction({ title: 'Remove legal assistant?', message: `${row.name || 'This entry'} will be removed from the case.`, confirmLabel: 'Remove', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/legal-assistants/${row.id}`, { method: 'DELETE' })
+      setCaseLegalAssistants((prev) => prev.filter((_, i) => i !== index))
+      setMessage('Legal assistant removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove legal assistant.')
+    }
+  }
+
+  // Fires on every Assigned Attorney change in the case editor; the "only fill while blank"
+  // decision itself lives in the pure, unit-tested legalAssistantNamesForAttorneyChange. When
+  // there's no caseId yet (a brand-new case, still unsaved), the auto-populated rows are kept as
+  // local drafts (id: 0) - saveCase persists them once the case exists.
+  function applyLegalAssistantAutoPopulate(attorneyName: string) {
+    const currentNames = caseLegalAssistants.map((row) => row.name).filter((n) => n.trim())
+    const nextNames = legalAssistantNamesForAttorneyChange(currentNames, attorneyName, legalAssistants)
+    if (nextNames.length === currentNames.length) return
+    const caseId = selectedCaseId ?? caseDraft.id
+    const rows: CaseLegalAssistant[] = nextNames.map((name, index) => ({ id: 0, caseId: caseId || 0, name, sortOrder: index }))
+    setCaseLegalAssistants(rows)
+    if (caseId) {
+      rows.forEach((row, index) => { void persistAutoPopulatedLegalAssistantRow(row, index) })
+    }
+  }
+
+  async function persistAutoPopulatedLegalAssistantRow(row: CaseLegalAssistant, index: number) {
+    try {
+      const saved = await api<CaseLegalAssistant>(`/api/cases/${row.caseId}/legal-assistants`, { method: 'POST', body: JSON.stringify(row) })
+      setCaseLegalAssistants((prev) => prev.map((r, i) => (i === index ? saved : r)))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save legal assistant.')
     }
   }
 
@@ -6449,6 +6581,11 @@ function App() {
     const commandChecklist = workspace ? sortChecklistForDisplay(workspace.checklistItems.filter((item) => !isChecklistDone(item))).slice(0, 3) : []
     const commandDiscovery = workspace ? workspace.discoveryItems.filter((item) => item.status.includes('Follow-Up') || item.status.includes('Waiting')).slice(0, 3) : []
     const opposingAttorneyNames = opposingAttorneys.map((row) => row.name.trim()).filter(Boolean).join(', ')
+    // Real, stored, per-case data - see caseLegalAssistants (case_legal_assistants), loaded
+    // alongside opposingAttorneys in loadWorkspace. This superseded the old single derived
+    // "tiedLegalAssistant" value (a live lookup against the Staff Directory tie) so a case can hold
+    // more than one legal assistant and support a manual override.
+    const legalAssistantNames = caseLegalAssistants.map((row) => row.name.trim()).filter(Boolean).join(', ')
     const coreRecordFields = [
       { label: 'Filing Date', value: displayDate(selectedCase.filingDate), important: Boolean(selectedCase.filingDate), always: false },
       { label: 'Date of Taking', value: displayDate(selectedCase.dateOfTaking), important: Boolean(selectedCase.dateOfTaking), always: false },
@@ -6456,15 +6593,9 @@ function App() {
       { label: 'Closed Date', value: displayDate(selectedCase.closedDate), important: Boolean(selectedCase.closedDate), always: false },
       { label: 'Project Name', value: selectedCase.projectName || '', important: Boolean(selectedCase.projectName), always: false },
     ]
-    // Derived, not stored - the case only records its Assigned Attorney; which legal assistant that
-    // implies is looked up live against the Staff Directory tie (Settings > Attorneys & Staff), the
-    // same way Report A's Legal Assistant Load does. No case ever double-enters this.
-    const tiedLegalAssistant = selectedCase.assignedAttorney
-      ? legalAssistants.find((la) => la.attorneyNames.includes(selectedCase.assignedAttorney || ''))?.name || ''
-      : ''
     const peopleRecordFields = [
       { label: 'Assigned Attorney', value: selectedCase.assignedAttorney || '', important: Boolean(selectedCase.assignedAttorney) },
-      { label: 'Legal Assistant', value: tiedLegalAssistant, important: Boolean(tiedLegalAssistant) },
+      { label: 'Legal Assistant', value: legalAssistantNames, important: Boolean(legalAssistantNames) },
       { label: 'Opposing Attorneys', value: opposingAttorneyNames, important: Boolean(opposingAttorneyNames) },
       { label: 'Owner', value: selectedCase.owner || '', important: Boolean(selectedCase.owner) },
       { label: 'Landowner', value: selectedCase.landowner || '', important: Boolean(selectedCase.landowner) },
@@ -6528,6 +6659,21 @@ function App() {
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
               <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
+            </div>
+          )}
+          {/* Test-build feedback item: so a manager or anyone else opening someone else's case can
+              immediately see who the attorney and legal assistant(s) are without hunting for it -
+              small, non-prominent line, similar weight to the Holder row's label above. Omits the
+              Legal Assistant portion when that list is empty, and omits the whole line only when
+              there's also no Assigned Attorney. */}
+          {!isNewCase && (selectedCase.assignedAttorney || legalAssistantNames) && (
+            <div className="workspace-people-row top-gap-small">
+              <span className="workspace-people-row-text">
+                {[
+                  selectedCase.assignedAttorney ? `Attorney: ${selectedCase.assignedAttorney}` : '',
+                  legalAssistantNames ? `Legal Assistant: ${legalAssistantNames}` : '',
+                ].filter(Boolean).join(' · ')}
+              </span>
             </div>
           )}
           {workspace && workspace.caseIssueTags.length > 0 && (
@@ -6754,55 +6900,6 @@ function App() {
                 )}
               </Panel>
             </div>
-
-            <Panel title="Assigned Staff">
-              <p className="helper-text">Who is working this case - attorneys, legal assistants, and anyone else. Add or remove people any time; a second attorney is just another entry with the Attorney role.</p>
-              {caseAssignments.length === 0 ? <p>No one is assigned to this case yet.</p> : (
-                <div className="command-list">
-                  {caseAssignments.map((assignment) => (
-                    <div key={assignment.userId} className="command-list-row-compact">
-                      <div>
-                        <strong>{assignment.displayName}</strong>
-                        <div className="flag-text muted">{assignment.email || 'No email on file'}</div>
-                      </div>
-                      <StatusChip tone="neutral">{caseRoleLabel(assignment.caseRole)}</StatusChip>
-                      {currentUser?.isAdmin && (
-                        <button onClick={() => void removeCaseAssignment(assignment)} aria-label={`Remove ${assignment.displayName} from this case`}>✕</button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {currentUser?.isAdmin && (
-                <div className="form-grid top-gap-small">
-                  <label>
-                    <span>Person</span>
-                    <select value={newAssignmentDraft.userId} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, userId: event.target.value })}>
-                      <option value="">Select person…</option>
-                      {staffRoster.filter((user) => user.isActive).map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Case Role</span>
-                    <select value={newAssignmentDraft.caseRole} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, caseRole: event.target.value as CaseRoleValue })}>
-                      {caseRoleOptions.map((role) => <option key={role} value={role}>{caseRoleLabel(role)}</option>)}
-                    </select>
-                  </label>
-                  <details className="full-span">
-                    <summary className="helper-text">Advanced: access level</summary>
-                    <label className="top-gap-small">
-                      <span>Access Level</span>
-                      <select value={newAssignmentDraft.assignmentRole} onChange={(event) => setNewAssignmentDraft({ ...newAssignmentDraft, assignmentRole: event.target.value as AssignmentRoleValue })}>
-                        {assignmentRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
-                      </select>
-                    </label>
-                  </details>
-                  <div className="full-span button-row compact-actions">
-                    <button className="primary" disabled={!newAssignmentDraft.userId} onClick={() => void addCaseAssignment(selectedCase.id)}>Add</button>
-                  </div>
-                </div>
-              )}
-            </Panel>
 
             <CollapsiblePanel title="Case record" defaultOpen={false}>
               <div className="button-row compact-actions">
@@ -8536,13 +8633,36 @@ function App() {
               <div className="form-section-grid">
                 <label>
                   <span>Assigned Attorney</span>
-                  <select value={caseDraft.assignedAttorney || ''} onChange={(event) => patchCaseDraft({ assignedAttorney: event.target.value })}>
+                  <select value={caseDraft.assignedAttorney || ''} onChange={(event) => {
+                    const name = event.target.value
+                    patchCaseDraft({ assignedAttorney: name })
+                    applyLegalAssistantAutoPopulate(name)
+                  }}>
                     <option value="">Select attorney</option>
                     {attorneyOptions(attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), caseDraft.assignedAttorney).map((name) => (
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
                 </label>
+                <div className="full-span">
+                  <span>Legal Assistant</span>
+                  {caseLegalAssistants.map((row, index) => (
+                    <div key={row.id || `new-${index}`} className="button-row compact-actions top-gap-small">
+                      <select
+                        value={row.name}
+                        onChange={(event) => void changeCaseLegalAssistantName(index, event.target.value)}
+                      >
+                        <option value="">Select legal assistant</option>
+                        {legalAssistantOptions(legalAssistants.filter((la) => la.isActive).map((la) => la.name), row.name).map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                      <button type="button" onClick={() => void removeCaseLegalAssistantRow(index)}>Remove</button>
+                    </div>
+                  ))}
+                  {caseLegalAssistants.length === 0 && <p className="helper-text top-gap-small">No legal assistants added.</p>}
+                  <button type="button" className="top-gap-small" onClick={addCaseLegalAssistantRow}>+ Add Legal Assistant</button>
+                </div>
                 <label><span>Landowner</span><input value={caseDraft.landowner || ''} onChange={(event) => patchCaseDraft({ landowner: event.target.value })} placeholder="Landowner" /></label>
                 <label><span>Appraiser</span><input value={caseDraft.appraiser || ''} onChange={(event) => patchCaseDraft({ appraiser: event.target.value })} placeholder="Appraiser" /></label>
                 <label><span>Landowner's Appraiser</span><input value={caseDraft.landownerAppraiserName || ''} onChange={(event) => patchCaseDraft({ landownerAppraiserName: event.target.value })} placeholder="Landowner's appraiser" /></label>

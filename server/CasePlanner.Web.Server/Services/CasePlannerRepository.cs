@@ -5387,6 +5387,12 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "district", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "discovery_postures", "completion_changed_by", "TEXT");
+        // Notifications gap fix: manual link from a Staff Directory row to the real Entra-login
+        // account it corresponds to - opaque passthrough here (no app_users table on SQLite to
+        // validate against), a real uniqueidentifier FK on SQL Server (see
+        // 042_staff_directory_linked_user.sql).
+        await AddColumnIfMissingAsync(connection, "attorneys", "linked_user_id", "TEXT");
+        await AddColumnIfMissingAsync(connection, "legal_assistants", "linked_user_id", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -5486,7 +5492,7 @@ public sealed partial class CasePlannerRepository
         var list = new List<AttorneyRecord>();
         await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
         var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT id,name,title,is_active,sort_order FROM attorneys ORDER BY sort_order,name";
+        cmd.CommandText = "SELECT id,name,title,is_active,sort_order,linked_user_id FROM attorneys ORDER BY sort_order,name";
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
@@ -5497,6 +5503,7 @@ public sealed partial class CasePlannerRepository
                 Title = reader.IsDBNull(2) ? null : reader.GetString(2),
                 IsActive = reader.GetInt64(3) == 1,
                 SortOrder = reader.GetInt32(4),
+                LinkedUserId = reader.IsDBNull(5) ? null : reader.GetString(5),
             });
         }
         return list;
@@ -5516,19 +5523,20 @@ public sealed partial class CasePlannerRepository
             }
             model.SortOrder = sortOrder;
             cmd.CommandText = """
-                INSERT INTO attorneys(name,title,is_active,sort_order) VALUES(@name,@title,@active,@sort);
+                INSERT INTO attorneys(name,title,is_active,sort_order,linked_user_id) VALUES(@name,@title,@active,@sort,@linkedUserId);
                 SELECT last_insert_rowid();
                 """;
         }
         else
         {
-            cmd.CommandText = "UPDATE attorneys SET name=@name,title=@title,is_active=@active,sort_order=@sort WHERE id=@id; SELECT @id;";
+            cmd.CommandText = "UPDATE attorneys SET name=@name,title=@title,is_active=@active,sort_order=@sort,linked_user_id=@linkedUserId WHERE id=@id; SELECT @id;";
             cmd.Parameters.AddWithValue("@id", model.Id);
         }
         cmd.Parameters.AddWithValue("@name", model.Name);
         cmd.Parameters.AddWithValue("@title", DbValue(model.Title));
         cmd.Parameters.AddWithValue("@active", model.IsActive ? 1 : 0);
         cmd.Parameters.AddWithValue("@sort", model.SortOrder);
+        cmd.Parameters.AddWithValue("@linkedUserId", DbValue(model.LinkedUserId));
         model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
         return model;
     });
@@ -5538,7 +5546,7 @@ public sealed partial class CasePlannerRepository
         var list = new List<LegalAssistantRecord>();
         await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
         var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT id,name,is_active,sort_order FROM legal_assistants ORDER BY sort_order,name";
+        cmd.CommandText = "SELECT id,name,is_active,sort_order,linked_user_id FROM legal_assistants ORDER BY sort_order,name";
         await using (var reader = await cmd.ExecuteReaderAsync())
         {
             while (await reader.ReadAsync())
@@ -5549,6 +5557,7 @@ public sealed partial class CasePlannerRepository
                     Name = reader.GetString(1),
                     IsActive = reader.GetInt64(2) == 1,
                     SortOrder = reader.GetInt32(3),
+                    LinkedUserId = reader.IsDBNull(4) ? null : reader.GetString(4),
                 });
             }
         }
@@ -5585,18 +5594,19 @@ public sealed partial class CasePlannerRepository
             }
             model.SortOrder = sortOrder;
             cmd.CommandText = """
-                INSERT INTO legal_assistants(name,is_active,sort_order) VALUES(@name,@active,@sort);
+                INSERT INTO legal_assistants(name,is_active,sort_order,linked_user_id) VALUES(@name,@active,@sort,@linkedUserId);
                 SELECT last_insert_rowid();
                 """;
         }
         else
         {
-            cmd.CommandText = "UPDATE legal_assistants SET name=@name,is_active=@active,sort_order=@sort WHERE id=@id; SELECT @id;";
+            cmd.CommandText = "UPDATE legal_assistants SET name=@name,is_active=@active,sort_order=@sort,linked_user_id=@linkedUserId WHERE id=@id; SELECT @id;";
             cmd.Parameters.AddWithValue("@id", model.Id);
         }
         cmd.Parameters.AddWithValue("@name", model.Name);
         cmd.Parameters.AddWithValue("@active", model.IsActive ? 1 : 0);
         cmd.Parameters.AddWithValue("@sort", model.SortOrder);
+        cmd.Parameters.AddWithValue("@linkedUserId", DbValue(model.LinkedUserId));
         model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         // Full replace, not a partial merge - reassigning a legal assistant to different

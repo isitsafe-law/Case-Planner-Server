@@ -73,8 +73,14 @@ public sealed class DeadlineReminderBackgroundService(
 
         foreach (var reminder in due)
         {
+            // Staff Directory link (042_staff_directory_linked_user.sql): the case's Assigned
+            // Attorney and every one of its Legal Assistants are resolved through their manual
+            // linked_user_id, if set, and unioned in alongside case_assignments and the admin list -
+            // so a linked attorney/LA is notified even when case_assignments has no matching row for
+            // this case.
             var recipients = (await assignments.GetAllAssignedUserIdsAsync(reminder.CaseId, token))
                 .Concat(administratorIds)
+                .Concat(await GetLinkedStaffUserIdsAsync(connection, reminder.CaseId, token))
                 .Distinct()
                 .ToList();
             if (recipients.Count == 0)
@@ -164,6 +170,60 @@ public sealed class DeadlineReminderBackgroundService(
                 (ServiceDeadlineTitle, $"120-day service deadline for {caseNumber} is {isoDate} ({leadDays} days out)."),
             _ => throw new ArgumentOutOfRangeException(nameof(reminder), reminder.DeadlineType, "Unknown deadline type."),
         };
+    }
+
+    // Staff Directory link (042_staff_directory_linked_user.sql): the case's Assigned Attorney
+    // (cases.assigned_attorney) plus every name in its case_legal_assistants list, each resolved
+    // against dbo.attorneys/dbo.legal_assistants for a manually-set linked_user_id. Deliberately a
+    // simple per-name lookup rather than a bulk join - a case has at most a handful of these names.
+    private static async Task<List<Guid>> GetLinkedStaffUserIdsAsync(DbConnection connection, long caseId, CancellationToken token)
+    {
+        var names = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT assigned_attorney FROM dbo.cases WHERE id=@caseId";
+            command.Parameters.Add(new SqlParameter("@caseId", caseId));
+            var attorneyName = await command.ExecuteScalarAsync(token);
+            if (attorneyName is string name && !string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT name FROM dbo.case_legal_assistants WHERE case_id=@caseId AND is_deleted=0";
+            command.Parameters.Add(new SqlParameter("@caseId", caseId));
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+            {
+                names.Add(reader.GetString(0));
+            }
+        }
+
+        var result = new List<Guid>();
+        foreach (var name in names.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var linkedUserId = await GetLinkedUserIdAsync(connection, legalAssistant: false, name, token)
+                ?? await GetLinkedUserIdAsync(connection, legalAssistant: true, name, token);
+            if (linkedUserId is not null)
+            {
+                result.Add(linkedUserId.Value);
+            }
+        }
+
+        return result;
+    }
+
+    private static async Task<Guid?> GetLinkedUserIdAsync(DbConnection connection, bool legalAssistant, string name, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = legalAssistant
+            ? "SELECT linked_user_id FROM dbo.legal_assistants WHERE name=@name AND linked_user_id IS NOT NULL"
+            : "SELECT linked_user_id FROM dbo.attorneys WHERE name=@name AND linked_user_id IS NOT NULL";
+        command.Parameters.Add(new SqlParameter("@name", name));
+        var result = await command.ExecuteScalarAsync(token);
+        return result is null or DBNull ? null : (Guid)result;
     }
 
     private static DateOnly? ParseDate(DbDataReader reader, int index)

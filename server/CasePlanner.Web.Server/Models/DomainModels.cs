@@ -838,6 +838,10 @@ public sealed class AttorneyRecord
     public string? Title { get; set; }
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
+    // Manual link to the real Entra-login account this Staff Directory row corresponds to - see
+    // 042_staff_directory_linked_user.sql. A GUID string on SQLite (opaque passthrough, no
+    // app_users table there to validate against); a real uniqueidentifier FK on SQL Server.
+    public string? LinkedUserId { get; set; }
 }
 
 public sealed class LegalAssistantRecord
@@ -848,6 +852,7 @@ public sealed class LegalAssistantRecord
     public int SortOrder { get; set; }
     public List<long> AttorneyIds { get; set; } = [];
     public List<string> AttorneyNames { get; set; } = [];
+    public string? LinkedUserId { get; set; }
 }
 
 public sealed class WorkTemplateCandidate

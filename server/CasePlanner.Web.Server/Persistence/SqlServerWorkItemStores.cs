@@ -63,6 +63,32 @@ public abstract class SqlServerWorkItemStoreBase(IDatabaseConnectionFactory conn
         var result = await command.ExecuteScalarAsync(token);
         return result is null or DBNull ? null : Convert.ToString(result);
     }
+
+    // Notifications gap fix: the case's Assigned Attorney is a plain name snapshot (cases.
+    // assigned_attorney, no FK - same grandfathering convention as case_legal_assistants.name), read
+    // here purely to resolve it against the Staff Directory's manual link below.
+    protected static async Task<string?> GetCaseAssignedAttorneyAsync(DbConnection connection, long caseId, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT assigned_attorney FROM dbo.cases WHERE id=@caseId";
+        command.Parameters.Add(new SqlParameter("@caseId", caseId));
+        var result = await command.ExecuteScalarAsync(token);
+        return result is null or DBNull ? null : Convert.ToString(result);
+    }
+
+    // Notifications gap fix (042_staff_directory_linked_user.sql): resolves a Staff Directory name
+    // to the real account it's been manually linked to, if any. Deliberately a simple per-name
+    // lookup, not a bulk join - these triggers fire for at most a couple of names per save/scan.
+    protected static async Task<Guid?> GetLinkedUserIdAsync(DbConnection connection, bool legalAssistant, string name, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = legalAssistant
+            ? "SELECT linked_user_id FROM dbo.legal_assistants WHERE name=@name AND linked_user_id IS NOT NULL"
+            : "SELECT linked_user_id FROM dbo.attorneys WHERE name=@name AND linked_user_id IS NOT NULL";
+        command.Parameters.Add(new SqlParameter("@name", name));
+        var result = await command.ExecuteScalarAsync(token);
+        return result is null or DBNull ? null : (Guid)result;
+    }
 }
 
 public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connections, IHttpContextAccessor accessor)
@@ -232,9 +258,9 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     {
         if(string.IsNullOrWhiteSpace(model.Task)) throw new ArgumentException("Checklist task is required."); var isNew=model.Id==0;
         await using var connection=Connections.CreateConnection(); await connection.OpenAsync(token); await using var transaction=await connection.BeginTransactionAsync(token);
-        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null,previousAssignedUserId=null;
+        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null,previousAssignedUserId=null,previousAssignedStaffName=null;
         if(isNew) await EnsureCaseExistsAsync(connection,transaction,model.CaseId,token);
-        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id,assigned_user_id FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);previousAssignedUserId=reader.IsDBNull(3)?null:reader.GetGuid(3).ToString();}}
+        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id,assigned_user_id,assigned_staff_name FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);previousAssignedUserId=reader.IsDBNull(3)?null:reader.GetGuid(3).ToString();previousAssignedStaffName=Text(reader,4);}}
         var isNowDone=model.Status is "Done" or "Complete"; var wasAlreadyDone=previousStatus is "Done" or "Complete";
         var completed=isNowDone?(wasAlreadyDone?previousCompleted:now):null;
         await using var command=connection.CreateCommand();command.Transaction=transaction;
@@ -259,16 +285,45 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
             var body=string.IsNullOrWhiteSpace(caseNumber)?$"Task '{model.Task}' assigned to you.":$"Task '{model.Task}' assigned to you on {caseNumber}.";
             await notifications.CreateAsync([normalizedNewAssigned],"TaskAssigned",model.CaseId,"Task assigned",body,token);
         }
+
+        // Revived TaskAssigned trigger, keyed on assigned_staff_name (the column the assignee
+        // picker actually writes today) rather than the dormant assigned_user_id above, which stays
+        // completely untouched. Same "did it actually change to a new non-blank value" shape as the
+        // block above, just resolved through the Staff Directory's manual link instead of being a
+        // real user id already. A name with no linked_user_id (not yet linked, or Entra disabled)
+        // simply fires no notification - this is additive, never a replacement for the picker UI.
+        var normalizedPreviousStaffName=string.IsNullOrWhiteSpace(previousAssignedStaffName)?null:previousAssignedStaffName.Trim();
+        var normalizedNewStaffName=string.IsNullOrWhiteSpace(model.AssignedStaffName)?null:model.AssignedStaffName.Trim();
+        if(normalizedNewStaffName is not null && !string.Equals(normalizedNewStaffName,normalizedPreviousStaffName,StringComparison.OrdinalIgnoreCase))
+        {
+            var linkedStaffUserId=await GetLinkedUserIdAsync(connection,false,normalizedNewStaffName,token)
+                ?? await GetLinkedUserIdAsync(connection,true,normalizedNewStaffName,token);
+            if(linkedStaffUserId is not null)
+            {
+                var caseNumber=await GetCaseNumberAsync(connection,model.CaseId,token);
+                var body=string.IsNullOrWhiteSpace(caseNumber)?$"Task '{model.Task}' assigned to you.":$"Task '{model.Task}' assigned to you on {caseNumber}.";
+                await notifications.CreateAsync([linkedStaffUserId.Value.ToString()],"TaskAssigned",model.CaseId,"Task assigned",body,token);
+            }
+        }
         if(isNowDone && !wasAlreadyDone)
         {
             // Part A (admin system-wide inclusion): every current administrator is unioned in
             // alongside the case's assigned attorneys, deduped, regardless of whether that admin is
             // personally assigned to this case - matching admins' existing full-visibility role
-            // elsewhere in this app (see-all-cases, delete-any-case).
+            // elsewhere in this app (see-all-cases, delete-any-case). Part B (Staff Directory link):
+            // the case's Assigned Attorney is also resolved through dbo.attorneys.linked_user_id and
+            // unioned in, so a manually-linked attorney is notified even when case_assignments has
+            // no matching Attorney row for this case.
             var recipients=(await assignments.GetCaseRoleUserIdsAsync(model.CaseId,"Attorney",token))
                 .Concat(await appUsers.GetAllAdministratorUserIdsAsync(token))
-                .Distinct()
                 .ToList();
+            var assignedAttorneyName=await GetCaseAssignedAttorneyAsync(connection,model.CaseId,token);
+            if(!string.IsNullOrWhiteSpace(assignedAttorneyName))
+            {
+                var linkedAttorneyUserId=await GetLinkedUserIdAsync(connection,false,assignedAttorneyName,token);
+                if(linkedAttorneyUserId is not null) recipients.Add(linkedAttorneyUserId.Value);
+            }
+            recipients=recipients.Distinct().ToList();
             if(recipients.Count>0)
             {
                 var caseNumber=await GetCaseNumberAsync(connection,model.CaseId,token);

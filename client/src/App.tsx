@@ -748,6 +748,7 @@ type AttorneyRecord = {
   title?: string | null
   isActive: boolean
   sortOrder: number
+  linkedUserId?: string | null
 }
 type LegalAssistantRecord = {
   id: number
@@ -756,6 +757,7 @@ type LegalAssistantRecord = {
   sortOrder: number
   attorneyIds: number[]
   attorneyNames: string[]
+  linkedUserId?: string | null
 }
 type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
 type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
@@ -1860,6 +1862,20 @@ export function legalAssistantNamesForAttorneyChange(
 ): string[] {
   if (currentNames.length > 0) return currentNames
   return legalAssistantDirectory.filter((la) => la.attorneyNames.includes(newAttorneyName)).map((la) => la.name)
+}
+
+// Notifications gap fix: resolves a Staff Directory row's linkedUserId back to a display name for
+// the "Linked Account" dropdown, sourced from the same staffRoster state the sibling "Attorneys &
+// Staff" panel already loads via "Load Staff" - no second fetch. staffRoster is empty until that
+// button is clicked (or always empty locally, where Entra is disabled), so a row that already has a
+// linkedUserId set can't always be resolved to a name - falls back to the raw id rather than
+// silently showing "Not linked" for a link that is, in fact, still set.
+export function linkedAccountDisplayName(
+  linkedUserId: string | null | undefined,
+  staffRoster: { id: string; displayName: string }[],
+): string | null {
+  if (!linkedUserId) return null
+  return staffRoster.find((user) => user.id === linkedUserId)?.displayName ?? linkedUserId
 }
 
 // Test-build feedback batch (task assignment): pure, exported for direct unit testing (see
@@ -10772,13 +10788,31 @@ function App() {
               <h4 className="top-gap">Attorneys</h4>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
-                  <thead><tr><th>Name</th><th>Title</th><th>Active</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Title</th><th>Active</th><th>Linked Account</th><th>Actions</th></tr></thead>
                   <tbody>
                     {attorneys.map((attorney) => (
                       <tr key={attorney.id}>
                         <td>{attorney.name}</td>
                         <td>{attorney.title || '—'}</td>
                         <td><span className={`pill pill-${attorney.isActive ? 'success' : 'neutral'}`}>{attorney.isActive ? 'Active' : 'Inactive'}</span></td>
+                        <td>
+                          {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                            <select
+                              value={attorney.linkedUserId ?? ''}
+                              onChange={(event) => void saveAttorney({ ...attorney, linkedUserId: event.target.value || null })}
+                            >
+                              <option value="">Not linked</option>
+                              {attorney.linkedUserId && !staffRoster.some((user) => user.id === attorney.linkedUserId) && (
+                                <option value={attorney.linkedUserId}>{linkedAccountDisplayName(attorney.linkedUserId, staffRoster)}</option>
+                              )}
+                              {staffRoster.map((user) => (
+                                <option key={user.id} value={user.id}>{user.displayName}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            linkedAccountDisplayName(attorney.linkedUserId, staffRoster) || 'Not linked'
+                          )}
+                        </td>
                         <td>
                           {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
                             <button onClick={() => void saveAttorney({ ...attorney, isActive: !attorney.isActive })}>{attorney.isActive ? 'Deactivate' : 'Activate'}</button>
@@ -10788,7 +10822,7 @@ function App() {
                         </td>
                       </tr>
                     ))}
-                    {attorneys.length === 0 && <tr><td colSpan={4} className="helper-text">No attorneys yet.</td></tr>}
+                    {attorneys.length === 0 && <tr><td colSpan={5} className="helper-text">No attorneys yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -10804,7 +10838,7 @@ function App() {
               <p className="helper-text">Who each legal assistant currently supports — editable here any time an assistant gets reassigned. A case's legal assistant is derived from its Assigned Attorney, not entered separately.</p>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
-                  <thead><tr><th>Name</th><th>Active</th><th>Supports</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Active</th><th>Supports</th><th>Linked Account</th><th>Actions</th></tr></thead>
                   <tbody>
                     {legalAssistants.map((legalAssistant) => (
                       <tr key={legalAssistant.id}>
@@ -10835,6 +10869,24 @@ function App() {
                         </td>
                         <td>
                           {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                            <select
+                              value={legalAssistant.linkedUserId ?? ''}
+                              onChange={(event) => void saveLegalAssistant({ ...legalAssistant, linkedUserId: event.target.value || null })}
+                            >
+                              <option value="">Not linked</option>
+                              {legalAssistant.linkedUserId && !staffRoster.some((user) => user.id === legalAssistant.linkedUserId) && (
+                                <option value={legalAssistant.linkedUserId}>{linkedAccountDisplayName(legalAssistant.linkedUserId, staffRoster)}</option>
+                              )}
+                              {staffRoster.map((user) => (
+                                <option key={user.id} value={user.id}>{user.displayName}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            linkedAccountDisplayName(legalAssistant.linkedUserId, staffRoster) || 'Not linked'
+                          )}
+                        </td>
+                        <td>
+                          {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
                             <button onClick={() => void saveLegalAssistant({ ...legalAssistant, isActive: !legalAssistant.isActive })}>{legalAssistant.isActive ? 'Deactivate' : 'Activate'}</button>
                           ) : (
                             <span className="helper-text">Admin or Manager only</span>
@@ -10842,7 +10894,7 @@ function App() {
                         </td>
                       </tr>
                     ))}
-                    {legalAssistants.length === 0 && <tr><td colSpan={4} className="helper-text">No legal assistants yet.</td></tr>}
+                    {legalAssistants.length === 0 && <tr><td colSpan={5} className="helper-text">No legal assistants yet.</td></tr>}
                   </tbody>
                 </table>
               </div>

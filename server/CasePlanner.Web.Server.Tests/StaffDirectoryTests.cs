@@ -120,6 +120,61 @@ public sealed class StaffDirectoryTests : IAsyncLifetime
         Assert.Equal(new[] { "Michelle Davenport" }, reloaded.AttorneyNames);
     }
 
+    // ---- Notifications gap fix: attorneys.linked_user_id / legal_assistants.linked_user_id
+    // round-trip (SQLite is an opaque passthrough column here - no app_users table to validate
+    // against), mirroring checklist_items.assigned_user_id's existing test precedent
+    // (OpposingAttorneyAndChecklistAssignmentTests.ChecklistItem_AssignedUserId_RoundTripsOnSaveAndRead). ----
+
+    [Fact]
+    public async Task SaveAttorney_LinkedUserId_RoundTripsOnSaveAndRead()
+    {
+        var linkedUserId = Guid.NewGuid().ToString();
+
+        var created = await _fixture.Repository.SaveAttorneyAsync(new AttorneyRecord { Name = "Linked Attorney", LinkedUserId = linkedUserId });
+        Assert.Equal(linkedUserId, created.LinkedUserId);
+
+        var reloaded = await _fixture.Repository.GetAttorneysAsync();
+        Assert.Single(reloaded, a => a.Id == created.Id && a.LinkedUserId == linkedUserId);
+    }
+
+    [Fact]
+    public async Task SaveAttorney_LinkedUserId_CanBeClearedByUpdating()
+    {
+        var created = await _fixture.Repository.SaveAttorneyAsync(new AttorneyRecord { Name = "Linked Attorney", LinkedUserId = Guid.NewGuid().ToString() });
+
+        created.LinkedUserId = null;
+        var updated = await _fixture.Repository.SaveAttorneyAsync(created);
+
+        Assert.Null(updated.LinkedUserId);
+        var reloaded = await _fixture.Repository.GetAttorneysAsync();
+        Assert.Single(reloaded, a => a.Id == created.Id && a.LinkedUserId == null);
+    }
+
+    [Fact]
+    public async Task SaveLegalAssistant_LinkedUserId_RoundTripsOnSaveAndRead()
+    {
+        var linkedUserId = Guid.NewGuid().ToString();
+
+        var created = await _fixture.Repository.SaveLegalAssistantAsync(new LegalAssistantRecord { Name = "Linked LA", LinkedUserId = linkedUserId });
+        Assert.Equal(linkedUserId, created.LinkedUserId);
+
+        var reloaded = await _fixture.Repository.GetLegalAssistantsAsync();
+        Assert.Single(reloaded, la => la.Id == created.Id && la.LinkedUserId == linkedUserId);
+    }
+
+    [Fact]
+    public async Task SaveLegalAssistant_LinkedUserId_CanBeClearedByUpdating()
+    {
+        var created = await _fixture.Repository.SaveLegalAssistantAsync(new LegalAssistantRecord { Name = "Linked LA", LinkedUserId = Guid.NewGuid().ToString() });
+
+        created.LinkedUserId = null;
+        var updated = await _fixture.Repository.SaveLegalAssistantAsync(created);
+
+        Assert.Null(updated.LinkedUserId);
+        var reloaded = await _fixture.Repository.GetLegalAssistantsAsync();
+        Assert.Single(reloaded, la => la.Id == created.Id && la.LinkedUserId == null);
+    }
+
     [Fact]
     public async Task UpdatingSupportedAttorneysReplacesRatherThanMergesTheTieSet()
     {

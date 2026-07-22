@@ -17,7 +17,7 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                SELECT id,name,trigger_type,stage,issue_tag_name,track,active,row_version
+                SELECT id,name,trigger_type,stage,issue_tag_name,active,is_custom,row_version
                 FROM dbo.checklist_templates WHERE is_deleted=0 ORDER BY name,id
                 """;
             await using var reader = await command.ExecuteReaderAsync(token);
@@ -26,8 +26,8 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
                 var item = new ChecklistTemplateRecord
                 {
                     Id = reader.GetInt64(0), Name = Text(reader, 1) ?? "", TriggerType = Text(reader, 2) ?? "Stage",
-                    Stage = Text(reader, 3), IssueTagName = Text(reader, 4), Track = Text(reader, 5) ?? "Any",
-                    Active = Bool(reader, 6), RowVersion = Version(reader, 7)
+                    Stage = Text(reader, 3), IssueTagName = Text(reader, 4),
+                    Active = Bool(reader, 5), IsCustom = Bool(reader, 6), RowVersion = Version(reader, 7)
                 };
                 templates.Add(item);
                 byId[item.Id] = item;
@@ -65,20 +65,23 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         await using var transaction = await connection.BeginTransactionAsync(token);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // Always writes is_custom=1: this is the Template Editor's save path (there is no SQL
+        // Server seeding pipeline - see SeedChecklistTemplatesAsync's SQLite-only comment), so any
+        // call here means a user has created or touched this template.
         if (isNew)
         {
             command.CommandText = """
                 INSERT INTO dbo.checklist_templates
-                    (name,trigger_type,stage,issue_tag_name,case_type,track,active,created_at,updated_at,created_by_user_id,updated_by_user_id)
+                    (name,trigger_type,stage,issue_tag_name,case_type,active,is_custom,created_at,updated_at,created_by_user_id,updated_by_user_id)
                 OUTPUT INSERTED.id,INSERTED.row_version
-                VALUES(@name,@trigger,@stage,@tag,'Any',@track,@active,@now,@now,@actor,@actor)
+                VALUES(@name,@trigger,@stage,@tag,'Any',@active,1,@now,@now,@actor,@actor)
                 """;
         }
         else
         {
             command.CommandText = """
                 UPDATE dbo.checklist_templates SET name=@name,trigger_type=@trigger,stage=@stage,
-                    issue_tag_name=@tag,track=@track,active=@active,updated_at=@now,updated_by_user_id=@actor
+                    issue_tag_name=@tag,active=@active,is_custom=1,updated_at=@now,updated_by_user_id=@actor
                 OUTPUT INSERTED.id,INSERTED.row_version
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
@@ -89,11 +92,11 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         command.Parameters.Add(new SqlParameter("@trigger", string.IsNullOrWhiteSpace(model.TriggerType) ? "Stage" : model.TriggerType.Trim()));
         command.Parameters.Add(new SqlParameter("@stage", Db(model.Stage)));
         command.Parameters.Add(new SqlParameter("@tag", Db(model.IssueTagName)));
-        command.Parameters.Add(new SqlParameter("@track", string.IsNullOrWhiteSpace(model.Track) ? "Any" : model.Track.Trim()));
         command.Parameters.Add(new SqlParameter("@active", model.Active));
         command.Parameters.Add(new SqlParameter("@now", now));
         command.Parameters.Add(new SqlParameter("@actor", (object?)ActorUserId ?? DBNull.Value));
         await ReadIdentityAsync(command, model, "Checklist template", token);
+        model.IsCustom = true;
         await GlobalAuditAsync(connection, transaction, isNew ? "ChecklistTemplateCreated" : "ChecklistTemplateUpdated", "ChecklistTemplate", model.Id, token);
         await transaction.CommitAsync(token);
         return model;
@@ -140,6 +143,18 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         command.Parameters.Add(new SqlParameter("@now", now));
         command.Parameters.Add(new SqlParameter("@actor", (object?)ActorUserId ?? DBNull.Value));
         await ReadIdentityAsync(command, model, "Checklist template item", token);
+
+        // Editing an item is still touching its parent template - mark it custom so a future
+        // reseed never overwrites it (there is no SQL Server seeding pipeline today, but this
+        // keeps the flag correct for whatever rows a one-time SQLite copy brings over).
+        await using (var markCustom = connection.CreateCommand())
+        {
+            markCustom.Transaction = transaction;
+            markCustom.CommandText = "UPDATE dbo.checklist_templates SET is_custom=1 WHERE id=@template_id";
+            markCustom.Parameters.Add(new SqlParameter("@template_id", model.TemplateId));
+            await markCustom.ExecuteNonQueryAsync(token);
+        }
+
         await GlobalAuditAsync(connection, transaction, isNew ? "ChecklistTemplateItemCreated" : "ChecklistTemplateItemUpdated", "ChecklistTemplateItem", model.Id, token);
         await transaction.CommitAsync(token);
         return model;
@@ -162,8 +177,35 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         await transaction.CommitAsync(token);
     }
 
-    public Task DeleteChecklistItemAsync(long id, string? rowVersion, CancellationToken token = default) =>
-        DeleteGlobalAsync("checklist_template_items", "Checklist template item", "ChecklistTemplateItemDeleted", "ChecklistTemplateItem", id, rowVersion, token);
+    public async Task DeleteChecklistItemAsync(long id, string? rowVersion, CancellationToken token = default)
+    {
+        await using var connection = Connections.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+
+        long? templateId = null;
+        await using (var lookup = connection.CreateCommand())
+        {
+            lookup.Transaction = transaction;
+            lookup.CommandText = "SELECT template_id FROM dbo.checklist_template_items WHERE id=@id AND is_deleted=0";
+            lookup.Parameters.Add(new SqlParameter("@id", id));
+            if (await lookup.ExecuteScalarAsync(token) is { } value) templateId = Convert.ToInt64(value);
+        }
+
+        await SoftDeleteGlobalAsync(connection, transaction, "checklist_template_items", "Checklist template item", "ChecklistTemplateItemDeleted", "ChecklistTemplateItem", id, rowVersion, token);
+
+        // Deleting an item is still touching its parent template - see SaveChecklistItemAsync.
+        if (templateId is { } tid)
+        {
+            await using var markCustom = connection.CreateCommand();
+            markCustom.Transaction = transaction;
+            markCustom.CommandText = "UPDATE dbo.checklist_templates SET is_custom=1 WHERE id=@template_id";
+            markCustom.Parameters.Add(new SqlParameter("@template_id", tid));
+            await markCustom.ExecuteNonQueryAsync(token);
+        }
+
+        await transaction.CommitAsync(token);
+    }
 
     public async Task<List<DeadlineTemplateRecord>> GetDeadlinesAsync(CancellationToken token = default)
     {
@@ -172,7 +214,7 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id,name,trigger_field,offset_days,title,severity,track,active,row_version
+            SELECT id,name,trigger_field,offset_days,title,severity,active,is_custom,row_version
             FROM dbo.deadline_templates WHERE is_deleted=0 ORDER BY name,id
             """;
         await using var reader = await command.ExecuteReaderAsync(token);
@@ -181,12 +223,13 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
             {
                 Id = reader.GetInt64(0), Name = Text(reader, 1) ?? "", TriggerField = Text(reader, 2) ?? "filing_date",
                 OffsetDays = Convert.ToInt32(reader.GetValue(3)), Title = Text(reader, 4) ?? "",
-                Severity = Text(reader, 5) ?? "normal", Track = Text(reader, 6) ?? "Any",
-                Active = Bool(reader, 7), RowVersion = Version(reader, 8)
+                Severity = Text(reader, 5) ?? "normal",
+                Active = Bool(reader, 6), IsCustom = Bool(reader, 7), RowVersion = Version(reader, 8)
             });
         return result;
     }
 
+    // Always writes is_custom=1: this is the Template Editor's save path (see SaveChecklistAsync).
     public async Task<DeadlineTemplateRecord> SaveDeadlineAsync(DeadlineTemplateRecord model, CancellationToken token = default)
     {
         if (string.IsNullOrWhiteSpace(model.Name) || string.IsNullOrWhiteSpace(model.Title))
@@ -202,16 +245,16 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         {
             command.CommandText = """
                 INSERT INTO dbo.deadline_templates
-                    (name,trigger_field,offset_days,title,severity,case_type,track,active,created_at,updated_at,created_by_user_id,updated_by_user_id)
+                    (name,trigger_field,offset_days,title,severity,case_type,active,is_custom,created_at,updated_at,created_by_user_id,updated_by_user_id)
                 OUTPUT INSERTED.id,INSERTED.row_version
-                VALUES(@name,@trigger,@offset,@title,@severity,'Any',@track,@active,@now,@now,@actor,@actor)
+                VALUES(@name,@trigger,@offset,@title,@severity,'Any',@active,1,@now,@now,@actor,@actor)
                 """;
         }
         else
         {
             command.CommandText = """
                 UPDATE dbo.deadline_templates SET name=@name,trigger_field=@trigger,offset_days=@offset,
-                    title=@title,severity=@severity,track=@track,active=@active,updated_at=@now,updated_by_user_id=@actor
+                    title=@title,severity=@severity,active=@active,is_custom=1,updated_at=@now,updated_by_user_id=@actor
                 OUTPUT INSERTED.id,INSERTED.row_version
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
@@ -223,11 +266,11 @@ public sealed class SqlServerWorkTemplateStore(IDatabaseConnectionFactory connec
         command.Parameters.Add(new SqlParameter("@offset", model.OffsetDays));
         command.Parameters.Add(new SqlParameter("@title", model.Title.Trim()));
         command.Parameters.Add(new SqlParameter("@severity", string.IsNullOrWhiteSpace(model.Severity) ? "normal" : model.Severity.Trim()));
-        command.Parameters.Add(new SqlParameter("@track", string.IsNullOrWhiteSpace(model.Track) ? "Any" : model.Track.Trim()));
         command.Parameters.Add(new SqlParameter("@active", model.Active));
         command.Parameters.Add(new SqlParameter("@now", now));
         command.Parameters.Add(new SqlParameter("@actor", (object?)ActorUserId ?? DBNull.Value));
         await ReadIdentityAsync(command, model, "Deadline template", token);
+        model.IsCustom = true;
         await GlobalAuditAsync(connection, transaction, isNew ? "DeadlineTemplateCreated" : "DeadlineTemplateUpdated", "DeadlineTemplate", model.Id, token);
         await transaction.CommitAsync(token);
         return model;

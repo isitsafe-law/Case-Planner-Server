@@ -347,6 +347,31 @@ public sealed class DiscoveryItemRecord
     public string? MotionToCompelDate { get; set; }
 }
 
+// Pure, unit-testable discovery due-date default: a case-level deadline template can't represent
+// this because a case has many discovery requests, each with its own ServedDate/DueDate (unlike
+// filing_date/trial_date, which are single-value trigger fields on the case row) - see
+// DeadlineTemplateRecord's TriggerField. Never overwrites a value already present, whether that's
+// a manually-typed override or a previously-computed default from an earlier save.
+public static class DiscoveryDueDateCalculator
+{
+    public const int DefaultResponseWindowDays = 30;
+
+    public static string? ComputeDefaultDueDate(string? servedDate, string? currentDueDate)
+    {
+        if (!string.IsNullOrWhiteSpace(currentDueDate))
+        {
+            return currentDueDate;
+        }
+
+        if (string.IsNullOrWhiteSpace(servedDate) || !DateOnly.TryParse(servedDate, out var served))
+        {
+            return currentDueDate;
+        }
+
+        return served.AddDays(DefaultResponseWindowDays).ToString("yyyy-MM-dd");
+    }
+}
+
 public sealed class PublicationEntryRecord
 {
     public long Id { get; set; }
@@ -538,7 +563,11 @@ public sealed class ChecklistTemplateRecord
     public string TriggerType { get; set; } = "Stage";
     public string? Stage { get; set; }
     public string? IssueTagName { get; set; }
-    public string Track { get; set; } = "Any";
+    // 0/false = stock seed content, safe to refresh on a version-bump reseed. 1/true = a firm has
+    // touched this template (created, edited, or edited/deleted one of its items) through the
+    // Template Editor - permanently off-limits to reseeding from then on. See
+    // SeedChecklistTemplatesAsync/SaveChecklistTemplateAsync.
+    public bool IsCustom { get; set; }
     public bool Active { get; set; } = true;
     public List<ChecklistTemplateItemRecord> Items { get; set; } = [];
 }
@@ -824,7 +853,8 @@ public sealed class DeadlineTemplateRecord
     public int OffsetDays { get; set; }
     public string Title { get; set; } = "";
     public string Severity { get; set; } = "normal";
-    public string Track { get; set; } = "Any";
+    // See ChecklistTemplateRecord.IsCustom - identical ownership rule for deadline templates.
+    public bool IsCustom { get; set; }
     public bool Active { get; set; } = true;
 }
 // Staff Directory - multi-user rollout Phase 5 (reporting) prerequisite. A fixed list of real
@@ -862,7 +892,6 @@ public sealed class WorkTemplateCandidate
     public int TemplateVersion { get; set; } = 1;
     public string Title { get; set; } = "";
     public string Stage { get; set; } = "";
-    public string Track { get; set; } = "Any";
     public string? DueDate { get; set; }
     public string? Severity { get; set; }
     public bool IsDuplicate { get; set; }

@@ -1903,6 +1903,7 @@ public sealed partial class CasePlannerRepository
 
     public async Task<DiscoveryItemRecord> SaveDiscoveryItemAsync(DiscoveryItemRecord model)
     {
+        model.DueDate = DiscoveryDueDateCalculator.ComputeDefaultDueDate(model.ServedDate, model.DueDate);
         return await WithWriteAsync(async (connection, tx) =>
         {
             var now = DateTime.UtcNow.ToString("O");
@@ -3933,7 +3934,7 @@ public sealed partial class CasePlannerRepository
 
         var templateCmd = connection.CreateCommand();
         templateCmd.CommandText = """
-            SELECT id, name, trigger_type, stage, issue_tag_name, track, active
+            SELECT id, name, trigger_type, stage, issue_tag_name, active, is_custom
             FROM checklist_templates
             ORDER BY name
             """;
@@ -3948,8 +3949,8 @@ public sealed partial class CasePlannerRepository
                     TriggerType = reader.GetString(2),
                     Stage = reader.IsDBNull(3) ? null : reader.GetString(3),
                     IssueTagName = reader.IsDBNull(4) ? null : reader.GetString(4),
-                    Track = reader.IsDBNull(5) ? "Any" : reader.GetString(5),
-                    Active = !reader.IsDBNull(6) && reader.GetInt64(6) == 1
+                    Active = !reader.IsDBNull(5) && reader.GetInt64(5) == 1,
+                    IsCustom = !reader.IsDBNull(6) && reader.GetInt64(6) == 1
                 };
                 templates.Add(record);
                 byId[record.Id] = record;
@@ -3997,18 +3998,21 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO checklist_templates (name, trigger_type, stage, issue_tag_name, track, active, created_at, updated_at)
-                    VALUES (@name, @trigger_type, @stage, @issue_tag_name, @track, @active, @created_at, @updated_at);
+                    INSERT INTO checklist_templates (name, trigger_type, stage, issue_tag_name, active, is_custom, created_at, updated_at)
+                    VALUES (@name, @trigger_type, @stage, @issue_tag_name, @active, 1, @created_at, @updated_at);
                     SELECT last_insert_rowid();
                     """;
                 cmd.Parameters.AddWithValue("@created_at", now);
             }
             else
             {
+                // Always sets is_custom=1: this is the Template Editor's save path, and any call
+                // here means a user has touched this template - it's permanently off-limits to a
+                // future reseed from then on (see SeedChecklistTemplatesAsync).
                 cmd.CommandText = """
                     UPDATE checklist_templates
                     SET name=@name, trigger_type=@trigger_type, stage=@stage, issue_tag_name=@issue_tag_name,
-                        track=@track, active=@active, updated_at=@updated_at
+                        active=@active, is_custom=1, updated_at=@updated_at
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -4019,10 +4023,10 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@trigger_type", model.TriggerType);
             cmd.Parameters.AddWithValue("@stage", DbValue(model.Stage));
             cmd.Parameters.AddWithValue("@issue_tag_name", DbValue(model.IssueTagName));
-            cmd.Parameters.AddWithValue("@track", string.IsNullOrWhiteSpace(model.Track) ? "Any" : model.Track);
             cmd.Parameters.AddWithValue("@active", model.Active ? 1 : 0);
             cmd.Parameters.AddWithValue("@updated_at", now);
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            model.IsCustom = true;
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved checklist template '{model.Name}' at {DateTime.Now:G}");
             return model;
         });
@@ -4082,6 +4086,15 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@due_offset_days", model.DueOffsetDays.HasValue ? model.DueOffsetDays.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@updated_at", now);
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+            // Editing an item is still touching its parent template - mark it custom so a future
+            // reseed never overwrites it (see SeedChecklistTemplatesAsync).
+            var markCustom = connection.CreateCommand();
+            markCustom.Transaction = tx;
+            markCustom.CommandText = "UPDATE checklist_templates SET is_custom=1 WHERE id=@template_id";
+            markCustom.Parameters.AddWithValue("@template_id", model.TemplateId);
+            await markCustom.ExecuteNonQueryAsync();
+
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved checklist template item {model.Id} at {DateTime.Now:G}");
             return model;
         });
@@ -4091,11 +4104,28 @@ public sealed partial class CasePlannerRepository
     {
         await WithWriteAsync(async (connection, tx) =>
         {
+            var findTemplate = connection.CreateCommand();
+            findTemplate.Transaction = tx;
+            findTemplate.CommandText = "SELECT template_id FROM checklist_template_items WHERE id=@id";
+            findTemplate.Parameters.AddWithValue("@id", id);
+            var templateId = await findTemplate.ExecuteScalarAsync();
+
             var cmd = connection.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = "DELETE FROM checklist_template_items WHERE id=@id";
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
+
+            // Deleting an item is still touching its parent template - see SaveChecklistTemplateItemAsync.
+            if (templateId is not null)
+            {
+                var markCustom = connection.CreateCommand();
+                markCustom.Transaction = tx;
+                markCustom.CommandText = "UPDATE checklist_templates SET is_custom=1 WHERE id=@template_id";
+                markCustom.Parameters.AddWithValue("@template_id", templateId);
+                await markCustom.ExecuteNonQueryAsync();
+            }
+
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted checklist template item {id} at {DateTime.Now:G}");
             return 0;
         });
@@ -5288,6 +5318,13 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "case_type", "TEXT DEFAULT 'Standard'");
         await AddColumnIfMissingAsync(connection, "cases", "track", "TEXT DEFAULT 'Contested'");
         await AddColumnIfMissingAsync(connection, "checklist_templates", "track", "TEXT DEFAULT 'Any'");
+        // Template ownership marker (see SeedChecklistTemplatesAsync/SeedDeadlineTemplatesAsync):
+        // 0 = stock seed content, safe to refresh on a version bump; 1 = a firm has touched it
+        // (created, edited, or edited/deleted a child item) through the Template Editor and it is
+        // permanently off-limits to reseeding. All pre-existing rows predate this column and are
+        // 100% seed-originated, so the plain default backfills correctly with no separate UPDATE.
+        await AddColumnIfMissingAsync(connection, "checklist_templates", "is_custom", "INTEGER NOT NULL DEFAULT 0");
+        await AddColumnIfMissingAsync(connection, "deadline_templates", "is_custom", "INTEGER NOT NULL DEFAULT 0");
         // Item 2 (multi-user rollout Phase 2): opaque passthrough on SQLite (no app_users table
         // here to validate against) - only meaningfully populated/selectable once Entra is enabled.
         await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_user_id", "TEXT");
@@ -5465,24 +5502,27 @@ public sealed partial class CasePlannerRepository
         var list = new List<DeadlineTemplateRecord>();
         await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
         var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT id,name,trigger_field,offset_days,title,severity,track,active FROM deadline_templates ORDER BY name";
+        cmd.CommandText = "SELECT id,name,trigger_field,offset_days,title,severity,active,is_custom FROM deadline_templates ORDER BY name";
         await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) list.Add(new DeadlineTemplateRecord { Id=reader.GetInt64(0), Name=reader.GetString(1), TriggerField=reader.GetString(2), OffsetDays=reader.GetInt32(3), Title=reader.GetString(4), Severity=reader.GetString(5), Track=reader.GetString(6), Active=reader.GetInt64(7)==1 });
+        while (await reader.ReadAsync()) list.Add(new DeadlineTemplateRecord { Id=reader.GetInt64(0), Name=reader.GetString(1), TriggerField=reader.GetString(2), OffsetDays=reader.GetInt32(3), Title=reader.GetString(4), Severity=reader.GetString(5), Active=reader.GetInt64(6)==1, IsCustom=reader.GetInt64(7)==1 });
         return list;
     }
 
+    // Always sets is_custom=1: this is the Template Editor's save path, and any call here means a
+    // user has touched this deadline template - permanently off-limits to a future reseed (see
+    // SeedDeadlineTemplatesAsync).
     public async Task<DeadlineTemplateRecord> SaveDeadlineTemplateAsync(DeadlineTemplateRecord model) => await WithWriteAsync(async (connection, tx) =>
     {
         var now=DateTime.UtcNow.ToString("O"); var cmd=connection.CreateCommand(); cmd.Transaction=tx;
         if (model.Id==0) cmd.CommandText="""
-            INSERT INTO deadline_templates(name,trigger_field,offset_days,title,severity,track,active,created_at,updated_at)
-            VALUES(@name,@trigger,@offset,@title,@severity,@track,@active,@now,@now); SELECT last_insert_rowid();
+            INSERT INTO deadline_templates(name,trigger_field,offset_days,title,severity,active,is_custom,created_at,updated_at)
+            VALUES(@name,@trigger,@offset,@title,@severity,@active,1,@now,@now); SELECT last_insert_rowid();
             """;
         else { cmd.CommandText="""
-            UPDATE deadline_templates SET name=@name,trigger_field=@trigger,offset_days=@offset,title=@title,severity=@severity,track=@track,active=@active,updated_at=@now WHERE id=@id; SELECT @id;
+            UPDATE deadline_templates SET name=@name,trigger_field=@trigger,offset_days=@offset,title=@title,severity=@severity,active=@active,is_custom=1,updated_at=@now WHERE id=@id; SELECT @id;
             """; cmd.Parameters.AddWithValue("@id",model.Id); }
-        cmd.Parameters.AddWithValue("@name",model.Name); cmd.Parameters.AddWithValue("@trigger",model.TriggerField); cmd.Parameters.AddWithValue("@offset",model.OffsetDays); cmd.Parameters.AddWithValue("@title",model.Title); cmd.Parameters.AddWithValue("@severity",model.Severity); cmd.Parameters.AddWithValue("@track",model.Track); cmd.Parameters.AddWithValue("@active",model.Active?1:0); cmd.Parameters.AddWithValue("@now",now);
-        model.Id=Convert.ToInt64(await cmd.ExecuteScalarAsync()); return model;
+        cmd.Parameters.AddWithValue("@name",model.Name); cmd.Parameters.AddWithValue("@trigger",model.TriggerField); cmd.Parameters.AddWithValue("@offset",model.OffsetDays); cmd.Parameters.AddWithValue("@title",model.Title); cmd.Parameters.AddWithValue("@severity",model.Severity); cmd.Parameters.AddWithValue("@active",model.Active?1:0); cmd.Parameters.AddWithValue("@now",now);
+        model.Id=Convert.ToInt64(await cmd.ExecuteScalarAsync()); model.IsCustom=true; return model;
     });
 
     // Staff Directory (see AttorneyRecord/LegalAssistantRecord) - a fixed list of real names used
@@ -5712,7 +5752,7 @@ public sealed partial class CasePlannerRepository
             {
                 var id = $"{template.Name}:{item.SortOrder}";
                 var duplicate = ws.ChecklistItems.FirstOrDefault(x => x.SourceTemplateId == id || (x.Phase.Equals(item.Phase ?? workflowStatus, StringComparison.OrdinalIgnoreCase) && x.Task.Equals(item.Task, StringComparison.OrdinalIgnoreCase)));
-                result.Add(new WorkTemplateCandidate { Kind="Task", TemplateId=id, TemplateVersion=1, Title=item.Task, Stage=item.Phase ?? workflowStatus, Track=template.Track,
+                result.Add(new WorkTemplateCandidate { Kind="Task", TemplateId=id, TemplateVersion=1, Title=item.Task, Stage=item.Phase ?? workflowStatus,
                     DueDate=item.DueOffsetDays.HasValue?today.AddDays(item.DueOffsetDays.Value).ToString("yyyy-MM-dd"):null,
                     IsDuplicate=duplicate is not null, DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} task: {duplicate.Task}" });
             }
@@ -5722,7 +5762,7 @@ public sealed partial class CasePlannerRepository
             if (!template.Active) continue;
             var anchor = template.TriggerField switch { "filing_date"=>ParseDate(ws.Case.FilingDate), "trial_date"=>ParseDate(ws.Case.TrialDate), "service_perfected_date"=>ParseDate(ws.Case.ServicePerfectedDate), _=>null };
             var duplicate=ws.Deadlines.FirstOrDefault(x=>x.SourceTemplateId==template.Id.ToString() || x.Title.Equals(template.Title,StringComparison.OrdinalIgnoreCase));
-            result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Track=template.Track,Severity=template.Severity,
+            result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Severity=template.Severity,
                 DueDate=anchor?.AddDays(template.OffsetDays).ToString("yyyy-MM-dd"),IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} deadline: {duplicate.Title}" });
         }
         return result;
@@ -6275,14 +6315,23 @@ public sealed partial class CasePlannerRepository
         }
     }
 
-    private sealed record TemplateSeed(string Name, string TriggerType, string? Stage, string? IssueTagName, string Track, string[] Tasks);
+    private sealed record TemplateSeed(string Name, string TriggerType, string? Stage, string? IssueTagName, string[] Tasks);
 
-    // Stage templates seeded from the office condemnation checklist reference.
-    // Track "Any" applies to all cases; specific tracks (Settlement/Contested/Default/Friendly)
-    // narrow to only that track's cases.
+    // Stage templates seeded from the office condemnation checklist reference, merged with the
+    // role-handoff chain and branching logic from ARDOT's internal condemnation workflow document
+    // (three-phase SmartArt: Starting Cases / Moving Through a Case / Closing Out Cases). Where the
+    // two sources overlapped, the office checklist's more precise legal/procedural detail (statute
+    // citations, appraisal mechanics, trial procedure) was kept rather than duplicated.
+    //
+    // Template gating used to also key off cases.track (Contested/Settlement/Default/Friendly),
+    // but track was never reachable through the UI for 2 of its 4 values and is retired as a
+    // template-gating dimension - templates now match on Stage + IssueTagName only. Retired along
+    // with it: "Post-Discovery - Default Path", which only existed to match the dead track='Default'
+    // value and could never fire; its real content (no-answer default-judgment prep) is folded into
+    // Post-Trial - Core below, alongside the workflow doc's fuller DOESN'T-answer closing path.
     private static readonly TemplateSeed[] TemplateSeeds =
     [
-        new("Pre-Suit / Intake", "Stage", "Pipeline", null, "Any",
+        new("Pre-Suit / Intake", "Stage", "Pipeline", null,
         [
             "File received in Legal; title attorney prepares condemnation pre-file sheet",
             "Deputy Chief Counsel reviews and assigns to staff attorney; log in Lawtoolbox",
@@ -6291,11 +6340,18 @@ public sealed partial class CasePlannerRepository
             "Confirm appraisal is a full appraisal, not just an estimate",
             "Check appraisal date relative to date of taking; flag for update if stale",
             "Confirm appraiser is staff or a consultant and available for trial",
-            "Check comps: if 5+ years old as of date of taking, flag to ask appraiser about updating"
+            "Check comps: if 5+ years old as of date of taking, flag to ask appraiser about updating",
+            "New-file assignment chain: Title Legal Assistant receives the file from ROW and reviews it for all necessary Title File documents",
+            "Title LA sends the file to the Title Attorney for review and a defendant list; the Title Attorney returns the file to the Title LA to prepare the pre-file sheet",
+            "Title LA sends the file to Deputy Chief Counsel for review and attorney assignment; Chief Counsel approves the assignment or reassigns the attorney",
+            "ROW file review: read the Acquisition Notes for why negotiations broke down, check for title issues and necessary parties, and confirm all documents describe the property the same way",
+            "Transferred case: review the ROW file (including the Negotiator's Notes) and inform the assigned LA once the review is complete",
+            "Reassigned/already-filed case: check Court Connect for all case progress (answers, motions, entries of appearance), file an Entry of Appearance (or ask the LA to file one), notify opposing counsel once an appearance is entered, check for any discovery already sent or received, get case notes from the current or prior LA, and confirm service was completed properly on all parties"
         ]),
-        new("Pleadings", "Stage", "Pipeline", null, "Any",
+        new("Pleadings", "Stage", "Pipeline", null,
         [
             "Legal assistant prepares initial pleadings from attorney's packet",
+            "Lawsuit file review: verify the caption is correct everywhere (all parties listed and spelled correctly), verify the property description is correct everywhere, verify job and tract numbers are correct everywhere, and read the appraisal for issues or red flags",
             "Attorney reviews pleadings",
             "Deputy Chief Counsel second review",
             "Confirm filing fee, summons, and just-compensation deposit amount",
@@ -6304,7 +6360,7 @@ public sealed partial class CasePlannerRepository
             "File lawsuit",
             "Make deposit"
         ]),
-        new("Service - Core", "Stage", "Filed / Service Pending", null, "Any",
+        new("Service - Core", "Stage", "Filed / Service Pending", null,
         [
             "Service deadline: 120 days from filing — calendar this date (reminder at 60 days)",
             "Email appraiser (cc appraisal section division head) to update appraisal as of date of taking",
@@ -6319,44 +6375,54 @@ public sealed partial class CasePlannerRepository
         // cards (status, dates, and escalation note), so they're intentionally not generated as
         // generic checklist reminders anymore. Only the case-level tasks that aren't tied to any
         // single discovery request stay on the checklist.
-        new("Discovery - Core", "Stage", "Active Litigation", null, "Any",
+        new("Discovery - Core", "Stage", "Active Litigation", null,
         [
+            "Once the case is filed, confirm the Law Tool Box calendar reflects all deadlines",
+            "If a defendant answers: identify which defendant is answering (named defendant, mortgage company, bank, tenant, company, landlord, County Attorney, or other government agent) and read the entire answer for a rejection of the taking or a counterclaim",
+            "If no defendant answers within ~6 months of service: see the no-answer path under Post-Trial - Core",
+            "Compile discovery and get Deputy Chief Counsel approval before sending it out",
+            "Send discovery to all relevant parties and log the date sent in Law Tool Box (responses are due 30 days from service - the Discovery tab computes and tracks this due date per request)",
+            "Once discovery responses are received, review them for any room to settle or any issues to bring to Deputy Chief Counsel/Chief Counsel",
             "Review landowner's appraisal against checklist: method used, subject vs. landowner comps vs. our comps, utilities match, flood plain, adjustments (time/location/size), damage to building",
             "Send landowner's appraisal to our appraiser for review and rebuttal notes",
-            "Schedule depositions: landowner, their appraiser, and other identified witnesses"
+            "Determine whether depositions are necessary and, if so, schedule depositions: landowner, their appraiser, and other identified witnesses"
         ]),
-        new("Post-Discovery / Settlement Evaluation - Core", "Stage", "Active Litigation", null, "Any",
+        new("Post-Discovery / Settlement Evaluation - Core", "Stage", "Active Litigation", null,
         [
             "If landowner raises settlement: request their offer",
             "Prepare Risk Analysis and discuss with Chief Counsel",
-            "Outline weaknesses in appraisal, witnesses, and key issues"
+            "Outline weaknesses in appraisal, witnesses, and key issues",
+            "If no answer or appearance was filed ~6 months post-service and the case has otherwise stalled: identify why, then begin the no-answer default-judgment process (see Post-Trial - Core)"
         ]),
-        new("Post-Discovery - Settlement Path", "Stage", "Settlement Pending", null, "Settlement",
+        new("Post-Discovery - Settlement Path", "Stage", "Settlement Pending", null,
         [
-            "Prepare consent judgment and settlement justification memo",
-            "Route settlement justification memo to Chief Counsel for approval"
+            "Hard rule: ALL settlement offers must go through Chief Counsel — no exceptions",
+            "On receiving a settlement offer: prepare a Risk Analysis with Justification and schedule a meeting with Chief Counsel, sending the Risk Analysis & Justification in the meeting invite and/or ahead of the meeting",
+            "Continue negotiating the settlement only with Chief Counsel's advisement",
+            "If settlement is approved: draft the Consent Judgment and a settlement justification memo",
+            "Route the Consent Judgment and settlement justification memo to Deputy Chief Counsel for review and approval",
+            "Have every defendant who answered the Complaint sign the proposed Consent Judgment",
+            "File the Consent Judgment with the court and send it to the TCA",
+            "Make an additional deposit if required"
         ]),
-        new("Post-Discovery - Contested Path", "Stage", "Trial Preparation", null, "Contested",
+        new("Post-Discovery - Contested Path", "Stage", "Trial Preparation", null,
         [
-            "Request trial date"
+            "Complete discovery within the discovery period (interrogatories, requests for production, requests for admission, depositions, etc.)",
+            "Identify and contact all plaintiff witnesses before depositions and trial",
+            "Contact the TCA to request a trial date; confirm the trial date is on the trial calendar and entered in Law Tool Box"
         ]),
-        new("Post-Discovery - Default Path", "Stage", "Active Litigation", null, "Default",
-        [
-            "If no answer filed ~6 months post-service: prepare default-style judgment noting service obtained, no answer or appearance",
-            "Note: funds stay in the court registry and escheat to the state after 1 year unclaimed"
-        ]),
-        new("Scheduling Order Received - Core", "Stage", "Trial Preparation", null, "Any",
+        new("Scheduling Order Received - Core", "Stage", "Trial Preparation", null,
         [
             "Calendar all court deadlines with reminders 30-60 days out, as appropriate to each deadline",
             "30 days before trial: request jury questionnaire",
             "Track pretrial motions, witness/exhibit list exchange, and jury instructions per the court's schedule"
         ]),
-        new("Scheduling Order - Mediation", "Stage", "Trial Preparation", null, "Any",
+        new("Scheduling Order - Mediation", "Stage", "Trial Preparation", null,
         [
             "If mediation is ordered: get the mediator approved by Chief Counsel",
             "If mediation is ordered: review Risk Analysis and set authorized settlement limits before the mediation date"
         ]),
-        new("Trial Preparation - Core", "Stage", "Trial Preparation", null, "Any",
+        new("Trial Preparation - Core", "Stage", "Trial Preparation", null,
         [
             "Order large aerial/enlarged exhibits",
             "Evaluate and file any Motions in Limine",
@@ -6364,9 +6430,11 @@ public sealed partial class CasePlannerRepository
             "Pre-label exhibits, don't number until offered in court: summary sheet, comps map, ROW map, construction plans, aerial with ROW lines, subject photos, appraiser CV",
             "Note: the full appraisal cannot come into evidence (hearsay) — only specific parts via appraiser testimony",
             "Request jury questionnaires for voir dire",
-            "Prepare and exchange jury instructions; flag any non-agreed instructions to proffer separately"
+            "Prepare and exchange jury instructions; flag any non-agreed instructions to proffer separately",
+            "Complete pre-trial prep: jury pool review, voir dire questions, jury instructions, motions, opening/closing statements, planned exhibits, direct/cross exam questions, trial binder",
+            "Review the Trial Outline in the Legal Procedures Manual for the standard flow of a trial"
         ]),
-        new("Trial - Core", "Stage", "Trial Preparation", null, "Any",
+        new("Trial - Core", "Stage", "Trial Preparation", null,
         [
             "Argue pretrial motions",
             "Conduct voir dire; confirm 12-person jury impaneled (Ark. Code Ann. § 18-15-103(9))",
@@ -6379,125 +6447,129 @@ public sealed partial class CasePlannerRepository
             "Deliver closing argument",
             "Receive verdict"
         ]),
-        new("Post-Trial - Core", "Stage", "Resolved / Closed", null, "Any",
+        new("Post-Trial - Core", "Stage", "Resolved / Closed", null,
         [
-            "Prepare judgment (include everything ARDOT needs) and a trial report",
+            "No-answer/stalled path (no trial): identify why the case has stalled, make attempts to contact all defendants to notify them a hearing and judgment will be requested, and draft the judgment",
+            "Have the judgment reviewed and approved by Deputy Chief Counsel",
+            "Email the TCA requesting a hearing and attach the proposed judgment; if a hearing is scheduled, send all defendants a letter with copies of the hearing notice and judgment, then present the judgment to the judge",
+            "Note: funds deposited with the court stay in the registry and escheat to the state after 1 year unclaimed",
+            "Post-verdict path: prepare judgment (include everything ARDOT needs) and a trial report",
             "Order additional deposit check if the judgment requires it",
             "File judgment (and any additional funds)",
-            "Evaluate appealable issues; file appeal if warranted",
+            "Evaluate appealable issues; file appeal if warranted, done under the supervision of Deputy Chief Counsel/Chief Counsel",
             "If landowner moves for attorney's fees: confirm the Ark. Code Ann. § 27-67-317(b) threshold was actually met — a jury verdict (not a negotiated settlement) exceeding the deposit by 20% or more — before treating the claimed fee amount as owed",
             "Meet with Deputy Chief Counsel / Chief Legal Counsel to debrief",
             "Close case; notify ROW"
         ]),
-        // Issue-tag add-ons (unscoped by stage: generated whenever the tag is on the case, at any stage/track).
-        new("Tag: Partial Taking", "IssueTag", null, "Partial Taking", "Any",
+        // Issue-tag add-ons (unscoped by stage: generated whenever the tag is on the case, at any stage). Untouched content-wise.
+        new("Tag: Partial Taking", "IssueTag", null, "Partial Taking",
         [
             "Analyze before-and-after values for remainder damages",
             "Confirm taking and remainder are clearly delineated on the plat",
             "Evaluate cost-to-cure options for remainder impacts"
         ]),
-        new("Tag: Full Taking", "IssueTag", null, "Full Taking", "Any",
+        new("Tag: Full Taking", "IssueTag", null, "Full Taking",
         [
             "Confirm whole-parcel valuation with no remainder issues",
             "Verify relocation obligations for any occupants"
         ]),
-        new("Tag: Easement Only", "IssueTag", null, "Easement Only", "Any",
+        new("Tag: Easement Only", "IssueTag", null, "Easement Only",
         [
             "Confirm easement scope and duration language matches construction plans",
             "Value easement impact on the servient estate"
         ]),
-        new("Tag: Temporary Construction Easement", "IssueTag", null, "Temporary Construction Easement", "Any",
+        new("Tag: Temporary Construction Easement", "IssueTag", null, "Temporary Construction Easement",
         [
             "Confirm TCE duration and restoration obligations",
             "Calculate TCE rental value for the term"
         ]),
-        new("Tag: Severance Damages", "IssueTag", null, "Severance Damages", "Any",
+        new("Tag: Severance Damages", "IssueTag", null, "Severance Damages",
         [
             "Develop severance damages analysis",
             "Prepare rebuttal to landowner severance claims"
         ]),
-        new("Tag: Access / Change of Access", "IssueTag", null, "Access / Change of Access", "Any",
+        new("Tag: Access / Change of Access", "IssueTag", null, "Access / Change of Access",
         [
             "Analyze pre- and post-taking access and circuity impacts",
             "Determine whether access change is compensable or non-compensable police power"
         ]),
-        new("Tag: Drainage", "IssueTag", null, "Drainage", "Any",
+        new("Tag: Drainage", "IssueTag", null, "Drainage",
         [
             "Document pre-existing drainage conditions",
             "Evaluate drainage damage claims and coordinate engineering response"
         ]),
-        new("Tag: Landlocked Remainder", "IssueTag", null, "Landlocked Remainder", "Any",
+        new("Tag: Landlocked Remainder", "IssueTag", null, "Landlocked Remainder",
         [
             "Confirm whether remainder retains legal access",
             "Evaluate acquiring remainder versus providing access easement"
         ]),
-        new("Tag: Minerals", "IssueTag", null, "Minerals", "Any",
+        new("Tag: Minerals", "IssueTag", null, "Minerals",
         [
             "Identify severed mineral interests and owners",
             "Join mineral owners as parties if interests are compensable"
         ]),
-        new("Tag: Timber", "IssueTag", null, "Timber", "Any",
+        new("Tag: Timber", "IssueTag", null, "Timber",
         [
             "Obtain timber cruise/valuation",
             "Address timber removal rights before possession"
         ]),
-        new("Tag: Billboard / Sign", "IssueTag", null, "Billboard / Sign", "Any",
+        new("Tag: Billboard / Sign", "IssueTag", null, "Billboard / Sign",
         [
             "Identify sign owner and lease terms (separate compensable interest)",
             "Handle sign relocation/removal compensation"
         ]),
-        new("Tag: Relocation - Residential", "IssueTag", null, "Relocation - Residential", "Any",
+        new("Tag: Relocation - Residential", "IssueTag", null, "Relocation - Residential",
         [
             "Coordinate residential relocation benefits with ROW",
             "Confirm occupancy and displacement dates"
         ]),
-        new("Tag: Relocation - Business", "IssueTag", null, "Relocation - Business", "Any",
+        new("Tag: Relocation - Business", "IssueTag", null, "Relocation - Business",
         [
             "Coordinate business relocation benefits with ROW",
             "Evaluate admissibility of business disruption claims"
         ]),
-        new("Tag: Leasehold / Tenant Interest", "IssueTag", null, "Leasehold / Tenant Interest", "Any",
+        new("Tag: Leasehold / Tenant Interest", "IssueTag", null, "Leasehold / Tenant Interest",
         [
             "Join tenants/leaseholders as defendants",
             "Apportion award between fee and leasehold interests"
         ]),
-        new("Tag: Estate / Probate", "IssueTag", null, "Estate / Probate", "Any",
+        new("Tag: Estate / Probate", "IssueTag", null, "Estate / Probate",
         [
             "Identify heirs and confirm estate administration status",
             "Serve heirs or publish warning order for unknown heirs"
         ]),
-        new("Tag: Unknown Heirs / Owners", "IssueTag", null, "Unknown Heirs / Owners", "Any",
+        new("Tag: Unknown Heirs / Owners", "IssueTag", null, "Unknown Heirs / Owners",
         [
             "Draft affidavit and warning order for unknown/unlocatable owners",
             "Publish warning order and file proof of publication",
             "Consider attorney ad litem appointment where required"
         ]),
-        new("Tag: Lienholder / Mortgage", "IssueTag", null, "Lienholder / Mortgage", "Any",
+        new("Tag: Lienholder / Mortgage", "IssueTag", null, "Lienholder / Mortgage",
         [
             "Name lienholders/mortgagees as defendants",
             "Track lien releases or apportionment from the award"
         ]),
-        new("Tag: Tax Delinquent / COSL", "IssueTag", null, "Tax Delinquent / COSL", "Any",
+        new("Tag: Tax Delinquent / COSL", "IssueTag", null, "Tax Delinquent / COSL",
         [
             "Confirm COSL certification status of the parcel",
             "Name Commissioner of State Lands as a party if certified",
             "Resolve delinquent taxes from the deposited funds"
         ]),
-        new("Tag: Utility Conflict", "IssueTag", null, "Utility Conflict", "Any",
+        new("Tag: Utility Conflict", "IssueTag", null, "Utility Conflict",
         [
             "Identify utility facilities within the taking",
             "Coordinate utility relocation agreements"
         ]),
-        new("Tag: Contested Right-to-Take", "IssueTag", null, "Contested Right-to-Take", "Any",
+        new("Tag: Contested Right-to-Take", "IssueTag", null, "Contested Right-to-Take",
         [
             "Brief authority and necessity issues",
             "Prepare for right-to-take hearing"
         ]),
-        new("Tag: Publication Service", "IssueTag", null, "Publication Service", "Any",
+        new("Tag: Publication Service", "IssueTag", null, "Publication Service",
         [
             "Track publication dates and proof of publication filings"
         ]),
-        new("Tag: Trial Likely", "IssueTag", null, "Trial Likely", "Any",
+        new("Tag: Trial Likely", "IssueTag", null, "Trial Likely",
         [
             "Begin early trial theme development",
             "Confirm expert availability for the anticipated trial window"
@@ -6505,9 +6577,11 @@ public sealed partial class CasePlannerRepository
     ];
 
     // Bump this when TemplateSeeds content changes materially so existing installs re-seed.
-    // Safe because template rows only carry static task text; the per-case checklist_items
-    // rows generated from them are separate and are never deleted by a re-seed.
-    private const string ChecklistTemplateVersion = "8";
+    // Only is_custom=0 rows are ever touched by a reseed (see SeedChecklistTemplatesAsync) - any
+    // template or item a firm has created/edited through the Template Editor is permanently
+    // excluded, regardless of version bumps. The per-case checklist_items rows generated from a
+    // template are separate and are never touched by a reseed either way.
+    private const string ChecklistTemplateVersion = "9";
 
     private async Task<bool> SeedChecklistTemplatesAsync(SqliteConnection connection)
     {
@@ -6517,54 +6591,37 @@ public sealed partial class CasePlannerRepository
             return false;
         }
 
-        // Additive/idempotent, not wipe-and-reinsert: a checklist template editor now lets
-        // users customize these rows, and a future ChecklistTemplateVersion bump must not
-        // silently destroy that. Existing templates (matched by name) and existing items
-        // (matched by template_id+sort_order) are left untouched; only seed rows genuinely
-        // missing get inserted, so hand edits and custom templates survive version bumps.
+        // is_custom-scoped delete-and-reinsert, not wipe-and-reinsert: is_custom=0 rows are stock
+        // seed content and are always safe to refresh (delete their items, delete the templates,
+        // reinsert TemplateSeeds fresh). Any template or item a firm has touched through the
+        // Template Editor has is_custom=1 on its parent template and is never touched here, on any
+        // future version bump, regardless of whether TemplateSeeds still contains a same-named
+        // entry.
+        await ExecuteAsync(connection, """
+            DELETE FROM checklist_template_items
+            WHERE template_id IN (SELECT id FROM checklist_templates WHERE is_custom = 0)
+            """);
+        await ExecuteAsync(connection, "DELETE FROM checklist_templates WHERE is_custom = 0");
+
         var now = DateTime.UtcNow.ToString("O");
         foreach (var seed in TemplateSeeds)
         {
-            var findTemplate = connection.CreateCommand();
-            findTemplate.CommandText = "SELECT id FROM checklist_templates WHERE name = @name";
-            findTemplate.Parameters.AddWithValue("@name", seed.Name);
-            var existingTemplateId = await findTemplate.ExecuteScalarAsync();
-
-            long templateId;
-            if (existingTemplateId is null)
-            {
-                var insertTemplate = connection.CreateCommand();
-                insertTemplate.CommandText = """
-                    INSERT INTO checklist_templates (name, trigger_type, stage, issue_tag_name, track, active, created_at, updated_at)
-                    VALUES (@name, @trigger_type, @stage, @issue_tag_name, @track, 1, @now, @now);
-                    SELECT last_insert_rowid();
-                    """;
-                insertTemplate.Parameters.AddWithValue("@name", seed.Name);
-                insertTemplate.Parameters.AddWithValue("@trigger_type", seed.TriggerType);
-                insertTemplate.Parameters.AddWithValue("@stage", DbValue(seed.Stage));
-                insertTemplate.Parameters.AddWithValue("@issue_tag_name", DbValue(seed.IssueTagName));
-                insertTemplate.Parameters.AddWithValue("@track", seed.Track);
-                insertTemplate.Parameters.AddWithValue("@now", now);
-                templateId = Convert.ToInt64(await insertTemplate.ExecuteScalarAsync());
-            }
-            else
-            {
-                templateId = Convert.ToInt64(existingTemplateId);
-            }
+            var insertTemplate = connection.CreateCommand();
+            insertTemplate.CommandText = """
+                INSERT INTO checklist_templates (name, trigger_type, stage, issue_tag_name, active, is_custom, created_at, updated_at)
+                VALUES (@name, @trigger_type, @stage, @issue_tag_name, 1, 0, @now, @now);
+                SELECT last_insert_rowid();
+                """;
+            insertTemplate.Parameters.AddWithValue("@name", seed.Name);
+            insertTemplate.Parameters.AddWithValue("@trigger_type", seed.TriggerType);
+            insertTemplate.Parameters.AddWithValue("@stage", DbValue(seed.Stage));
+            insertTemplate.Parameters.AddWithValue("@issue_tag_name", DbValue(seed.IssueTagName));
+            insertTemplate.Parameters.AddWithValue("@now", now);
+            var templateId = Convert.ToInt64(await insertTemplate.ExecuteScalarAsync());
 
             var phase = seed.TriggerType == "Stage" ? seed.Stage : seed.IssueTagName;
             for (var i = 0; i < seed.Tasks.Length; i++)
             {
-                var findItem = connection.CreateCommand();
-                findItem.CommandText = "SELECT COUNT(*) FROM checklist_template_items WHERE template_id = @template_id AND sort_order = @sort_order";
-                findItem.Parameters.AddWithValue("@template_id", templateId);
-                findItem.Parameters.AddWithValue("@sort_order", i);
-                var itemExists = Convert.ToInt32(await findItem.ExecuteScalarAsync()) > 0;
-                if (itemExists)
-                {
-                    continue;
-                }
-
                 var insertItem = connection.CreateCommand();
                 insertItem.CommandText = """
                     INSERT INTO checklist_template_items (template_id, task, phase, sort_order, due_offset_days, created_at, updated_at)
@@ -6610,22 +6667,22 @@ public sealed partial class CasePlannerRepository
     // Deadline templates compute real deadlines rows from a case's own trigger dates
     // (filing date, trial date) plus a day offset. Severity tiers: "soft" (routine
     // reminder), "urgent" (materially more pressing), "critical" (hard deadline).
-    private sealed record DeadlineTemplateSeed(string Name, string TriggerField, int OffsetDays, string Title, string Severity, string Track);
+    private sealed record DeadlineTemplateSeed(string Name, string TriggerField, int OffsetDays, string Title, string Severity);
 
-    private const string DeadlineTemplateVersion = "4";
+    private const string DeadlineTemplateVersion = "5";
 
     private static readonly DeadlineTemplateSeed[] DeadlineTemplateSeeds =
     [
         new("Service - 60 Day Check-In", "filing_date", 60,
-            "Service status check-in — evaluate whether a Motion for Extension of Time to Serve will be needed before day 120", "soft", "Any"),
+            "Service status check-in — evaluate whether a Motion for Extension of Time to Serve will be needed before day 120", "soft"),
         new("Service - 90 Day Watch Alert", "filing_date", 90,
-            "Watch alert: file Motion for Extension of Time to Serve if service/warning order is not yet complete", "urgent", "Any"),
+            "Watch alert: file Motion for Extension of Time to Serve if service/warning order is not yet complete", "urgent"),
         new("Service - 120 Day Deadline", "filing_date", 120,
-            "120-day service deadline", "critical", "Any"),
+            "120-day service deadline", "critical"),
         new("Trial - Jury Questionnaire Request", "trial_date", -30,
-            "Request jury questionnaire (30 days before trial)", "soft", "Any"),
+            "Request jury questionnaire (30 days before trial)", "soft"),
         new("No-Answer Default Judgment Checkpoint", "service_perfected_date", 180,
-            "Check whether an answer or appearance has been filed (~6 months after service). If not, move this case to the Default track and prepare a default-style judgment.", "urgent", "Any")
+            "Check whether an answer or appearance has been filed (~6 months after service). If not, move this case to the Default track and prepare a default-style judgment.", "urgent")
     ];
 
     private async Task<bool> SeedDeadlineTemplatesAsync(SqliteConnection connection)
@@ -6636,22 +6693,24 @@ public sealed partial class CasePlannerRepository
             return false;
         }
 
-        await ExecuteAsync(connection, "DELETE FROM deadline_templates");
+        // is_custom-scoped delete-and-reinsert (see SeedChecklistTemplatesAsync) - replaces the
+        // previous unconditional "DELETE FROM deadline_templates" which would have silently
+        // destroyed any hand-edited/custom deadline template on every version bump.
+        await ExecuteAsync(connection, "DELETE FROM deadline_templates WHERE is_custom = 0");
 
         var now = DateTime.UtcNow.ToString("O");
         foreach (var seed in DeadlineTemplateSeeds)
         {
             var cmd = connection.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO deadline_templates (name, trigger_field, offset_days, title, severity, track, active, created_at, updated_at)
-                VALUES (@name, @trigger_field, @offset_days, @title, @severity, @track, 1, @now, @now)
+                INSERT INTO deadline_templates (name, trigger_field, offset_days, title, severity, active, is_custom, created_at, updated_at)
+                VALUES (@name, @trigger_field, @offset_days, @title, @severity, 1, 0, @now, @now)
                 """;
             cmd.Parameters.AddWithValue("@name", seed.Name);
             cmd.Parameters.AddWithValue("@trigger_field", seed.TriggerField);
             cmd.Parameters.AddWithValue("@offset_days", seed.OffsetDays);
             cmd.Parameters.AddWithValue("@title", seed.Title);
             cmd.Parameters.AddWithValue("@severity", seed.Severity);
-            cmd.Parameters.AddWithValue("@track", seed.Track);
             cmd.Parameters.AddWithValue("@now", now);
             await cmd.ExecuteNonQueryAsync();
         }

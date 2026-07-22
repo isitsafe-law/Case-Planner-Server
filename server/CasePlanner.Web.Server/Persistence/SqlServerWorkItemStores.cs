@@ -598,6 +598,7 @@ public sealed class SqlServerDiscoveryTrackingStore(IDatabaseConnectionFactory c
 
     public async Task<DiscoveryItemRecord> SaveAsync(DiscoveryItemRecord model, CancellationToken token = default)
     {
+        model.DueDate = DiscoveryDueDateCalculator.ComputeDefaultDueDate(model.ServedDate, model.DueDate);
         var isNew = model.Id == 0;
         await using var connection = Connections.CreateConnection(); await connection.OpenAsync(token); await using var transaction = await connection.BeginTransactionAsync(token);
         if (isNew) await EnsureCaseExistsAsync(connection, transaction, model.CaseId, token);

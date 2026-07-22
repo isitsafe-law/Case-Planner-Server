@@ -24,7 +24,7 @@ public sealed class WorkTemplateReconciliationService(CasePlannerRepository sqli
         {
             C("ChecklistTemplate", id, "Name", a.Name, b.Name); C("ChecklistTemplate", id, "TriggerType", a.TriggerType, b.TriggerType);
             C("ChecklistTemplate", id, "Stage", a.Stage, b.Stage); C("ChecklistTemplate", id, "IssueTagName", a.IssueTagName, b.IssueTagName);
-            C("ChecklistTemplate", id, "Track", a.Track, b.Track); C("ChecklistTemplate", id, "Active", V(a.Active), V(b.Active));
+            C("ChecklistTemplate", id, "Active", V(a.Active), V(b.Active)); C("ChecklistTemplate", id, "IsCustom", V(a.IsCustom), V(b.IsCustom));
             CompareSets(a.Items.ToDictionary(x => x.Id), b.Items.ToDictionary(x => x.Id), "ChecklistTemplateItem", mismatches, (x, y, itemId) =>
             {
                 C("ChecklistTemplateItem", itemId, "TemplateId", V(x.TemplateId), V(y.TemplateId)); C("ChecklistTemplateItem", itemId, "Task", x.Task, y.Task);
@@ -36,8 +36,8 @@ public sealed class WorkTemplateReconciliationService(CasePlannerRepository sqli
         {
             C("DeadlineTemplate", id, "Name", a.Name, b.Name); C("DeadlineTemplate", id, "TriggerField", a.TriggerField, b.TriggerField);
             C("DeadlineTemplate", id, "OffsetDays", V(a.OffsetDays), V(b.OffsetDays)); C("DeadlineTemplate", id, "Title", a.Title, b.Title);
-            C("DeadlineTemplate", id, "Severity", a.Severity, b.Severity); C("DeadlineTemplate", id, "Track", a.Track, b.Track);
-            C("DeadlineTemplate", id, "Active", V(a.Active), V(b.Active));
+            C("DeadlineTemplate", id, "Severity", a.Severity, b.Severity);
+            C("DeadlineTemplate", id, "Active", V(a.Active), V(b.Active)); C("DeadlineTemplate", id, "IsCustom", V(a.IsCustom), V(b.IsCustom));
         }
         void C(string kind, long id, string field, string? a, string? b) { if (!string.Equals(a, b, StringComparison.Ordinal)) mismatches.Add(new(kind, id, field, a, b)); }
     }

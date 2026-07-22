@@ -69,22 +69,22 @@ public sealed class SqlServerWorkflowGenerationService(
         var workflow=string.IsNullOrWhiteSpace(ws.Case.CaseStatus)?ws.Case.Status:ws.Case.CaseStatus;
         foreach(var template in await templates.GetChecklistAsync(token))
         {
-            if(!template.Active||(template.Track!="Any"&&template.Track!=ws.Case.Track))continue;
+            if(!template.Active)continue;
             if(template.TriggerType=="Stage"&&!string.Equals(template.Stage,workflow,StringComparison.OrdinalIgnoreCase))continue;
             if(template.TriggerType=="IssueTag"&&!ws.CaseIssueTags.Any(x=>string.Equals(x.TagName,template.IssueTagName,StringComparison.OrdinalIgnoreCase)))continue;
             foreach(var item in template.Items)
             {
                 var id=$"{template.Name}:{item.SortOrder}";var stage=item.Phase??workflow;
                 var duplicate=ws.ChecklistItems.FirstOrDefault(x=>x.SourceTemplateId==id||(string.Equals(x.Phase,stage,StringComparison.OrdinalIgnoreCase)&&string.Equals(x.Task,item.Task,StringComparison.OrdinalIgnoreCase)));
-                result.Add(new(){Kind="Task",TemplateId=id,TemplateVersion=1,Title=item.Task,Stage=stage,Track=template.Track,DueDate=item.DueOffsetDays is { } offset?today.AddDays(offset).ToString("yyyy-MM-dd"):null,IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} task: {duplicate.Task}"});
+                result.Add(new(){Kind="Task",TemplateId=id,TemplateVersion=1,Title=item.Task,Stage=stage,DueDate=item.DueOffsetDays is { } offset?today.AddDays(offset).ToString("yyyy-MM-dd"):null,IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} task: {duplicate.Task}"});
             }
         }
         foreach(var template in await templates.GetDeadlinesAsync(token))
         {
-            if(!template.Active||(template.Track!="Any"&&template.Track!=ws.Case.Track))continue;
+            if(!template.Active)continue;
             var anchor=template.TriggerField switch{"filing_date"=>Date(ws.Case.FilingDate),"trial_date"=>Date(ws.Case.TrialDate),"service_perfected_date"=>Date(ws.Case.ServicePerfectedDate),_=>null};
             var duplicate=ws.Deadlines.FirstOrDefault(x=>x.SourceTemplateId==template.Id.ToString()||string.Equals(x.Title,template.Title,StringComparison.OrdinalIgnoreCase));
-            result.Add(new(){Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflow,Track=template.Track,Severity=template.Severity,DueDate=anchor?.AddDays(template.OffsetDays).ToString("yyyy-MM-dd"),IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} deadline: {duplicate.Title}"});
+            result.Add(new(){Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflow,Severity=template.Severity,DueDate=anchor?.AddDays(template.OffsetDays).ToString("yyyy-MM-dd"),IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} deadline: {duplicate.Title}"});
         }
         return result;
     }

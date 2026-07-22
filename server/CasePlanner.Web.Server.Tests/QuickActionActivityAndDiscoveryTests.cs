@@ -211,7 +211,10 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
         {
             Assert.Equal("DeadlineTemplate", x.SourceKind);
             Assert.False(string.IsNullOrWhiteSpace(x.SourceTemplateId));
-            Assert.Equal(4, x.SourceTemplateVersion);
+            // Matches the current DeadlineTemplateVersion (bumped for the ARDOT workflow rewrite -
+            // see CasePlannerRepository.GenerateDeadlinesForCaseAsync, which stamps generated
+            // deadlines with int.Parse(DeadlineTemplateVersion)).
+            Assert.Equal(5, x.SourceTemplateVersion);
             Assert.NotNull(x.GeneratedAt);
         });
     }

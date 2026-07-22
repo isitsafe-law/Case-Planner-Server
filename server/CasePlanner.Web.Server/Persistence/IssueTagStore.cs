@@ -262,7 +262,6 @@ public sealed class SqlServerIssueTagStore(
             JOIN dbo.checklist_templates t ON t.trigger_type='IssueTag' AND t.issue_tag_name=it.name AND t.active=1 AND t.is_deleted=0
             JOIN dbo.checklist_template_items ti ON ti.template_id=t.id AND ti.is_deleted=0
             WHERE c.id=@case AND c.is_deleted=0 AND COALESCE(NULLIF(c.case_status,''),c.status) NOT IN('Triage','Pipeline')
-              AND (t.track='Any' OR t.track=c.track)
               AND NOT EXISTS(SELECT 1 FROM dbo.checklist_items x WHERE x.case_id=c.id AND x.is_deleted=0 AND
                     (x.source_type=CONCAT('Template:',t.name,':',ti.sort_order) OR (COALESCE(x.phase,'')=COALESCE(ti.phase,'') AND x.task=ti.task)))
             """;

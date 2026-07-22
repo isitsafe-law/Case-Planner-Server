@@ -34,7 +34,7 @@ import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 
 type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
-type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'stage' | 'track' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
+type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
@@ -384,8 +384,8 @@ type PublicationRecord = {
   overrideMissingPublicationName?: boolean
 }
 
-type DeadlineTemplate = { id:number; rowVersion?:string|null; name:string; triggerField:string; offsetDays:number; title:string; severity:string; track:string; active:boolean }
-type WorkTemplateCandidate = { kind:'Task'|'Deadline'; templateId:string; templateVersion:number; title:string; stage:string; track:string; dueDate?:string|null; severity?:string|null; isDuplicate:boolean; duplicateReason?:string|null; selected?:boolean; allowDuplicate?:boolean }
+type DeadlineTemplate = { id:number; rowVersion?:string|null; name:string; triggerField:string; offsetDays:number; title:string; severity:string; active:boolean }
+type WorkTemplateCandidate = { kind:'Task'|'Deadline'; templateId:string; templateVersion:number; title:string; stage:string; dueDate?:string|null; severity?:string|null; isDuplicate:boolean; duplicateReason?:string|null; selected?:boolean; allowDuplicate?:boolean }
 
 type ServiceStatusSummary = {
   serviceRequired: boolean
@@ -508,7 +508,6 @@ type ChecklistTemplate = {
   triggerType: string
   stage?: string | null
   issueTagName?: string | null
-  track: string
   active: boolean
   items: ChecklistTemplateItem[]
 }
@@ -1733,8 +1732,6 @@ function caseSortValue(item: CaseRecord, column: CaseSortColumn): string {
     case 'jobNumber': return item.jobNumber || ''
     case 'tract': return item.tract || ''
     case 'county': return item.county || ''
-    case 'stage': return item.stage || ''
-    case 'track': return item.track || 'Contested'
     case 'nextDeadlineDate': return item.nextDeadlineDate || ''
     case 'attentionStatus': return attentionLabels[item.attentionStatus || 'onTrack'] || ''
     case 'dateOpened': return item.dateOpened || ''
@@ -4985,7 +4982,7 @@ function App() {
   }
 
   function emptyChecklistTemplate(): ChecklistTemplate {
-    return { id: 0, name: '', triggerType: 'Stage', stage: 'Pipeline', issueTagName: '', track: 'Any', active: true, items: [] }
+    return { id: 0, name: '', triggerType: 'Stage', stage: 'Pipeline', issueTagName: '', active: true, items: [] }
   }
 
   function startNewChecklistTemplate() {
@@ -10742,7 +10739,7 @@ function App() {
           {settingsSection === 'deadlineTemplates' && (
             <Panel title="Deadline Templates">
               <p className="helper-text">Configure calculated deadlines by anchor, offset, and severity. Generated deadlines retain structured source provenance and manual overrides.</p>
-              <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',track:'Any',active:true})}>Add Deadline Template</button>
+              <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',active:true})}>Add Deadline Template</button>
               {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
               <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
             </Panel>

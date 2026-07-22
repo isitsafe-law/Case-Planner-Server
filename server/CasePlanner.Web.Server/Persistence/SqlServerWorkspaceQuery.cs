@@ -19,6 +19,10 @@ public sealed class SqlServerWorkspaceQuery(
         if(visibleCaseIds is not null&&!visibleCaseIds.Contains(caseId))return null;
         var record=(await cases.GetCasesAsync(new(IncludeClosed:true),token)).FirstOrDefault(x=>x.Id==caseId);
         if(record is null)return null;
+        // GetCasesAsync above (unlike the dashboard/list path below) doesn't run attention
+        // computation, so the single-case workspace fetch needs its own DefaultPostureWarning
+        // stamp - the case header badge (App.tsx) reads it straight off this record.
+        record.DefaultPostureWarning=DefaultPostureCalculator.IsLikelyDefault(record.AnswerFiled,record.ServicePerfectedDate,DateOnly.FromDateTime(DateTime.UtcNow));
         var publication=await GetPublicationAsync(caseId,token)??new PublicationRecord{CaseId=caseId};
         var dashboard=await GetDashboardAsync(visibleCaseIds,token);
         return new()
@@ -47,11 +51,13 @@ public sealed class SqlServerWorkspaceQuery(
         var activity=(await activities.GetAsync(null,token)).Where(x=>Visible(x.CaseId)).GroupBy(x=>x.CaseId)
             .ToDictionary(x=>x.Key,x=>x.Max(y=>y.OccurredAt));
         var deadlineGroups=allDeadlines.GroupBy(x=>x.CaseId).ToDictionary(x=>x.Key,x=>(IReadOnlyList<DeadlineItem>)x.ToList());
+        var today=DateOnly.FromDateTime(DateTime.UtcNow);
         foreach(var c in allCases)
         {
             var last=activity.GetValueOrDefault(c.Id)??c.UpdatedAt;
             var attention=CaseAttentionEngine.Compute(deadlineGroups.GetValueOrDefault(c.Id,[]),last,c.Status);
             c.AttentionStatus=attention.Status;c.NextDeadlineDate=attention.NextDeadlineDate;c.NextDeadlineTitle=attention.NextDeadlineTitle;c.LastActivityAt=last;
+            c.DefaultPostureWarning=DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled,c.ServicePerfectedDate,today);
         }
         return DashboardComposer.Compose(allCases,allDeadlines,allChecklist,allDiscovery,allHearings,publications,postures);
     }

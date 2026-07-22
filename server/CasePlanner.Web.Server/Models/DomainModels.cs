@@ -48,6 +48,13 @@ public sealed class CaseRecord
     public bool ServiceRequired { get; set; } = true;
     public bool ServicePerfected { get; set; }
     public string? ServicePerfectedDate { get; set; }
+    // Whether an answer or appearance has been filed by any defendant - the single fact this app
+    // was previously missing entirely for tracking default-judgment posture on eminent-domain
+    // cases (see DefaultPostureCalculator). Same shape/conventions as ServicePerfected/
+    // ServicePerfectedDate immediately above: a manually-set boolean + a plain yyyy-MM-dd string,
+    // never auto-inferred.
+    public bool AnswerFiled { get; set; }
+    public string? AnswerFiledDate { get; set; }
     public string? ServiceDeadline120 { get; set; }
     public string? ServiceDeadlineBasisDate { get; set; }
     public string? ServiceMethod { get; set; }
@@ -76,6 +83,10 @@ public sealed class CaseRecord
     public int ChecklistTotal { get; set; }
     public int ChecklistDone { get; set; }
     public string AttentionStatus { get; set; } = "onTrack";
+    // Not persisted - computed at read time from AnswerFiled/ServicePerfectedDate by
+    // DefaultPostureCalculator, same treatment as AttentionStatus above (stamped alongside it in
+    // CasePlannerRepository.ApplyCaseAttentionAsync and SqlServerWorkspaceQuery).
+    public bool DefaultPostureWarning { get; set; }
     public string? NextDeadlineDate { get; set; }
     public string? NextDeadlineTitle { get; set; }
     // Latest of the case row's own updated_at and its checklist/deadline/discovery children's

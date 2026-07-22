@@ -32,6 +32,7 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                 model.ServicePerfectedDate=Date(Field(row,map,"Service Perfected Date"));model.ServiceDeadlineBasisDate=Date(Field(row,map,"Service Deadline Basis Date"));
                 model.ServiceDeadline120=Date(Field(row,map,"Service Deadline 120"));model.ServiceMethod=Blank(Field(row,map,"Service Method"));
                 model.ServiceStatus=Blank(Field(row,map,"Service Status"));model.ServiceNotes=Blank(Field(row,map,"Service Notes"));
+                model.AnswerFiled=Bool(Field(row,map,"Answer Filed"));model.AnswerFiledDate=Date(Field(row,map,"Answer Filed Date"));
                 var saved=await cases.SaveCaseAsync(model,token);if(current is null){result.Created++;existing.Add(saved);}else result.Updated++;
             }
             catch(Exception ex){result.Skipped++;result.Errors.Add($"Row {result.RowsRead}: {ex.Message}");}

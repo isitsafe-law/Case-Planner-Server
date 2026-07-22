@@ -94,8 +94,13 @@ internal static class CaseRecordDataMapper
             DispositionType = reader.FieldCount > 75 ? String(reader, 75) : null,
             TakingType = reader.FieldCount > 76 ? String(reader, 76) : null,
             District = reader.FieldCount > 77 ? String(reader, 77) : null,
-            RowVersion = reader.FieldCount > 78 && !reader.IsDBNull(78)
-                ? Convert.ToBase64String((byte[])reader.GetValue(78))
+            // Default-posture tracking (answer-filed fact) - appended after district, same
+            // FieldCount-guard pattern as DateOpened/TrialEndDate/PropertyDescription above,
+            // row_version (SQL Server only) shifted from ordinal 78 to 80 to make room.
+            AnswerFiled = reader.FieldCount > 78 && !reader.IsDBNull(78) && Bool(reader, 78),
+            AnswerFiledDate = reader.FieldCount > 79 ? Date(reader, 79) : null,
+            RowVersion = reader.FieldCount > 80 && !reader.IsDBNull(80)
+                ? Convert.ToBase64String((byte[])reader.GetValue(80))
                 : null
         };
     }

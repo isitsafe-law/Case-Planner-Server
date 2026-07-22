@@ -1015,7 +1015,8 @@ public sealed partial class CasePlannerRepository
                    COALESCE(case_status, 'Pipeline') AS case_status,
                    COALESCE(status_mapping_review, 0) AS status_mapping_review,
                    date_opened, trial_end_date, property_description,
-                   final_judgment_amount, disposition_type, taking_type, district
+                   final_judgment_amount, disposition_type, taking_type, district,
+                   answer_filed, answer_filed_date
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -1086,6 +1087,7 @@ public sealed partial class CasePlannerRepository
             }
         }
 
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         foreach (var c in cases)
         {
             deadlinesByCase.TryGetValue(c.Id, out var caseDeadlines);
@@ -1103,6 +1105,7 @@ public sealed partial class CasePlannerRepository
             c.NextDeadlineDate = nextDate;
             c.NextDeadlineTitle = nextTitle;
             c.LastActivityAt = lastActivity;
+            c.DefaultPostureWarning = DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled, c.ServicePerfectedDate, today);
         }
     }
 
@@ -4907,6 +4910,8 @@ public sealed partial class CasePlannerRepository
                         ServiceRequired = ParseBool(GetField(row, map, "Service Required"), true),
                         ServicePerfected = ParseBool(GetField(row, map, "Service Perfected")),
                         ServicePerfectedDate = NormalizeDate(GetField(row, map, "Service Perfected Date")),
+                        AnswerFiled = ParseBool(GetField(row, map, "Answer Filed")),
+                        AnswerFiledDate = NormalizeDate(GetField(row, map, "Answer Filed Date")),
                         ServiceDeadlineBasisDate = NormalizeDate(GetField(row, map, "Service Deadline Basis Date")),
                         ServiceDeadline120 = NormalizeDate(GetField(row, map, "Service Deadline 120")),
                         ServiceMethod = BlankToNull(GetField(row, map, "Service Method")),
@@ -5430,6 +5435,11 @@ public sealed partial class CasePlannerRepository
         // 042_staff_directory_linked_user.sql).
         await AddColumnIfMissingAsync(connection, "attorneys", "linked_user_id", "TEXT");
         await AddColumnIfMissingAsync(connection, "legal_assistants", "linked_user_id", "TEXT");
+        // Default-posture tracking: whether an answer or appearance has been filed, and when - see
+        // DefaultPostureCalculator. Same shape/AddColumnIfMissingAsync convention as
+        // service_perfected/service_perfected_date above.
+        await AddColumnIfMissingAsync(connection, "cases", "answer_filed", "INTEGER DEFAULT 0");
+        await AddColumnIfMissingAsync(connection, "cases", "answer_filed_date", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -6681,8 +6691,8 @@ public sealed partial class CasePlannerRepository
             "120-day service deadline", "critical"),
         new("Trial - Jury Questionnaire Request", "trial_date", -30,
             "Request jury questionnaire (30 days before trial)", "soft"),
-        new("No-Answer Default Judgment Checkpoint", "service_perfected_date", 180,
-            "Check whether an answer or appearance has been filed (~6 months after service). If not, move this case to the Default track and prepare a default-style judgment.", "urgent")
+        new("No-Answer Default Judgment Checkpoint", "service_perfected_date", DefaultPostureCalculator.NoAnswerThresholdDays,
+            "Check whether an answer or appearance has been filed (~6 months after service). Record it on the case's Answer Filed field either way — if none has been filed, this is when the case moves into default-judgment posture.", "urgent")
     ];
 
     private async Task<bool> SeedDeadlineTemplatesAsync(SqliteConnection connection)
@@ -7396,6 +7406,7 @@ public sealed partial class CasePlannerRepository
                     case_status, status_mapping_review,
                     trial_end_date, property_description,
                     final_judgment_amount, disposition_type, taking_type, district,
+                    answer_filed, answer_filed_date,
                     created_at, updated_at
                 ) VALUES (
                     @case_number, @case_name, @job_number, @tract, @county, @status, @stage, @track, @filing_date,
@@ -7415,6 +7426,7 @@ public sealed partial class CasePlannerRepository
                     @case_status, @status_mapping_review,
                     @trial_end_date, @property_description,
                     @final_judgment_amount, @disposition_type, @taking_type, @district,
+                    @answer_filed, @answer_filed_date,
                     @created_at, @updated_at
                 );
                 SELECT last_insert_rowid();
@@ -7496,6 +7508,8 @@ public sealed partial class CasePlannerRepository
                     disposition_type=@disposition_type,
                     taking_type=@taking_type,
                     district=@district,
+                    answer_filed=@answer_filed,
+                    answer_filed_date=@answer_filed_date,
                     updated_at=@updated_at
                 WHERE id=@id;
                 SELECT @id;
@@ -7597,6 +7611,8 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@disposition_type", DbValue(model.DispositionType));
         cmd.Parameters.AddWithValue("@taking_type", DbValue(model.TakingType));
         cmd.Parameters.AddWithValue("@district", DbValue(model.District));
+        cmd.Parameters.AddWithValue("@answer_filed", model.AnswerFiled ? 1 : 0);
+        cmd.Parameters.AddWithValue("@answer_filed_date", DbValue(model.AnswerFiledDate));
         cmd.Parameters.AddWithValue("@created_at", now);
         cmd.Parameters.AddWithValue("@updated_at", now);
     }

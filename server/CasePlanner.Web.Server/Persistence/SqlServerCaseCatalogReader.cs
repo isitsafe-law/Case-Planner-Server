@@ -157,6 +157,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["trial_end_date"] = Null(model.TrialEndDate), ["property_description"] = Null(model.PropertyDescription),
         ["final_judgment_amount"] = model.FinalJudgmentAmount, ["disposition_type"] = Null(model.DispositionType),
         ["taking_type"] = Null(model.TakingType), ["district"] = Null(model.District),
+        ["answer_filed"] = model.AnswerFiled ? 1L : 0L, ["answer_filed_date"] = Null(model.AnswerFiledDate),
         ["project_name"] = Null(model.ProjectName), ["tax_owed_amount"] = model.TaxOwedAmount, ["whole_property_acres"] = model.WholePropertyAcres,
         ["acquisition_acres"] = model.AcquisitionAcres, ["landowner_appraiser_name"] = Null(model.LandownerAppraiserName),
         ["additional_deposit_amount"] = model.AdditionalDepositAmount, ["additional_deposit_date"] = Null(model.AdditionalDepositDate),
@@ -229,7 +230,8 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                COALESCE(case_status, 'Pipeline') AS case_status,
                COALESCE(status_mapping_review, 0) AS status_mapping_review,
                date_opened, trial_end_date, property_description,
-               final_judgment_amount, disposition_type, taking_type, district, row_version
+               final_judgment_amount, disposition_type, taking_type, district,
+               answer_filed, answer_filed_date, row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0
           AND (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))

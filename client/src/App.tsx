@@ -70,6 +70,8 @@ type CaseRecord = {
   serviceRequired: boolean
   servicePerfected: boolean
   servicePerfectedDate?: string | null
+  answerFiled?: boolean
+  answerFiledDate?: string | null
   serviceDeadline120?: string | null
   serviceDeadlineBasisDate?: string | null
   serviceMethod?: string | null
@@ -98,6 +100,7 @@ type CaseRecord = {
   checklistTotal?: number
   checklistDone?: number
   attentionStatus?: string
+  defaultPostureWarning?: boolean
   nextDeadlineDate?: string | null
   nextDeadlineTitle?: string | null
   deferredUntil?: string | null
@@ -1551,6 +1554,8 @@ function emptyCase(): CaseRecord {
     serviceRequired: true,
     servicePerfected: false,
     servicePerfectedDate: '',
+    answerFiled: false,
+    answerFiledDate: '',
     serviceDeadline120: '',
     serviceDeadlineBasisDate: '',
     serviceMethod: '',
@@ -1994,7 +1999,7 @@ function validateCaseDraft(draft: CaseRecord): { fieldErrors: FieldErrors; summa
   const fieldErrors: FieldErrors = {}
   if (!draft.caseName.trim()) fieldErrors.caseName = 'Case name is required.'
 
-  for (const field of ['filingDate', 'dateOpened', 'dateOfTaking', 'trialDate', 'trialEndDate', 'closedDate', 'serviceDeadlineBasisDate', 'serviceDeadline120', 'servicePerfectedDate'] as const) {
+  for (const field of ['filingDate', 'dateOpened', 'dateOfTaking', 'trialDate', 'trialEndDate', 'closedDate', 'serviceDeadlineBasisDate', 'serviceDeadline120', 'servicePerfectedDate', 'answerFiledDate'] as const) {
     if (!isValidDateValue(draft[field])) {
       fieldErrors[field] = 'Enter a valid date in YYYY-MM-DD format.'
     }
@@ -2212,6 +2217,7 @@ function App() {
   const [serviceLogDraft, setServiceLogDraft] = useState<ServiceLogEntry>(() => emptyServiceLogEntry(0))
   const [serviceLogFormOpen, setServiceLogFormOpen] = useState(false)
   const [servicePerfectedConfirming, setServicePerfectedConfirming] = useState(false)
+  const [answerFiledConfirming, setAnswerFiledConfirming] = useState(false)
   const [publicationEntries, setPublicationEntries] = useState<PublicationEntry[]>([])
   const [publicationEntryDraft, setPublicationEntryDraft] = useState<PublicationEntry>(() => emptyPublicationEntry(0))
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
@@ -3693,6 +3699,7 @@ function App() {
       settlementNotes: normalizeTextValue(draft.settlementNotes),
       publicationServiceNotes: normalizeTextValue(draft.publicationServiceNotes),
       servicePerfectedDate: normalizeDateValue(draft.servicePerfectedDate),
+      answerFiledDate: normalizeDateValue(draft.answerFiledDate),
       serviceDeadline120: normalizeDateValue(draft.serviceDeadline120),
       serviceDeadlineBasisDate: normalizeDateValue(draft.serviceDeadlineBasisDate),
       serviceMethod: normalizeTextValue(draft.serviceMethod),
@@ -3869,6 +3876,26 @@ function App() {
       await api(`/api/cases/${updated.id}/activity`, { method: 'POST', body: JSON.stringify({ activityType: perfected ? 'ServicePerfected' : 'ServiceUnperfected', notes: perfected ? 'Service marked perfected.' : 'Service marked not perfected.' }) })
       setMessage(perfected ? 'Service marked perfected.' : 'Service marked not perfected.')
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to update service status.') }
+  }
+
+  // Mirrors toggleServicePerfected's confirm-toggle UX exactly (same panel, same pill/button/
+  // confirm shape), but additionally stamps today's date the moment an answer is marked filed -
+  // the "Perfect Service" quick-action pattern used elsewhere (markGlobalServicePerfected) stamps
+  // a date rather than exposing a raw date input, and the default-posture warning badge needs a
+  // real answerFiledDate to have been recorded. Reverting to "not filed" intentionally leaves any
+  // previously recorded date in place (same as toggleServicePerfected never clearing
+  // servicePerfectedDate) so the historical record isn't destroyed.
+  async function toggleAnswerFiled(filed: boolean) {
+    if (!selectedCase?.id) return
+    try {
+      const updated = await api<CaseRecord>('/api/cases', {
+        method: 'POST',
+        body: JSON.stringify({ ...selectedCase, answerFiled: filed, answerFiledDate: filed ? (selectedCase.answerFiledDate || new Date().toISOString().slice(0, 10)) : selectedCase.answerFiledDate }),
+      })
+      await refreshAll(updated.id)
+      await api(`/api/cases/${updated.id}/activity`, { method: 'POST', body: JSON.stringify({ activityType: filed ? 'AnswerFiled' : 'AnswerNotFiled', notes: filed ? 'Answer marked filed.' : 'Answer marked not filed.' }) })
+      setMessage(filed ? 'Answer marked filed.' : 'Answer marked not filed.')
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to update answer-filed status.') }
   }
 
   async function changeStatus(newStatus: string) {
@@ -6153,7 +6180,10 @@ function App() {
                         </>
                       ) : <span className="ui-cell-faint">—</span>}
                     </td>
-                    <td><StatusChip tone={attentionChipTone(item.attentionStatus)}>{attentionLabels[item.attentionStatus || 'onTrack']}</StatusChip></td>
+                    <td>
+                      <StatusChip tone={attentionChipTone(item.attentionStatus)}>{attentionLabels[item.attentionStatus || 'onTrack']}</StatusChip>
+                      {item.defaultPostureWarning && <div className="ui-sub"><StatusChip tone="warn">No answer on file</StatusChip></div>}
+                    </td>
                     {caseListShowLifecycle && <>
                       <td className="ui-data">{item.dateOpened ? displayDate(item.dateOpened) : <span className="ui-cell-faint">—</span>}</td>
                       <td className="ui-data">{item.closedDate ? displayDate(item.closedDate) : <span className="ui-cell-faint">—</span>}</td>
@@ -6698,6 +6728,7 @@ function App() {
                   here (quietly) when Closed; the actual toggle lives on the Status tab. */}
               {selectedCase.status === 'Closed' && <StatusChip tone="neutral">Closed</StatusChip>}
               {selectedCase.statusMappingReview && <StatusChip tone="warn">Status mapping review</StatusChip>}
+              {selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
               {!isNewCase && <Btn onClick={startEditCase}>Edit Case</Btn>}
               {!isNewCase && (
                 <div className="case-menu" ref={caseMenuRef}>
@@ -7046,6 +7077,20 @@ function App() {
                     <span className="helper-text">{selectedCase.servicePerfected ? 'Confirm reverting this case to not perfected?' : 'Confirm service has been perfected for this case?'}</span>
                     <button className="primary" onClick={() => { void toggleServicePerfected(!selectedCase.servicePerfected); setServicePerfectedConfirming(false) }}>Confirm</button>
                     <button onClick={() => setServicePerfectedConfirming(false)}>Cancel</button>
+                  </span>
+                )}
+              </div>
+              <div className="button-row compact-actions top-gap-small">
+                <span>Answer Filed</span>
+                <span className={`pill pill-${selectedCase.answerFiled ? 'success' : 'neutral'}`}>{selectedCase.answerFiled ? `Filed ${displayDate(selectedCase.answerFiledDate)}` : 'Not Filed'}</span>
+                {selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
+                {!answerFiledConfirming ? (
+                  <button onClick={() => setAnswerFiledConfirming(true)}>{selectedCase.answerFiled ? 'Mark Not Filed…' : 'Mark Answer Filed…'}</button>
+                ) : (
+                  <span className="button-row compact-actions">
+                    <span className="helper-text">{selectedCase.answerFiled ? 'Confirm reverting this case to no answer on file?' : 'Confirm an answer or appearance has been filed for this case?'}</span>
+                    <button className="primary" onClick={() => { void toggleAnswerFiled(!selectedCase.answerFiled); setAnswerFiledConfirming(false) }}>Confirm</button>
+                    <button onClick={() => setAnswerFiledConfirming(false)}>Cancel</button>
                   </span>
                 )}
               </div>

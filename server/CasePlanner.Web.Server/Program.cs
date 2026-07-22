@@ -209,6 +209,18 @@ builder.Services.AddSingleton<ICaseLegalAssistantStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCaseLegalAssistantStore>()
         : services.GetRequiredService<SqliteCaseLegalAssistantStore>());
+builder.Services.AddSingleton<SqliteAttorneyStore>();
+builder.Services.AddSingleton<SqlServerAttorneyStore>();
+builder.Services.AddSingleton<IAttorneyStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerAttorneyStore>()
+        : services.GetRequiredService<SqliteAttorneyStore>());
+builder.Services.AddSingleton<SqliteLegalAssistantStore>();
+builder.Services.AddSingleton<SqlServerLegalAssistantStore>();
+builder.Services.AddSingleton<ILegalAssistantStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerLegalAssistantStore>()
+        : services.GetRequiredService<SqliteLegalAssistantStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -500,29 +512,29 @@ app.MapPut("/api/admin/users/{userId:guid}/manager", async (Guid userId, SetUser
 bool IsAdministratorOrManager(HttpContext context) =>
     CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)
     || (context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile && profile.IsManager);
-app.MapGet("/api/staff-directory/attorneys", async () => Results.Ok(await repo.GetAttorneysAsync()));
-app.MapPost("/api/staff-directory/attorneys", async (AttorneyRecord model, HttpContext context) =>
+app.MapGet("/api/staff-directory/attorneys", async (IAttorneyStore attorneys, CancellationToken token) => Results.Ok(await attorneys.GetAsync(token)));
+app.MapPost("/api/staff-directory/attorneys", async (AttorneyRecord model, IAttorneyStore attorneys, HttpContext context, CancellationToken token) =>
 {
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
-    return Results.Ok(await repo.SaveAttorneyAsync(model));
+    return Results.Ok(await attorneys.SaveAsync(model, token));
 });
-app.MapPut("/api/staff-directory/attorneys/{id:long}", async (long id, AttorneyRecord model, HttpContext context) =>
+app.MapPut("/api/staff-directory/attorneys/{id:long}", async (long id, AttorneyRecord model, IAttorneyStore attorneys, HttpContext context, CancellationToken token) =>
 {
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
     model.Id = id;
-    return Results.Ok(await repo.SaveAttorneyAsync(model));
+    return Results.Ok(await attorneys.SaveAsync(model, token));
 });
-app.MapGet("/api/staff-directory/legal-assistants", async () => Results.Ok(await repo.GetLegalAssistantsAsync()));
-app.MapPost("/api/staff-directory/legal-assistants", async (LegalAssistantRecord model, HttpContext context) =>
+app.MapGet("/api/staff-directory/legal-assistants", async (ILegalAssistantStore legalAssistants, CancellationToken token) => Results.Ok(await legalAssistants.GetAsync(token)));
+app.MapPost("/api/staff-directory/legal-assistants", async (LegalAssistantRecord model, ILegalAssistantStore legalAssistants, HttpContext context, CancellationToken token) =>
 {
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
-    return Results.Ok(await repo.SaveLegalAssistantAsync(model));
+    return Results.Ok(await legalAssistants.SaveAsync(model, token));
 });
-app.MapPut("/api/staff-directory/legal-assistants/{id:long}", async (long id, LegalAssistantRecord model, HttpContext context) =>
+app.MapPut("/api/staff-directory/legal-assistants/{id:long}", async (long id, LegalAssistantRecord model, ILegalAssistantStore legalAssistants, HttpContext context, CancellationToken token) =>
 {
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
     model.Id = id;
-    return Results.Ok(await repo.SaveLegalAssistantAsync(model));
+    return Results.Ok(await legalAssistants.SaveAsync(model, token));
 });
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>

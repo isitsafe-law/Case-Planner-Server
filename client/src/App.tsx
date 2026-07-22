@@ -6457,8 +6457,15 @@ function App() {
       { label: 'Closed Date', value: displayDate(selectedCase.closedDate), important: Boolean(selectedCase.closedDate), always: false },
       { label: 'Project Name', value: selectedCase.projectName || '', important: Boolean(selectedCase.projectName), always: false },
     ]
+    // Derived, not stored - the case only records its Assigned Attorney; which legal assistant that
+    // implies is looked up live against the Staff Directory tie (Settings > Attorneys & Staff), the
+    // same way Report A's Legal Assistant Load does. No case ever double-enters this.
+    const tiedLegalAssistant = selectedCase.assignedAttorney
+      ? legalAssistants.find((la) => la.attorneyNames.includes(selectedCase.assignedAttorney || ''))?.name || ''
+      : ''
     const peopleRecordFields = [
       { label: 'Assigned Attorney', value: selectedCase.assignedAttorney || '', important: Boolean(selectedCase.assignedAttorney) },
+      { label: 'Legal Assistant', value: tiedLegalAssistant, important: Boolean(tiedLegalAssistant) },
       { label: 'Opposing Attorneys', value: opposingAttorneyNames, important: Boolean(opposingAttorneyNames) },
       { label: 'Owner', value: selectedCase.owner || '', important: Boolean(selectedCase.owner) },
       { label: 'Landowner', value: selectedCase.landowner || '', important: Boolean(selectedCase.landowner) },
@@ -6518,10 +6525,10 @@ function App() {
               )}
             </div>
           </div>
-          {!isNewCase && selectedCase.currentHolder && (
+          {!isNewCase && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
-              <HolderPipelineStepper currentHolder={selectedCase.currentHolder} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
+              <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
             </div>
           )}
           {workspace && workspace.caseIssueTags.length > 0 && (

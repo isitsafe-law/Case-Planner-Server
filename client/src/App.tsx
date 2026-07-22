@@ -2801,7 +2801,6 @@ function App() {
     } catch {
       setCaseAssignments([])
     }
-    if (staffRoster.length === 0) void loadStaffRoster()
   }
 
   async function addCaseAssignment(caseId: number) {

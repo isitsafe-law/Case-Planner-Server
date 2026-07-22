@@ -6315,7 +6315,7 @@ public sealed partial class CasePlannerRepository
         }
     }
 
-    private sealed record TemplateSeed(string Name, string TriggerType, string? Stage, string? IssueTagName, string[] Tasks);
+    internal sealed record TemplateSeed(string Name, string TriggerType, string? Stage, string? IssueTagName, string[] Tasks);
 
     // Stage templates seeded from the office condemnation checklist reference, merged with the
     // role-handoff chain and branching logic from ARDOT's internal condemnation workflow document
@@ -6329,7 +6329,7 @@ public sealed partial class CasePlannerRepository
     // with it: "Post-Discovery - Default Path", which only existed to match the dead track='Default'
     // value and could never fire; its real content (no-answer default-judgment prep) is folded into
     // Post-Trial - Core below, alongside the workflow doc's fuller DOESN'T-answer closing path.
-    private static readonly TemplateSeed[] TemplateSeeds =
+    internal static readonly TemplateSeed[] TemplateSeeds =
     [
         new("Pre-Suit / Intake", "Stage", "Pipeline", null,
         [
@@ -6581,7 +6581,7 @@ public sealed partial class CasePlannerRepository
     // template or item a firm has created/edited through the Template Editor is permanently
     // excluded, regardless of version bumps. The per-case checklist_items rows generated from a
     // template are separate and are never touched by a reseed either way.
-    private const string ChecklistTemplateVersion = "9";
+    internal const string ChecklistTemplateVersion = "9";
 
     private async Task<bool> SeedChecklistTemplatesAsync(SqliteConnection connection)
     {
@@ -6667,11 +6667,11 @@ public sealed partial class CasePlannerRepository
     // Deadline templates compute real deadlines rows from a case's own trigger dates
     // (filing date, trial date) plus a day offset. Severity tiers: "soft" (routine
     // reminder), "urgent" (materially more pressing), "critical" (hard deadline).
-    private sealed record DeadlineTemplateSeed(string Name, string TriggerField, int OffsetDays, string Title, string Severity);
+    internal sealed record DeadlineTemplateSeed(string Name, string TriggerField, int OffsetDays, string Title, string Severity);
 
-    private const string DeadlineTemplateVersion = "5";
+    internal const string DeadlineTemplateVersion = "5";
 
-    private static readonly DeadlineTemplateSeed[] DeadlineTemplateSeeds =
+    internal static readonly DeadlineTemplateSeed[] DeadlineTemplateSeeds =
     [
         new("Service - 60 Day Check-In", "filing_date", 60,
             "Service status check-in — evaluate whether a Motion for Extension of Time to Serve will be needed before day 120", "soft"),

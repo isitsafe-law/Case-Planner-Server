@@ -343,6 +343,7 @@ builder.Services.AddSingleton<IDocumentCompositionService>(services =>
         : services.GetRequiredService<SqliteDocumentCompositionService>());
 builder.Services.AddSingleton<SqlServerCaseImportService>();
 builder.Services.AddSingleton<CutoverReadinessService>();
+builder.Services.AddSingleton<SqlServerTemplateSeedingService>();
 
 var app = builder.Build();
 
@@ -351,6 +352,13 @@ var repo = app.Services.GetRequiredService<CasePlannerRepository>();
 var shutdownToken = Guid.NewGuid().ToString("N");
 var hostLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 await repo.InitializeAsync();
+if (activeProvider.Equals(DatabaseProviders.SqlServer, StringComparison.OrdinalIgnoreCase))
+{
+    // CasePlannerRepository.InitializeAsync() only reseeds checklist/deadline templates on the
+    // SQLite path (see SeedChecklistTemplatesAsync/SeedDeadlineTemplatesAsync) - this is the SQL
+    // Server equivalent, sharing the same seed content and version gates.
+    await app.Services.GetRequiredService<SqlServerTemplateSeedingService>().SeedAsync();
+}
 await repo.LogAsync($"Web app startup complete. localUrl={paths.Config.LocalUrl}; releaseLocal={paths.Config.IsReleaseLocal}; root={paths.Config.RootPath}");
 
 // The Release publish runs windowless (no console), so this is the only place unhandled

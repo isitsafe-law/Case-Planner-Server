@@ -6344,7 +6344,6 @@ function App() {
                 <div className="ui-row-actions">
                   <Btn size="sm" onClick={() => void recordDiscoveryResponse(item)}>Record response</Btn>
                   <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'discovery')}>Open case ▸</Btn>
-                  <Btn size="sm" variant="danger" onClick={() => void deleteDiscoveryItem(item)}>Delete</Btn>
                 </div>
               </td>
             </tr>
@@ -6525,7 +6524,7 @@ function App() {
               )}
             </div>
           </div>
-          {!isNewCase && (
+          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
               <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />

@@ -37,6 +37,23 @@ IT must provide:
 5. Pilot group membership and the initial application administrators.
 6. Central document root supplied as `DocumentStorage__RootPath` (for example, an approved UNC path) and the
    service identity that will access it.
+7. The UNC path convention for the condemnation case-file share (organized by Job/Tract) that the new
+   "Open Case Folder" button launches Explorer against. Each case's `Case Folder Path` field is entered
+   per case today; every user's own machine (not the application server) needs read access to that share
+   for the button to work, since Explorer opens locally under the signed-in user's own session.
+8. A decision on Microsoft Graph-based authorization (see "Pending Microsoft Graph decision" below) before
+   that work can begin: the Entra Security Group Object IDs for Administrator/Manager equivalence,
+   confirmation that `GroupMember.Read.All` (or equivalent) is requested and admin-consented on the app
+   registration, and whether Graph group membership fully replaces the existing App-Role-claims checks or
+   coexists as a fallback.
+
+### Pending Microsoft Graph decision
+
+Authorization today is entirely token-claims based (App Role claims baked into the JWT, checked via
+`ClaimsPrincipal.IsInRole`/`FindAll("roles")`) - there are no live Microsoft Graph calls anywhere in the
+code yet. Moving to live Graph group-membership queries is a real architectural change, not a small
+addition, and is blocked until IT supplies the three items in input 8 above. No code has been written for
+this; do not assume Graph integration is in progress.
 
 ## Deployment sequence
 

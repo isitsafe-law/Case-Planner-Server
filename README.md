@@ -49,6 +49,22 @@ still required. See [SQL Server migration foundation](docs/sql-server-migration.
 - friendly duplicate issue-tag validation
 - CSV-only import messaging with XLSX deferment clearly documented
 - self-contained Windows test packaging for localhost deployment review
+- default-posture warning badge (case list + workspace header) for eminent-domain cases where
+  service is perfected but no answer/appearance has been filed within the standard window
+- per-defendant service/answer tracking on Service & Publication, replacing the single case-level
+  "Answer Filed" toggle once a case's defendant list has been entered
+- gate-based pipeline approval workflow (Legal Assistant &rarr; Attorney &rarr; Deputy Chief Counsel
+  &rarr; Chief Counsel), scoped to the Pipeline phase only; Chief Counsel approval auto-populates the
+  existing Waiting-On fields for the Director of Highways and Transportation's Declaration of Taking
+  signature
+- disposition type, final judgment amount, and attorney's fees now shown on the case workspace
+  itself, not only in cross-case Reports
+- "Open Case Folder" button on the case editor that launches Explorer at a case's network condemnation-file
+  path (Job/Tract share), plus FAP No., Judge, Division, Case Style, and Opposing Counsel Contact fields
+- "County Officials" reference lookup (Circuit Clerk, Assessor, Tax Collector) on Service &
+  Publication, seeded for all 75 Arkansas counties and editable from Settings
+- high-contrast (dark and light) theme options alongside light/dark/system, documented in
+  `design-system/MASTER.md`
 
 ## Development
 
@@ -230,6 +246,15 @@ section/loop content, runtime inputs, and generation history are all DB-backed
 uploaded `.docx` files with no third-party templating dependency. This platform is currently SQLite-only;
 its SQL Server implementation (`IDocumentPlatformService`) is a deliberate not-yet-built stub pending SQL
 Server sandbox access — see `docs/it-deployment-handoff.md`.
+
+Staff Directory (attorneys/legal assistants), Circuit Clerk, Assessor, and Tax Collector reference
+data are now provider-selected like every other feature, rather than calling the SQLite repository
+directly regardless of `Database:ActiveProvider`. Staff Directory entries also carry an optional
+admin-set `linked_user_id` so TaskAssigned/TaskCompleted/DeadlineReminder notifications can resolve a
+case's Attorney/Legal Assistant name to a real account without auto-matching by name or email.
+Checklist/deadline template catalogs now seed on the SQL Server side as well (previously only
+SQLite reseeded on startup, so a real SQL Server deployment would only ever get template content from
+the one-time cutover migration and go stale on every later content update).
 
 Organization-wide document defaults now also have a SQL Server singleton record. Attorney/contact/address
 and leadership values retain the same document-token behavior while adding `rowversion` conflict detection,

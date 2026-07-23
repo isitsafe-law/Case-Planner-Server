@@ -216,6 +216,13 @@ builder.Services.AddSingleton<ICaseDefendantStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCaseDefendantStore>()
         : services.GetRequiredService<SqliteCaseDefendantStore>());
+builder.Services.AddSingleton<SqlitePipelineHolderApprovalStore>();
+builder.Services.AddSingleton<SqlServerPipelineHolderApprovalStore>();
+builder.Services.AddSingleton<IPipelineHolderApprovalStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerPipelineHolderApprovalStore>()
+        : services.GetRequiredService<SqlitePipelineHolderApprovalStore>());
+builder.Services.AddSingleton<IPipelineHolderApprovalActionService, ProviderNeutralPipelineHolderApprovalActionService>();
 builder.Services.AddSingleton<SqliteAttorneyStore>();
 builder.Services.AddSingleton<SqlServerAttorneyStore>();
 builder.Services.AddSingleton<IAttorneyStore>(services =>
@@ -702,6 +709,15 @@ app.MapPost("/api/cases/{id:long}/holder", async (long id, SetHolderRequest requ
     try{return Results.Ok(new{rowVersion=await actions.SetHolderAsync(id,request,token)});}
     catch(CaseConcurrencyException ex){return Results.Conflict(new{error=ex.Message});}
     catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}
+    catch(InvalidOperationException ex){return Results.BadRequest(new{error=ex.Message});}
+});
+app.MapGet("/api/cases/{id:long}/pipeline-approvals", async (long id, IPipelineHolderApprovalActionService approvals,CancellationToken token) => Results.Ok(await approvals.GetAsync(id,token)));
+app.MapPost("/api/cases/{id:long}/pipeline-approvals", async (long id, RecordPipelineHolderApprovalRequest request,IPipelineHolderApprovalActionService approvals,CancellationToken token) =>
+{
+    try{return Results.Ok(await approvals.RecordAsync(id,request,token));}
+    catch(CaseConcurrencyException ex){return Results.Conflict(new{error=ex.Message});}
+    catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}
+    catch(InvalidOperationException ex){return Results.BadRequest(new{error=ex.Message});}
 });
 app.MapPost("/api/cases/{id:long}/priority", async (long id, SetPriorityRequest request,ICaseQuickActionService actions,CancellationToken token) =>
 {

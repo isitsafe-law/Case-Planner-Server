@@ -1144,6 +1144,7 @@ public sealed partial class CasePlannerRepository
             OpposingAttorneys = await GetOpposingAttorneysAsync(caseId),
             CaseLegalAssistants = await GetCaseLegalAssistantsAsync(caseId),
             CaseDefendants = await GetCaseDefendantsAsync(caseId),
+            PipelineHolderApprovals = await GetPipelineHolderApprovalsAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
             CaseIssueTags = await GetCaseIssueTagsAsync(caseId),
             CaseNotes = await GetCaseNotesAsync(caseId),
@@ -2650,17 +2651,32 @@ public sealed partial class CasePlannerRepository
         {
             var caseCmd = connection.CreateCommand();
             caseCmd.Transaction = tx;
-            caseCmd.CommandText = "SELECT current_holder, pipeline_stage FROM cases WHERE id=@id";
+            caseCmd.CommandText = "SELECT current_holder, pipeline_stage, COALESCE(case_status, 'Pipeline') FROM cases WHERE id=@id";
             caseCmd.Parameters.AddWithValue("@id", caseId);
             string? previousHolder = null;
             string? previousStage = null;
+            string? caseStatus = null;
             await using (var reader = await caseCmd.ExecuteReaderAsync())
             {
                 if (await reader.ReadAsync())
                 {
                     previousHolder = reader.IsDBNull(0) ? null : reader.GetString(0);
                     previousStage = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    caseStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
                 }
+            }
+
+            // Task B gate: one isolated call site (see PipelinePromotionGate's doc comment for the
+            // full "delete this block to disable" rationale). Must run before the UPDATE below.
+            if (PipelinePromotionGate.RequiresApproval(caseStatus, previousHolder, request.CurrentHolder))
+            {
+                var statusCmd = connection.CreateCommand();
+                statusCmd.Transaction = tx;
+                statusCmd.CommandText = "SELECT status FROM pipeline_holder_approvals WHERE case_id=@case_id AND holder_role=@role ORDER BY id DESC LIMIT 1";
+                statusCmd.Parameters.AddWithValue("@case_id", caseId);
+                statusCmd.Parameters.AddWithValue("@role", previousHolder!);
+                var mostRecentStatus = (await statusCmd.ExecuteScalarAsync()) as string;
+                PipelinePromotionGate.EnsureApproved(previousHolder!, request.CurrentHolder, mostRecentStatus);
             }
 
             var updateCmd = connection.CreateCommand();
@@ -3678,6 +3694,66 @@ public sealed partial class CasePlannerRepository
             await cmd.ExecuteNonQueryAsync();
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted defendant {id} at {DateTime.Now:G}");
             return 0;
+        });
+    }
+
+    public async Task<List<PipelineHolderApprovalRecord>> GetPipelineHolderApprovalsAsync(long? caseId)
+    {
+        var list = new List<PipelineHolderApprovalRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, holder_role, status, note, set_at, set_by_display_name
+            FROM pipeline_holder_approvals
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY id DESC
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new PipelineHolderApprovalRecord
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                HolderRole = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Status = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Note = reader.IsDBNull(4) ? null : reader.GetString(4),
+                SetAt = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                SetByDisplayName = reader.IsDBNull(6) ? null : reader.GetString(6),
+            });
+        }
+
+        return list;
+    }
+
+    // Task A: a pure append-only insert - every call adds a NEW row (see PipelineHolderApprovalRecord's
+    // doc comment), never updates an existing one. The orchestration around this call (auto-moving
+    // the holder backward on Returned, stamping the Chief-Counsel-approved waiting fields) lives one
+    // level up in ProviderNeutralPipelineHolderApprovalActionService - this method only records the
+    // fact that a status was set.
+    public async Task<PipelineHolderApprovalRecord> RecordPipelineHolderApprovalAsync(PipelineHolderApprovalRecord model)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            model.SetAt = string.IsNullOrWhiteSpace(model.SetAt) ? now : model.SetAt;
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO pipeline_holder_approvals (case_id, holder_role, status, note, set_at, set_by_display_name)
+                VALUES (@case_id, @holder_role, @status, @note, @set_at, @set_by_display_name);
+                SELECT last_insert_rowid();
+                """;
+            cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@holder_role", model.HolderRole);
+            cmd.Parameters.AddWithValue("@status", model.Status);
+            cmd.Parameters.AddWithValue("@note", DbValue(model.Note));
+            cmd.Parameters.AddWithValue("@set_at", model.SetAt);
+            cmd.Parameters.AddWithValue("@set_by_display_name", DbValue(model.SetByDisplayName));
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            return model;
         });
     }
 
@@ -8230,6 +8306,16 @@ public sealed partial class CasePlannerRepository
             created_at TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS pipeline_holder_approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            holder_role TEXT NOT NULL,
+            status TEXT NOT NULL,
+            note TEXT,
+            set_at TEXT NOT NULL,
+            set_by_display_name TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pipeline_holder_approvals_case_role ON pipeline_holder_approvals(case_id, holder_role, id);
         CREATE TABLE IF NOT EXISTS witnesses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,

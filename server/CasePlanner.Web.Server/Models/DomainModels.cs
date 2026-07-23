@@ -493,6 +493,42 @@ public sealed class CaseDefendantRecord
     public string? Notes { get; set; }
 }
 
+// Pre-suit intake gate (pipeline-phase chain: Legal Assistant -> Attorney -> Deputy Chief Counsel
+// -> Chief Counsel): an append-only per-holder review log. Every Approve/Return-for-Revision
+// action is a NEW row, never an update to an existing one, so history survives a cycle like
+// Approved -> Returned -> re-Approved. "Pending" is never itself stored as a row - the absence of
+// any row yet for a given (CaseId, HolderRole) pair already means pending. See
+// PipelinePromotionGate (CasePlanner.Web.Server.Persistence) for how this log gates forward
+// advancement of CaseRecord.CurrentHolder.
+public sealed class PipelineHolderApprovalRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    // "Legal Assistant" | "Attorney" | "Deputy Chief Counsel" | "Chief Counsel" - matches
+    // CaseRecord.CurrentHolder's spellings exactly (see PipelinePromotionGate.GatedChain).
+    public string HolderRole { get; set; } = "";
+    // "Approved" | "Returned".
+    public string Status { get; set; } = "";
+    public string? Note { get; set; }
+    public string SetAt { get; set; } = "";
+    // Free text, no real authentication yet to bind this to (Entra ID is dormant) - same "records
+    // whoever the client says acted, with no cryptographic proof" limitation
+    // PipelineHandoffRecord.CreatedBy already carries. This enforces PROCESS (you can't advance
+    // without clicking Approve), not IDENTITY.
+    public string? SetByDisplayName { get; set; }
+}
+
+// Client-facing shape for POST /api/cases/{id}/pipeline-approvals (Task C's Approve / Return for
+// Revision action) - distinct from PipelineHolderApprovalRecord itself because this also carries
+// the orchestration inputs (which holder role, which direction) rather than just the log fields.
+public sealed class RecordPipelineHolderApprovalRequest
+{
+    public string HolderRole { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string? Note { get; set; }
+    public string? SetByDisplayName { get; set; }
+}
+
 public sealed class UpcomingWorkItemRecord
 {
     public string Key { get; set; } = "";
@@ -1635,6 +1671,7 @@ public sealed class CaseWorkspaceResponse
     public List<OpposingAttorneyRecord> OpposingAttorneys { get; set; } = [];
     public List<CaseLegalAssistantRecord> CaseLegalAssistants { get; set; } = [];
     public List<CaseDefendantRecord> CaseDefendants { get; set; } = [];
+    public List<PipelineHolderApprovalRecord> PipelineHolderApprovals { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];
     public List<IssueTagRecord> AvailableIssueTags { get; set; } = [];
     public List<CaseNoteRecord> CaseNotes { get; set; } = [];

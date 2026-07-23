@@ -19,7 +19,7 @@ import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
 import { ErrorState } from './dashboard/ErrorState'
 import { getApiAccessToken } from './auth'
 import { StatusChip, type StatusTone } from './ui/StatusChip'
-import { HolderPipelineStepper } from './ui/HolderPipelineStepper'
+import { HolderPipelineStepper, HOLDER_STEPS, type HolderStep } from './ui/HolderPipelineStepper'
 import { StatusSelect } from './ui/StatusSelect'
 import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
@@ -260,6 +260,19 @@ type CaseDefendant = {
   answerFiled?: boolean
   answerFiledDate?: string | null
   notes?: string | null
+}
+
+// Pre-suit intake gate (see HolderPipelineStepper's HOLDER_STEPS chain) - append-only per-holder
+// review log. Every Approve/Return-for-Revision action is a NEW row, so "current status per role"
+// is computed client-side from this list (most recent row per role, or Pending if none).
+type PipelineHolderApproval = {
+  id: number
+  caseId: number
+  holderRole: string
+  status: string
+  note?: string | null
+  setAt: string
+  setByDisplayName?: string | null
 }
 
 type DiscoveryItem = {
@@ -621,6 +634,7 @@ type WorkspaceResponse = {
   opposingAttorneys: OpposingAttorney[]
   caseLegalAssistants: CaseLegalAssistant[]
   caseDefendants: CaseDefendant[]
+  pipelineHolderApprovals: PipelineHolderApproval[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -2266,6 +2280,12 @@ function App() {
   const [opposingAttorneys, setOpposingAttorneys] = useState<OpposingAttorney[]>([])
   const [caseLegalAssistants, setCaseLegalAssistants] = useState<CaseLegalAssistant[]>([])
   const [caseDefendants, setCaseDefendants] = useState<CaseDefendant[]>([])
+  const [pipelineHolderApprovals, setPipelineHolderApprovals] = useState<PipelineHolderApproval[]>([])
+  // Which gated-holder action (Approve or Return for Revision) is currently expanded for a note
+  // and a Confirm/Cancel pair - same "inline confirming state" shape as answerFiledConfirming
+  // above, rather than firing the request immediately on click.
+  const [pipelineApprovalPending, setPipelineApprovalPending] = useState<{ role: string; status: 'Approved' | 'Returned' } | null>(null)
+  const [pipelineApprovalNoteDraft, setPipelineApprovalNoteDraft] = useState('')
   // Per-row version of answerFiledConfirming above - tracks which defendant row's confirm dialog
   // is open (keyed by the row's id; unsaved rows, which have id 0, use a negative -(index+1) key
   // instead so multiple blank draft rows can't collide on the same key).
@@ -2826,6 +2846,9 @@ function App() {
       setCaseLegalAssistants(data.caseLegalAssistants ?? [])
       setCaseDefendants(data.caseDefendants ?? [])
       setDefendantAnswerConfirmingKey(null)
+      setPipelineHolderApprovals(data.pipelineHolderApprovals ?? [])
+      setPipelineApprovalPending(null)
+      setPipelineApprovalNoteDraft('')
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -4605,6 +4628,54 @@ function App() {
       setMessage('Holder updated.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update the holder.')
+    }
+  }
+
+  // Most recent pipeline_holder_approvals row for a given gated role, or 'Pending' when none
+  // exists yet - "no row" already means pending, so Pending is never itself stored server-side.
+  function pipelineApprovalStatusFor(role: string): 'Approved' | 'Returned' | 'Pending' {
+    const rows = pipelineHolderApprovals.filter((row) => row.holderRole === role)
+    if (rows.length === 0) return 'Pending'
+    const latest = rows.reduce((a, b) => (b.id > a.id ? b : a))
+    return latest.status === 'Approved' ? 'Approved' : 'Returned'
+  }
+
+  function nextHolderStep(role: string | null | undefined): HolderStep | undefined {
+    const index = HOLDER_STEPS.indexOf((role || '') as HolderStep)
+    return index >= 0 ? HOLDER_STEPS[index + 1] : undefined
+  }
+
+  function previousHolderStep(role: string | null | undefined): HolderStep | undefined {
+    const index = HOLDER_STEPS.indexOf((role || '') as HolderStep)
+    return index > 0 ? HOLDER_STEPS[index - 1] : undefined
+  }
+
+  // Approve / Return for Revision (POST /api/cases/{id}/pipeline-approvals). Approve is combined
+  // with the stepper's own holder-advance action here - in practice a review being approved and
+  // the file moving to the next role happen together almost every time, and the server-side gate
+  // now requires the Approve to have already landed before that advance is even allowed to
+  // succeed. setCurrentHolderFromStepper only runs after the approval POST below resolves, so a
+  // failed approve never attempts the advance. Chief Counsel has no next stepper role - approving
+  // there instead auto-populates the case's Waiting On the Director of Highways and
+  // Transportation signature (handled entirely server-side), so no advance call is made.
+  async function recordPipelineHolderApproval(role: string, status: 'Approved' | 'Returned', note: string) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!caseId) return
+    try {
+      setErrorMessage('')
+      await api(`/api/cases/${caseId}/pipeline-approvals`, {
+        method: 'POST',
+        body: JSON.stringify({ holderRole: role, status, note: note.trim() || undefined }),
+      })
+      const advanceTo = status === 'Approved' ? nextHolderStep(role) : undefined
+      if (advanceTo) {
+        await setCurrentHolderFromStepper(advanceTo)
+      } else {
+        await refreshAll(caseId)
+      }
+      setMessage(status === 'Approved' ? (advanceTo ? `Approved and sent to ${advanceTo}.` : 'Approved.') : 'Returned for revision.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to record the pipeline review.')
     }
   }
 
@@ -6902,6 +6973,75 @@ function App() {
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
               <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
+            </div>
+          )}
+          {/* Pipeline gate (office pilot): each gated role's most recent review status, plus the
+              Approve / Return for Revision actions for whoever currently holds the file. Only
+              applies during the Pipeline phase - same scope as the stepper above - and stops
+              mattering once the case files. */}
+          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+            <div className="workspace-holder-row top-gap-small">
+              <span className="workspace-holder-row-label">Review Status</span>
+              <span className="chip-row">
+                {HOLDER_STEPS.map((step) => {
+                  const status = pipelineApprovalStatusFor(step)
+                  const tone = status === 'Approved' ? 'success' : status === 'Returned' ? 'warn' : 'neutral'
+                  return <span key={step} className={`pill pill-${tone}`}>{step}: {status}</span>
+                })}
+              </span>
+            </div>
+          )}
+          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && HOLDER_STEPS.includes((selectedCase.currentHolder || '') as HolderStep) && (
+            <div className="workspace-holder-row top-gap-small">
+              {pipelineApprovalPending === null ? (
+                <span className="button-row compact-actions">
+                  <button
+                    className="primary"
+                    type="button"
+                    onClick={() => { setPipelineApprovalNoteDraft(''); setPipelineApprovalPending({ role: selectedCase.currentHolder as string, status: 'Approved' }) }}
+                  >
+                    {nextHolderStep(selectedCase.currentHolder) ? `Approve & Send to ${nextHolderStep(selectedCase.currentHolder)}…` : 'Approve…'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPipelineApprovalNoteDraft(''); setPipelineApprovalPending({ role: selectedCase.currentHolder as string, status: 'Returned' }) }}
+                  >
+                    Return for Revision…
+                  </button>
+                </span>
+              ) : (
+                <div className="form-grid compact-actions">
+                  <label className="full-span">
+                    <span>{pipelineApprovalPending.status === 'Approved' ? 'Note (optional)' : 'Reason for returning (recommended)'}</span>
+                    <textarea
+                      rows={2}
+                      value={pipelineApprovalNoteDraft}
+                      onChange={(event) => setPipelineApprovalNoteDraft(event.target.value)}
+                      placeholder={pipelineApprovalPending.status === 'Approved' ? 'Optional note…' : 'What needs to change before this can move forward?'}
+                    />
+                  </label>
+                  <span className="button-row compact-actions full-span">
+                    <span className="helper-text">
+                      {pipelineApprovalPending.status === 'Approved'
+                        ? (nextHolderStep(pipelineApprovalPending.role) ? `Confirm approval and send to ${nextHolderStep(pipelineApprovalPending.role)}?` : 'Confirm approval?')
+                        : `Confirm returning to ${previousHolderStep(pipelineApprovalPending.role) || 'the prior holder'} for revision?`}
+                    </span>
+                    <button
+                      className="primary"
+                      type="button"
+                      onClick={() => {
+                        const pending = pipelineApprovalPending
+                        const noteToSend = pipelineApprovalNoteDraft
+                        setPipelineApprovalPending(null)
+                        if (pending) void recordPipelineHolderApproval(pending.role, pending.status, noteToSend)
+                      }}
+                    >
+                      Confirm
+                    </button>
+                    <button type="button" onClick={() => setPipelineApprovalPending(null)}>Cancel</button>
+                  </span>
+                </div>
+              )}
             </div>
           )}
           {/* Test-build feedback item: so a manager or anyone else opening someone else's case can

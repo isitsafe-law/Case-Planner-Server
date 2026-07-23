@@ -38,7 +38,7 @@ type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadl
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
-type ThemeMode = 'light' | 'dark' | 'system'
+type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
@@ -807,6 +807,19 @@ type LegalAssistantRecord = {
   attorneyIds: number[]
   attorneyNames: string[]
   linkedUserId?: string | null
+}
+
+// Circuit Clerk reference lookup - same architecture as AttorneyRecord/LegalAssistantRecord above
+// (see CircuitClerkRecord on the server): a fixed, independent reference table keyed by County
+// (matching arkansasCounties' spellings exactly), zero auth/identity dependency, seeded with real
+// data so the office never has to hand-enter this per case.
+type CircuitClerkRecord = {
+  id: number
+  county: string
+  clerkName: string
+  address?: string | null
+  phone?: string | null
+  notes?: string | null
 }
 type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
 type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
@@ -2100,7 +2113,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'light'
     const stored = window.localStorage.getItem(themeStorageKey)
-    return stored === 'dark' || stored === 'system' ? stored : 'light'
+    return stored === 'dark' || stored === 'system' || stored === 'high-contrast' || stored === 'high-contrast-light' ? stored : 'light'
   })
   const [page, setPage] = useState<PageKey>('dashboard')
   const [shutdownBusy, setShutdownBusy] = useState(false)
@@ -2177,6 +2190,7 @@ function App() {
   const [staffRoster, setStaffRoster] = useState<AppUserSummary[]>([])
   const [attorneys, setAttorneys] = useState<AttorneyRecord[]>([])
   const [legalAssistants, setLegalAssistants] = useState<LegalAssistantRecord[]>([])
+  const [circuitClerks, setCircuitClerks] = useState<CircuitClerkRecord[]>([])
   const [newAttorneyName, setNewAttorneyName] = useState('')
   const [newAttorneyTitle, setNewAttorneyTitle] = useState('')
   const [newLegalAssistantName, setNewLegalAssistantName] = useState('')
@@ -2733,7 +2747,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2753,6 +2767,7 @@ function App() {
         api<ReferenceDocument[]>('/api/reference-library'),
         api<AttorneyRecord[]>('/api/staff-directory/attorneys'),
         api<LegalAssistantRecord[]>('/api/staff-directory/legal-assistants'),
+        api<CircuitClerkRecord[]>('/api/circuit-clerks'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2773,6 +2788,7 @@ function App() {
       setReferenceLibrary(referenceLibraryData)
       setAttorneys(attorneysData)
       setLegalAssistants(legalAssistantsData)
+      setCircuitClerks(circuitClerksData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -2953,6 +2969,32 @@ function App() {
     await saveLegalAssistant({ id: 0, name: newLegalAssistantName.trim(), isActive: true, sortOrder: 0, attorneyIds: newLegalAssistantAttorneyIds, attorneyNames: [] })
     setNewLegalAssistantName('')
     setNewLegalAssistantAttorneyIds([])
+  }
+
+  // Circuit Clerk reference lookup - same load-once-in-loadInitial, refresh-after-edit shape as
+  // the Staff Directory above. Edits are keyed by County (the PUT route param), not Id, since
+  // every county row already exists from the initial seed - see ICircuitClerkStore.SaveAsync.
+  async function saveCircuitClerk(model: CircuitClerkRecord) {
+    try {
+      setErrorMessage('')
+      await api(`/api/circuit-clerks/${encodeURIComponent(model.county)}`, { method: 'PUT', body: JSON.stringify(model) })
+      setCircuitClerks(await api<CircuitClerkRecord[]>('/api/circuit-clerks'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the circuit clerk.')
+    }
+  }
+
+  // Local-only edit while typing (mirrors updateOpposingAttorneyName) - the save round-trip fires
+  // on blur (commitCircuitClerkRow), not on every keystroke, so a fast typist's cursor never gets
+  // clobbered by the server response landing mid-edit.
+  function updateCircuitClerkField(index: number, patch: Partial<CircuitClerkRecord>) {
+    setCircuitClerks((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  async function commitCircuitClerkRow(index: number) {
+    const row = circuitClerks[index]
+    if (!row) return
+    await saveCircuitClerk(row)
   }
 
   async function loadCaseAssignments(caseId: number) {
@@ -7371,6 +7413,26 @@ function App() {
 
         {caseTab === 'servicePublication' && (
           <div className="workspace-sections">
+            <Panel title="Circuit Clerk">
+              {(() => {
+                const clerk = circuitClerks.find((row) => row.county === selectedCase.county)
+                if (!selectedCase.county) return <p className="helper-text">No circuit clerk on file for this county — this case has no County set yet.</p>
+                if (!clerk) return <p className="helper-text">No circuit clerk on file for {selectedCase.county} County.</p>
+                const clerkText = [`${clerk.county} County Circuit Clerk`, clerk.clerkName, clerk.address, clerk.phone].filter(Boolean).join('\n')
+                return (
+                  <>
+                    <p><strong>{clerk.clerkName}</strong> &middot; {clerk.county} County</p>
+                    {clerk.address && <p style={{ whiteSpace: 'pre-wrap' }}>{clerk.address}</p>}
+                    {clerk.phone && <p>{clerk.phone}</p>}
+                    {clerk.notes && <p className="helper-text">{clerk.notes}</p>}
+                    <div className="button-row compact-actions top-gap-small">
+                      <Btn size="sm" onClick={() => void navigator.clipboard.writeText(clerkText)}>Copy Circuit Clerk Info</Btn>
+                    </div>
+                  </>
+                )
+              })()}
+            </Panel>
+
             <Panel title="Service &amp; Publication">
               <p className="helper-text">Primary factual record for service perfection and publication.</p>
               <div className="button-row compact-actions top-gap-small">
@@ -10634,10 +10696,12 @@ function App() {
                     <option value="light">Light</option>
                     <option value="dark">Dark</option>
                     <option value="system">Use System Setting</option>
+                    <option value="high-contrast">High Contrast (Dark)</option>
+                    <option value="high-contrast-light">High Contrast (Light)</option>
                   </select>
                 </label>
               </div>
-              <p className="helper-text top-gap-small">Theme preference is stored locally in this browser.</p>
+              <p className="helper-text top-gap-small">Theme preference is stored locally in this browser. High-contrast themes push text and control contrast beyond the standard AA level for stronger accessibility.</p>
             </Panel>
           )}
 
@@ -11338,6 +11402,40 @@ function App() {
                   <div className="button-row full-span"><button className="primary" onClick={() => void addLegalAssistant()}>Add Legal Assistant</button></div>
                 </div>
               )}
+            </Panel>
+          )}
+
+          {settingsSection === 'staff' && (
+            <Panel title="Circuit Clerks" className="top-gap">
+              <p className="helper-text">Reference lookup for each county's circuit clerk, shown read-only on a case's Service &amp; Publication tab. Correct here any time an election or office move changes the details.</p>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>County</th><th>Clerk Name</th><th>Address</th><th>Phone</th><th>Notes</th></tr></thead>
+                  <tbody>
+                    {circuitClerks.map((clerk, index) => (
+                      <tr key={clerk.id || clerk.county}>
+                        <td>{clerk.county}</td>
+                        {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                          <>
+                            <td><input value={clerk.clerkName} onChange={(event) => updateCircuitClerkField(index, { clerkName: event.target.value })} onBlur={() => void commitCircuitClerkRow(index)} /></td>
+                            <td><textarea rows={2} value={clerk.address || ''} onChange={(event) => updateCircuitClerkField(index, { address: event.target.value })} onBlur={() => void commitCircuitClerkRow(index)} placeholder="Address (free text — multiple offices OK)" /></td>
+                            <td><input value={clerk.phone || ''} onChange={(event) => updateCircuitClerkField(index, { phone: event.target.value })} onBlur={() => void commitCircuitClerkRow(index)} /></td>
+                            <td><input value={clerk.notes || ''} onChange={(event) => updateCircuitClerkField(index, { notes: event.target.value })} onBlur={() => void commitCircuitClerkRow(index)} placeholder="Optional" /></td>
+                          </>
+                        ) : (
+                          <>
+                            <td>{clerk.clerkName}</td>
+                            <td style={{ whiteSpace: 'pre-wrap' }}>{clerk.address || '—'}</td>
+                            <td>{clerk.phone || '—'}</td>
+                            <td>{clerk.notes || '—'}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                    {circuitClerks.length === 0 && <tr><td colSpan={5} className="helper-text">No circuit clerks yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </Panel>
           )}
 

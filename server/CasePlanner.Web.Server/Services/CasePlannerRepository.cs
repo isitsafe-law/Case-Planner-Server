@@ -49,6 +49,7 @@ public sealed partial class CasePlannerRepository
         var templatesReseeded = await SeedChecklistTemplatesAsync(connection);
         var deadlineTemplatesReseeded = await SeedDeadlineTemplatesAsync(connection);
         await SeedStaffDirectoryAsync(connection);
+        await SeedCircuitClerksAsync(connection);
         await SeedAsync(connection, !databaseWasPresent);
         await EnsureImportSampleAsync();
         // Must run before the backfill below: it rekeys existing checklist_items to the
@@ -5944,6 +5945,171 @@ public sealed partial class CasePlannerRepository
         await tx.CommitAsync();
     }
 
+    // Circuit Clerk reference lookup - see CircuitClerkRecord for why this is architected exactly
+    // like Staff Directory above (GetAttorneysAsync/SaveAttorneyAsync/SeedStaffDirectoryAsync).
+    public async Task<List<CircuitClerkRecord>> GetCircuitClerksAsync()
+    {
+        var list = new List<CircuitClerkRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id,county,clerk_name,address,phone,notes FROM circuit_clerks ORDER BY county";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new CircuitClerkRecord
+            {
+                Id = reader.GetInt64(0),
+                County = reader.GetString(1),
+                ClerkName = reader.GetString(2),
+                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Phone = reader.IsDBNull(4) ? null : reader.GetString(4),
+                Notes = reader.IsDBNull(5) ? null : reader.GetString(5),
+            });
+        }
+        return list;
+    }
+
+    // Keyed by County (the natural, stable lookup key the Settings-panel edit endpoint - PUT
+    // /api/circuit-clerks/{county} - actually addresses), not by Id: every county row already
+    // exists from the initial seed, so an edit here is always effectively an update, but this
+    // still resolves Id from County first so a caller never has to know the row's Id up front.
+    public async Task<CircuitClerkRecord> SaveCircuitClerkAsync(CircuitClerkRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        if (model.Id == 0)
+        {
+            var lookupCmd = connection.CreateCommand(); lookupCmd.Transaction = tx;
+            lookupCmd.CommandText = "SELECT id FROM circuit_clerks WHERE county=@county";
+            lookupCmd.Parameters.AddWithValue("@county", model.County);
+            var existingId = await lookupCmd.ExecuteScalarAsync();
+            if (existingId is not null && existingId is not DBNull) model.Id = Convert.ToInt64(existingId);
+        }
+
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            cmd.CommandText = """
+                INSERT INTO circuit_clerks(county,clerk_name,address,phone,notes) VALUES(@county,@clerkName,@address,@phone,@notes);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE circuit_clerks SET county=@county,clerk_name=@clerkName,address=@address,phone=@phone,notes=@notes WHERE id=@id; SELECT @id;";
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@county", model.County);
+        cmd.Parameters.AddWithValue("@clerkName", model.ClerkName);
+        cmd.Parameters.AddWithValue("@address", DbValue(model.Address));
+        cmd.Parameters.AddWithValue("@phone", DbValue(model.Phone));
+        cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        return model;
+    });
+
+    // Seed data verbatim from arcourts.gov's official Arkansas Judiciary circuit clerks directory
+    // - see 053_circuit_clerks.sql for the SQL Server side of this same seed. Carroll County has
+    // two clerk offices (Berryville and Eureka Springs, same clerk) combined into one row with
+    // both addresses on separate lines, matching CaseDefendantRecord.Address's existing
+    // multi-address free-text convention.
+    private async Task SeedCircuitClerksAsync(SqliteConnection connection)
+    {
+        var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM circuit_clerks";
+        if (Convert.ToInt64(await countCmd.ExecuteScalarAsync()) > 0) return;
+
+        var seeds = new (string County, string ClerkName, string Address, string Phone)[]
+        {
+            ("Arkansas", "Sarah Merchant", "302 S. College, Stuttgart, 72042", "870-659-2098 ext. 1"),
+            ("Ashley", "Vickie Stell", "205 East Jefferson, #6, Hamburg, 71646", "870-853-2030"),
+            ("Baxter", "Canda Reese", "#1 East Seventh, Suite 103, Mountain Home, 72653", "870-425-3475"),
+            ("Benton", "Brenda DeShields", "102 NE \"A\" Street, Bentonville, 72712", "479-271-1015"),
+            ("Boone", "Judy Kay Harris", "100 N. Main Street, #200, Harrison, 72601", "870-741-5560 ext 1"),
+            ("Bradley", "Cindy Wagnon", "101 East Cedar, Warren, 71671", "870-226-2272"),
+            ("Calhoun", "Jeanie Smith", "P.O. Box 1175, Hampton, 71744", "870-798-2517"),
+            ("Carroll", "Sara Huffman", "210 W. Church Ave., Berryville, 72616\n44 S. Main St., Eureka Springs, 72632", "870-423-2422 (Berryville) / 479-253-8646 (Eureka Springs)"),
+            ("Chicot", "Josephine Griffin", "108 Main Street, Lake Village, 71653", "870-265-8010"),
+            ("Clark", "Brian Daniel", "401 Clay Street, Arkadelphia, 71923", "870-246-4281"),
+            ("Clay", "Angela Self", "151 S. Second Street, Piggott, 72454", "870-598-2524"),
+            ("Cleburne", "Heather Smith", "301 W. Main St, Heber Springs, 72543", "501-362-8149"),
+            ("Cleveland", "Brandy Herring", "P.O. Box 368, Rison, 71665", "870-325-6521"),
+            ("Columbia", "Lisa C. Lewis", "1 Court Square, Magnolia, 71753", "870-235-3700"),
+            ("Conway", "Darlene Massingill", "115 S. Moose Street, Morrilton, 72110", "501-354-9617"),
+            ("Craighead", "David Vaughn", "511 S. Main Street, Jonesboro, 72401", "870-933-4530"),
+            ("Crawford", "Sharon Blount-Baker", "317 Main Street, Van Buren, 72956", "479-474-1821"),
+            ("Crittenden", "Terry Hawkins", "100 Court Square, Marion, 72364", "870-739-3248"),
+            ("Cross", "Rhonda Sullivan", "705 East Union, Wynne, 72396", "870-238-5720"),
+            ("Dallas", "Dori Keeton", "Third and Oak St., Fordyce, 71742", "870-352-2307"),
+            ("Desha", "Kristin Christmas", "P.O. Box 309, Arkansas City, 71630", "870-222-0930"),
+            ("Drew", "Beverly Burks", "210 South Main, Monticello, 71655", "870-460-6250"),
+            ("Faulkner", "Nancy Eastham", "P.O. Box 9, Conway, 72034", "501-450-4911"),
+            ("Franklin", "Janice King", "P.O. Box 1112, Ozark, 72949", "479-965-7332"),
+            ("Fulton", "Vickie Bishop", "P.O. Box 219, Salem, 72576", "870-895-3310"),
+            ("Garland", "Kristie Womble-Hughes", "501 Ouachita, Suite No. 207, Hot Springs, 71901", "501-622-3630"),
+            ("Grant", "Geral Harrison", "103 W. Center, Room 106, Sheridan, 72150", "870-942-2631"),
+            ("Greene", "Lesa Gramling", "320 West Court Street, Paragould, 72450", "870-239-6330"),
+            ("Hempstead", "Gail Wolfenbarger", "200 E 3rd Street, Hope, 71801", "870-777-2384"),
+            ("Hot Spring", "Teresa Pilcher", "210 Locust Street, Malvern, 72104", "501-332-2281"),
+            ("Howard", "Angie Lewis", "421 N. Main St., Nashville, 71852", "870-845-7500 Ext. 5"),
+            ("Independence", "Greg Wallis", "P.O. Box 2155, Batesville, 72501", "870-793-8833"),
+            ("Izard", "Joe M. Cooper", "P.O. Box 95, Melbourne, 72556", "870-368-4316"),
+            ("Jackson", "Barbara Metzger-Hackney", "208 Main Street, Newport, 72112", "870-523-7423"),
+            ("Jefferson", "Flora Cook-Bishop", "101 East Barraque Street, Pine Bluff, 71601", "870-541-5306"),
+            ("Johnson", "Monica King", "P.O. Box 189, Clarksville, 72830", "479-754-2977"),
+            ("Lafayette", "Dana Phillips", "3rd & Spruce Streets, Lewisville, 71845", "870-921-4878"),
+            ("Lawrence", "Michelle Evans", "315 West Main, Walnut Ridge, 72476", "870-886-1112"),
+            ("Lee", "Millie A. Hill", "15 East Chestnut Street, Room 2, Marianna, 72360", "870-295-7710"),
+            ("Lincoln", "Cindy Glover", "300 S. Drew Street, Star City, 71667", "870-628-3154"),
+            ("Little River", "Lauren Abney", "351 North Second, Ashdown, 71822", "870-898-7280"),
+            ("Logan", "April Hice", "25 W. Walnut, Paris, 72855", "479-963-2164"),
+            ("Lonoke", "Deborah Oglesby", "P.O. Box 870, Lonoke, 72086", "501-676-2316"),
+            ("Madison", "Tiffany McDaniel", "P.O. Box 626, Huntsville, 72740", "479-738-2215"),
+            ("Marion", "Dawn Moffett", "P.O. Box 385, Yellville, 72687", "870-449-6226"),
+            ("Miller", "Penny Kilcrease", "400 Laurel Street, Room 109, Texarkana, 71854", "870-774-4501"),
+            ("Mississippi", "Leslie Mullins Mason", "206 North 2nd Street, P.O. Box 1498, Blytheville, 72315", "870-762-2332"),
+            ("Monroe", "Alice Smith", "123 Madison Street, Clarendon, 72029", "870-747-3615"),
+            ("Montgomery", "Regina Powell", "105 Highway 270 E. #10, Mount Ida, 71957", "870-867-3521"),
+            ("Nevada", "Rita Reyenga", "215 East 2nd Street South, Prescott, 71857", "870-887-2511"),
+            ("Newton", "Donnie Davis", "P.O. Box 410, Jasper, 72641", "870-446-5125"),
+            ("Ouachita", "Gladys Nettles", "145 Jefferson Street, Camden, 71701", "870-837-2230"),
+            ("Perry", "Renee Rainey", "P.O. Box 358, Perryville, 72126", "501-889-5126"),
+            ("Phillips", "Tameka Franklin", "620 Cherry Street, Helena, 72342", "870-338-5515"),
+            ("Pike", "Sabrina Williams", "P.O. Box 219, Murfreesboro, 71958", "870-285-2231"),
+            ("Poinsett", "Misty Russell", "401 Market Street, Harrisburg, 72432", "870-578-4420"),
+            ("Polk", "Michelle Schnell", "507 Church Avenue, Mena, 71953", "479-394-8100"),
+            ("Pope", "Rachel Oertling", "100 West Main, Russellville, 72801", "479-968-7499"),
+            ("Prairie", "Gaylon Hale", "200 Courthouse Square, Ste 104, Des Arc, 72040", "870-256-4434"),
+            ("Pulaski", "Terri Hollingsworth", "401 West Markham, Suite 100, Little Rock, 72201", "501-340-8500"),
+            ("Randolph", "Debbie Wise", "107 West Broadway, Pocahontas, 72455", "870-892-5522"),
+            ("Saline", "Myka Bono Sample", "200 North Main, Benton, 72015", "501-303-5615"),
+            ("Scott", "Brianna Freeman", "190 West First Street, Box 10, Waldron, 72958", "479-637-2642"),
+            ("Searcy", "Jeffrey Cotton", "P.O. Box 998, Marshall, 72650", "870-448-3807"),
+            ("Sebastian", "Susie Hassett", "P. O. Box 1179, Fort Smith, 72901", "479-782-1046"),
+            ("Sevier", "Kathy Smith", "115 North 3rd, DeQueen, 71832", "870-584-3055"),
+            ("Sharp", "Alisa Black", "P.O. Box 307, Ash Flat, 72513", "870-994-7361"),
+            ("St. Francis", "Alan T. Smith", "313 South Izard, Forrest City, 72335", "870-261-1715"),
+            ("Stone", "Angie Hudspeth-Wade", "107 West Main, Suite D, Mountain View, 72560", "870-269-3271"),
+            ("Union", "Cheryl Wilson", "101 N. Washington, Suite 201, El Dorado, 71730", "870-864-1940"),
+            ("Van Buren", "Debbie Gray", "273 Main Street, Suite 2, Clinton, 72031", "501-745-4140"),
+            ("Washington", "Kyle Sylvester", "280 N College Ave., #302, Fayetteville, 72701", "479-444-1538"),
+            ("White", "Sara Brown", "300 N. Spruce, Searcy, 72143", "501-279-6203"),
+            ("Woodruff", "Lori Grisham", "500 N. Third Street, Augusta, 72006", "870-347-2391"),
+            ("Yell", "Anna Ward", "P.O. Box 219, Danville, 72833", "479-495-4850"),
+        };
+
+        await using var tx = connection.BeginTransaction();
+        foreach (var (county, clerkName, address, phone) in seeds)
+        {
+            var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO circuit_clerks(county,clerk_name,address,phone) VALUES(@county,@clerkName,@address,@phone);";
+            cmd.Parameters.AddWithValue("@county", county);
+            cmd.Parameters.AddWithValue("@clerkName", clerkName);
+            cmd.Parameters.AddWithValue("@address", address);
+            cmd.Parameters.AddWithValue("@phone", phone);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();
+    }
+
     public async Task<List<WorkTemplateCandidate>> GetWorkTemplateCandidatesAsync(long caseId)
     {
         var ws = await GetCaseWorkspaceAsync(caseId) ?? throw new InvalidOperationException("Case not found.");
@@ -8581,6 +8747,14 @@ public sealed partial class CasePlannerRepository
             legal_assistant_id INTEGER NOT NULL,
             attorney_id INTEGER NOT NULL,
             PRIMARY KEY (legal_assistant_id, attorney_id)
+        );
+        CREATE TABLE IF NOT EXISTS circuit_clerks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            county TEXT NOT NULL UNIQUE,
+            clerk_name TEXT NOT NULL,
+            address TEXT,
+            phone TEXT,
+            notes TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_discovery_postures_case_id ON discovery_postures(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);

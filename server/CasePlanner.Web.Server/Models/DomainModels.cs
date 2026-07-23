@@ -997,6 +997,26 @@ public sealed class LegalAssistantRecord
     public string? LinkedUserId { get; set; }
 }
 
+// Circuit Clerk reference lookup - same architecture as Staff Directory above (AttorneyRecord /
+// LegalAssistantRecord): a fixed, independent reference table with zero auth/identity dependency,
+// seeded with real data (source: arcourts.gov's official Arkansas Judiciary circuit clerks
+// directory) so the office never has to hand-enter this per case. Not tied to cases directly -
+// cases just look a row up by their existing County string field at read time (see
+// arkansasCounties in client/src/App.tsx for the canonical county-name spellings this table's
+// County values must match). Address is deliberately kept as one free-text field rather than a
+// one-to-many sub-table - Carroll County has two clerk offices (Berryville and Eureka Springs),
+// represented as two lines in this one field - mirroring how CaseDefendantRecord.Address already
+// handles multi-address free text elsewhere in this app.
+public sealed class CircuitClerkRecord
+{
+    public long Id { get; set; }
+    public string County { get; set; } = "";
+    public string ClerkName { get; set; } = "";
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string? Notes { get; set; }
+}
+
 public sealed class WorkTemplateCandidate
 {
     public string Kind { get; set; } = "Task";

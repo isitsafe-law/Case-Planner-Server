@@ -87,6 +87,97 @@
   --brand-crimson: #C24B60;
 }
 
+/* High Contrast (Dark) — AAA-oriented accessibility theme, not a visual variant of Dark.
+   True-black background + pure-white text push every text pairing well past AA (7:1+ on
+   normal text, most far higher) and every UI/border pairing past 3:1. ok/warn/danger are
+   chosen for relative-luminance separation (danger ~0.33, ok ~0.41, warn ~0.68) in addition
+   to hue, so someone with reduced color perception has a lightness cue too, on top of this
+   app's existing dot+text rule (color is never the only signal). See design-system/MASTER.md
+   §3 for the full contrast-ratio table. */
+:root[data-theme='high-contrast'] {
+  color-scheme: dark;
+  --background: #000000;
+  --background-gradient-start: #000000;
+  --background-gradient-end: #000000;
+  --surface: #0D0D0D;
+  --surface-muted: #060606;
+  --surface-strong: #08131F;
+  --surface-subtle: #141414;
+  --text: #FFFFFF;
+  --text-muted: #CFCFCF;
+  --text-muted-strong: #E2E2E2;
+  --text-on-dark: #FFFFFF;
+  --border: #707070;
+  --border-strong: #A3A3A3;
+  --primary: #7FC0FF;
+  --primary-strong: #B3D9FF;
+  --primary-soft: #0F2A42;
+  --warning-bg: #332400;
+  --warning-border: #8A6218;
+  --warning-text: #FFD23F;
+  --success-bg: #052013;
+  --success-border: #1F7A42;
+  --success-text: #22C55E;
+  --danger-bg: #330806;
+  --danger-border: #B23A2E;
+  --danger-text: #FF6B6B;
+  --input-background: #0D0D0D;
+  --input-text: #FFFFFF;
+  --overlay: rgba(0, 0, 0, .8);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .6);
+  --row-border: #4A4A4A;
+  --table-stripe: #0D0D0D;
+  --focus: #00E5FF;
+  --appbar-bg: #000000;
+  --appbar-text: #FFFFFF;
+  --brand-crimson: #FF4D6D;
+}
+
+/* High Contrast (Light) — the same AAA-oriented treatment at the opposite polarity: pure-white
+   background + near-black text, for users who find a dark canvas harder to read. Same token set,
+   same contrast floor (7:1 normal text, 3:1 UI). ok/warn/danger text necessarily land in a similar
+   dark-luminance band here (AAA on white compresses saturated colors to ~0.07-0.10 luminance) so
+   hue is the primary separator on this polarity, same as the base Light theme — again backstopped
+   by the app's dot+text rule rather than color alone. */
+:root[data-theme='high-contrast-light'] {
+  color-scheme: light;
+  --background: #FFFFFF;
+  --background-gradient-start: #FFFFFF;
+  --background-gradient-end: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-muted: #E4E4E4;
+  --surface-strong: #0A2A46;
+  --surface-subtle: #EDEDED;
+  --text: #000000;
+  --text-muted: #3B3B3B;
+  --text-muted-strong: #242424;
+  --text-on-dark: #FFFFFF;
+  --border: #4A4A4A;
+  --border-strong: #1F1F1F;
+  --primary: #0B4A85;
+  --primary-strong: #08335C;
+  --primary-soft: #D9E9F7;
+  --warning-bg: #FFF1D6;
+  --warning-border: #8A5A00;
+  --warning-text: #7A4B00;
+  --success-bg: #DCF3E3;
+  --success-border: #166534;
+  --success-text: #0F5C2E;
+  --danger-bg: #FBE2DF;
+  --danger-border: #8C241C;
+  --danger-text: #8C241C;
+  --input-background: #FFFFFF;
+  --input-text: #000000;
+  --overlay: rgba(0, 0, 0, .7);
+  --shadow: 0 8px 24px rgba(0, 0, 0, .25);
+  --row-border: #4A4A4A;
+  --table-stripe: #EDEDED;
+  --focus: #005A9C;
+  --appbar-bg: #0A1622;
+  --appbar-text: #FFFFFF;
+  --brand-crimson: #FF4D6D;
+}
+
 * {
   box-sizing: border-box;
 }

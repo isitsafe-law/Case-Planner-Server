@@ -74,8 +74,40 @@ table cell and metric value. Uppercase only at `--text-xs` with letter-spacing. 
 --primary-soft #1B324A · --ok #5FBF8A/#16311F · --warn #E0A458/#33270F · --danger #E58278/#3A1B17 ·
 --focus #7FB4E8 · --brand-crimson #C24B60`. Elevation in dark = lighter surface, not shadow.
 
+### High Contrast — Dark (`:root[data-theme='high-contrast']`)
+
+Accessibility-mode theme, not a visual variant: pushes every pairing past AAA (7:1 normal text,
+3:1 UI) rather than the AA floor the other themes verify to.
+
+`--bg #000000 · --surface #0D0D0D · --surface-sunken #060606 · --border #707070 · --border-strong #A3A3A3 ·
+--text #FFFFFF · --text-muted #CFCFCF · --primary #7FC0FF · --primary-hover #B3D9FF · --primary-soft #0F2A42 ·
+--brand-crimson #FF4D6D (app-bar tick only, brighter than base themes for 3:1 against a black bar) ·
+--ok #22C55E/#052013 · --warn #FFD23F/#332400 · --danger #FF6B6B/#330806 · --focus #00E5FF (cyan,
+deliberately distinct from both `--primary` and `--warn` so the ring never reads as either) · `--overlay: rgba(0,0,0,.8)``.
+
+`--ok`/`--warn`/`--danger` are separated by relative luminance as well as hue (danger ≈0.33, ok ≈0.41,
+warn ≈0.68) — a real lightness cue for reduced color perception, on top of the dot+text rule below.
+
+### High Contrast — Light (`:root[data-theme='high-contrast-light']`)
+
+Same AAA floor, opposite polarity, for users who find a dark canvas harder to read. Same token set;
+built as a natural extension of the Dark high-contrast work above (same accessibility goal, other polarity),
+not a new brand direction.
+
+`--bg #FFFFFF · --surface #FFFFFF · --surface-sunken #E4E4E4 · --border #4A4A4A · --border-strong #1F1F1F ·
+--text #000000 · --text-muted #3B3B3B · --primary #0B4A85 · --primary-hover #08335C · --primary-soft #D9E9F7 ·
+--brand-crimson #FF4D6D (app bar stays a dark chrome bar even in this light theme, so the tick keeps the
+same bright value as the Dark high-contrast theme) · --ok #0F5C2E/#DCF3E3 · --warn #7A4B00/#FFF1D6 ·
+--danger #8C241C/#FBE2DF · --focus #005A9C · --overlay: rgba(0,0,0,.7)`.
+
+Note: AAA text contrast on a white ground compresses `--ok`/`--warn`/`--danger` into a narrow, similarly-dark
+luminance band (~0.07–0.10) — there isn't enough headroom on this polarity to also separate them by
+lightness the way the Dark high-contrast theme does. Hue is the primary separator here, same as base Light;
+the dot+text rule (never color alone) is what actually carries the guarantee, per the rule below.
+
 Rules: color never carries meaning alone — status = dot + text; charts get direct labels.
-Contrast: AA (4.5:1 text, 3:1 UI) verified per pairing before merge.
+Contrast: AA (4.5:1 text, 3:1 UI) verified per pairing before merge; the two High Contrast themes are
+verified to AAA (7:1 text, 3:1 UI) instead — see their computed ratios in `design-system/` review notes.
 
 ## 4. Space, shape, elevation
 

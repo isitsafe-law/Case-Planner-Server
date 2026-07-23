@@ -235,6 +235,12 @@ builder.Services.AddSingleton<ILegalAssistantStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerLegalAssistantStore>()
         : services.GetRequiredService<SqliteLegalAssistantStore>());
+builder.Services.AddSingleton<SqliteCircuitClerkStore>();
+builder.Services.AddSingleton<SqlServerCircuitClerkStore>();
+builder.Services.AddSingleton<ICircuitClerkStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerCircuitClerkStore>()
+        : services.GetRequiredService<SqliteCircuitClerkStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -557,6 +563,17 @@ app.MapPut("/api/staff-directory/legal-assistants/{id:long}", async (long id, Le
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
     model.Id = id;
     return Results.Ok(await legalAssistants.SaveAsync(model, token));
+});
+
+// Circuit Clerk reference lookup - fully seeded, so edits always target an existing county row
+// (see ICircuitClerkStore.SaveAsync); there is deliberately no separate POST/create endpoint like
+// Staff Directory's, since a new county never appears here in practice.
+app.MapGet("/api/circuit-clerks", async (ICircuitClerkStore circuitClerks, CancellationToken token) => Results.Ok(await circuitClerks.GetAsync(token)));
+app.MapPut("/api/circuit-clerks/{county}", async (string county, CircuitClerkRecord model, ICircuitClerkStore circuitClerks, HttpContext context, CancellationToken token) =>
+{
+    if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
+    model.County = county;
+    return Results.Ok(await circuitClerks.SaveAsync(model, token));
 });
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>

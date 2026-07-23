@@ -821,6 +821,30 @@ type CircuitClerkRecord = {
   phone?: string | null
   notes?: string | null
 }
+
+// County Assessor reference lookup - same shape/architecture as CircuitClerkRecord (see
+// AssessorRecord on the server), shown together with Circuit Clerk and Collector in the case
+// workspace's combined "County Officials" panel.
+type AssessorRecord = {
+  id: number
+  county: string
+  name: string
+  address?: string | null
+  phone?: string | null
+  notes?: string | null
+}
+
+// County Tax Collector reference lookup - same shape/architecture as AssessorRecord, except name
+// is genuinely nullable: Lafayette and Searcy counties have no collector name published by the
+// state source (see CollectorRecord on the server).
+type CollectorRecord = {
+  id: number
+  county: string
+  name?: string | null
+  address?: string | null
+  phone?: string | null
+  notes?: string | null
+}
 type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
 type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
 type CaseAssignmentRecord = {
@@ -2191,6 +2215,8 @@ function App() {
   const [attorneys, setAttorneys] = useState<AttorneyRecord[]>([])
   const [legalAssistants, setLegalAssistants] = useState<LegalAssistantRecord[]>([])
   const [circuitClerks, setCircuitClerks] = useState<CircuitClerkRecord[]>([])
+  const [assessors, setAssessors] = useState<AssessorRecord[]>([])
+  const [collectors, setCollectors] = useState<CollectorRecord[]>([])
   const [newAttorneyName, setNewAttorneyName] = useState('')
   const [newAttorneyTitle, setNewAttorneyTitle] = useState('')
   const [newLegalAssistantName, setNewLegalAssistantName] = useState('')
@@ -2747,7 +2773,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2768,6 +2794,8 @@ function App() {
         api<AttorneyRecord[]>('/api/staff-directory/attorneys'),
         api<LegalAssistantRecord[]>('/api/staff-directory/legal-assistants'),
         api<CircuitClerkRecord[]>('/api/circuit-clerks'),
+        api<AssessorRecord[]>('/api/assessors'),
+        api<CollectorRecord[]>('/api/collectors'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2789,6 +2817,8 @@ function App() {
       setAttorneys(attorneysData)
       setLegalAssistants(legalAssistantsData)
       setCircuitClerks(circuitClerksData)
+      setAssessors(assessorsData)
+      setCollectors(collectorsData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -2995,6 +3025,50 @@ function App() {
     const row = circuitClerks[index]
     if (!row) return
     await saveCircuitClerk(row)
+  }
+
+  // County Assessor reference lookup - same load-once-in-loadInitial, refresh-after-edit,
+  // edit-keyed-by-County shape as Circuit Clerk above.
+  async function saveAssessor(model: AssessorRecord) {
+    try {
+      setErrorMessage('')
+      await api(`/api/assessors/${encodeURIComponent(model.county)}`, { method: 'PUT', body: JSON.stringify(model) })
+      setAssessors(await api<AssessorRecord[]>('/api/assessors'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the assessor.')
+    }
+  }
+
+  function updateAssessorField(index: number, patch: Partial<AssessorRecord>) {
+    setAssessors((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  async function commitAssessorRow(index: number) {
+    const row = assessors[index]
+    if (!row) return
+    await saveAssessor(row)
+  }
+
+  // County Tax Collector reference lookup - same shape as Assessor above, except Name may be
+  // blank (Lafayette/Searcy have no published collector name).
+  async function saveCollector(model: CollectorRecord) {
+    try {
+      setErrorMessage('')
+      await api(`/api/collectors/${encodeURIComponent(model.county)}`, { method: 'PUT', body: JSON.stringify(model) })
+      setCollectors(await api<CollectorRecord[]>('/api/collectors'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the collector.')
+    }
+  }
+
+  function updateCollectorField(index: number, patch: Partial<CollectorRecord>) {
+    setCollectors((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  async function commitCollectorRow(index: number) {
+    const row = collectors[index]
+    if (!row) return
+    await saveCollector(row)
   }
 
   async function loadCaseAssignments(caseId: number) {
@@ -7413,21 +7487,81 @@ function App() {
 
         {caseTab === 'servicePublication' && (
           <div className="workspace-sections">
-            <Panel title="Circuit Clerk">
-              {(() => {
+            <Panel title="County Officials">
+              {!selectedCase.county ? (
+                <p className="helper-text">No county officials on file for this county — this case has no County set yet.</p>
+              ) : (() => {
                 const clerk = circuitClerks.find((row) => row.county === selectedCase.county)
-                if (!selectedCase.county) return <p className="helper-text">No circuit clerk on file for this county — this case has no County set yet.</p>
-                if (!clerk) return <p className="helper-text">No circuit clerk on file for {selectedCase.county} County.</p>
-                const clerkText = [`${clerk.county} County Circuit Clerk`, clerk.clerkName, clerk.address, clerk.phone].filter(Boolean).join('\n')
+                const assessor = assessors.find((row) => row.county === selectedCase.county)
+                const collector = collectors.find((row) => row.county === selectedCase.county)
+                const clerkText = clerk ? [`${clerk.county} County Circuit Clerk`, clerk.clerkName, clerk.address, clerk.phone].filter(Boolean).join('\n') : ''
+                const assessorText = assessor ? [`${assessor.county} County Assessor`, assessor.name, assessor.address, assessor.phone].filter(Boolean).join('\n') : ''
+                const collectorText = collector ? [`${collector.county} County Tax Collector`, collector.name, collector.address, collector.phone].filter(Boolean).join('\n') : ''
+                const allText = [clerkText, assessorText, collectorText].filter(Boolean).join('\n\n')
                 return (
                   <>
-                    <p><strong>{clerk.clerkName}</strong> &middot; {clerk.county} County</p>
-                    {clerk.address && <p style={{ whiteSpace: 'pre-wrap' }}>{clerk.address}</p>}
-                    {clerk.phone && <p>{clerk.phone}</p>}
-                    {clerk.notes && <p className="helper-text">{clerk.notes}</p>}
-                    <div className="button-row compact-actions top-gap-small">
-                      <Btn size="sm" onClick={() => void navigator.clipboard.writeText(clerkText)}>Copy Circuit Clerk Info</Btn>
+                    <div className="record-section">
+                      <div className="record-section-header">
+                        <h4>Circuit Clerk</h4>
+                      </div>
+                      {!clerk ? (
+                        <p className="helper-text">No circuit clerk on file for {selectedCase.county} County.</p>
+                      ) : (
+                        <>
+                          <p><strong>{clerk.clerkName}</strong> &middot; {clerk.county} County</p>
+                          {clerk.address && <p style={{ whiteSpace: 'pre-wrap' }}>{clerk.address}</p>}
+                          {clerk.phone && <p>{clerk.phone}</p>}
+                          {clerk.notes && <p className="helper-text">{clerk.notes}</p>}
+                          <div className="button-row compact-actions top-gap-small">
+                            <Btn size="sm" onClick={() => void navigator.clipboard.writeText(clerkText)}>Copy Circuit Clerk Info</Btn>
+                          </div>
+                        </>
+                      )}
                     </div>
+
+                    <div className="record-section">
+                      <div className="record-section-header">
+                        <h4>Assessor</h4>
+                      </div>
+                      {!assessor ? (
+                        <p className="helper-text">No assessor on file for {selectedCase.county} County.</p>
+                      ) : (
+                        <>
+                          <p><strong>{assessor.name}</strong> &middot; {assessor.county} County</p>
+                          {assessor.address && <p style={{ whiteSpace: 'pre-wrap' }}>{assessor.address}</p>}
+                          {assessor.phone && <p>{assessor.phone}</p>}
+                          {assessor.notes && <p className="helper-text">{assessor.notes}</p>}
+                          <div className="button-row compact-actions top-gap-small">
+                            <Btn size="sm" onClick={() => void navigator.clipboard.writeText(assessorText)}>Copy Assessor Info</Btn>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="record-section">
+                      <div className="record-section-header">
+                        <h4>Tax Collector</h4>
+                      </div>
+                      {!collector ? (
+                        <p className="helper-text">No collector on file for {selectedCase.county} County.</p>
+                      ) : (
+                        <>
+                          <p><strong>{collector.name || 'Name not published — see notes'}</strong> &middot; {collector.county} County</p>
+                          {collector.address && <p style={{ whiteSpace: 'pre-wrap' }}>{collector.address}</p>}
+                          {collector.phone && <p>{collector.phone}</p>}
+                          {collector.notes && <p className="helper-text">{collector.notes}</p>}
+                          <div className="button-row compact-actions top-gap-small">
+                            <Btn size="sm" onClick={() => void navigator.clipboard.writeText(collectorText)}>Copy Collector Info</Btn>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {(clerk || assessor || collector) && (
+                      <div className="button-row compact-actions top-gap-small">
+                        <Btn size="sm" onClick={() => void navigator.clipboard.writeText(allText)}>Copy All County Officials</Btn>
+                      </div>
+                    )}
                   </>
                 )
               })()}
@@ -11433,6 +11567,74 @@ function App() {
                       </tr>
                     ))}
                     {circuitClerks.length === 0 && <tr><td colSpan={5} className="helper-text">No circuit clerks yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'staff' && (
+            <Panel title="Assessors" className="top-gap">
+              <p className="helper-text">Reference lookup for each county's assessor, shown read-only on a case's Service &amp; Publication tab alongside Circuit Clerk and Collector. Correct here any time an election or office move changes the details.</p>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>County</th><th>Assessor Name</th><th>Address</th><th>Phone</th><th>Notes</th></tr></thead>
+                  <tbody>
+                    {assessors.map((assessor, index) => (
+                      <tr key={assessor.id || assessor.county}>
+                        <td>{assessor.county}</td>
+                        {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                          <>
+                            <td><input value={assessor.name} onChange={(event) => updateAssessorField(index, { name: event.target.value })} onBlur={() => void commitAssessorRow(index)} /></td>
+                            <td><textarea rows={2} value={assessor.address || ''} onChange={(event) => updateAssessorField(index, { address: event.target.value })} onBlur={() => void commitAssessorRow(index)} placeholder="Address (free text — multiple offices OK)" /></td>
+                            <td><input value={assessor.phone || ''} onChange={(event) => updateAssessorField(index, { phone: event.target.value })} onBlur={() => void commitAssessorRow(index)} /></td>
+                            <td><input value={assessor.notes || ''} onChange={(event) => updateAssessorField(index, { notes: event.target.value })} onBlur={() => void commitAssessorRow(index)} placeholder="Optional" /></td>
+                          </>
+                        ) : (
+                          <>
+                            <td>{assessor.name}</td>
+                            <td style={{ whiteSpace: 'pre-wrap' }}>{assessor.address || '—'}</td>
+                            <td>{assessor.phone || '—'}</td>
+                            <td>{assessor.notes || '—'}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                    {assessors.length === 0 && <tr><td colSpan={5} className="helper-text">No assessors yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'staff' && (
+            <Panel title="Collectors" className="top-gap">
+              <p className="helper-text">Reference lookup for each county's tax collector, shown read-only on a case's Service &amp; Publication tab alongside Circuit Clerk and Assessor. Correct here any time an election or office move changes the details. Lafayette and Searcy have no name on file with the state source — leave blank until confirmed with the county.</p>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>County</th><th>Collector Name</th><th>Address</th><th>Phone</th><th>Notes</th></tr></thead>
+                  <tbody>
+                    {collectors.map((collector, index) => (
+                      <tr key={collector.id || collector.county}>
+                        <td>{collector.county}</td>
+                        {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                          <>
+                            <td><input value={collector.name || ''} onChange={(event) => updateCollectorField(index, { name: event.target.value })} onBlur={() => void commitCollectorRow(index)} placeholder="Not published — leave blank" /></td>
+                            <td><textarea rows={2} value={collector.address || ''} onChange={(event) => updateCollectorField(index, { address: event.target.value })} onBlur={() => void commitCollectorRow(index)} placeholder="Address (free text — multiple offices OK)" /></td>
+                            <td><input value={collector.phone || ''} onChange={(event) => updateCollectorField(index, { phone: event.target.value })} onBlur={() => void commitCollectorRow(index)} /></td>
+                            <td><input value={collector.notes || ''} onChange={(event) => updateCollectorField(index, { notes: event.target.value })} onBlur={() => void commitCollectorRow(index)} placeholder="Optional" /></td>
+                          </>
+                        ) : (
+                          <>
+                            <td>{collector.name || '—'}</td>
+                            <td style={{ whiteSpace: 'pre-wrap' }}>{collector.address || '—'}</td>
+                            <td>{collector.phone || '—'}</td>
+                            <td>{collector.notes || '—'}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                    {collectors.length === 0 && <tr><td colSpan={5} className="helper-text">No collectors yet.</td></tr>}
                   </tbody>
                 </table>
               </div>

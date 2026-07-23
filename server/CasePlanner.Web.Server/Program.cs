@@ -241,6 +241,18 @@ builder.Services.AddSingleton<ICircuitClerkStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCircuitClerkStore>()
         : services.GetRequiredService<SqliteCircuitClerkStore>());
+builder.Services.AddSingleton<SqliteAssessorStore>();
+builder.Services.AddSingleton<SqlServerAssessorStore>();
+builder.Services.AddSingleton<IAssessorStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerAssessorStore>()
+        : services.GetRequiredService<SqliteAssessorStore>());
+builder.Services.AddSingleton<SqliteCollectorStore>();
+builder.Services.AddSingleton<SqlServerCollectorStore>();
+builder.Services.AddSingleton<ICollectorStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerCollectorStore>()
+        : services.GetRequiredService<SqliteCollectorStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -574,6 +586,24 @@ app.MapPut("/api/circuit-clerks/{county}", async (string county, CircuitClerkRec
     if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
     model.County = county;
     return Results.Ok(await circuitClerks.SaveAsync(model, token));
+});
+
+// County Assessor / County Tax Collector reference lookups - same fully-seeded, no-create-endpoint
+// shape as Circuit Clerk above; shown together with it in the case workspace's combined
+// "County Officials" panel.
+app.MapGet("/api/assessors", async (IAssessorStore assessors, CancellationToken token) => Results.Ok(await assessors.GetAsync(token)));
+app.MapPut("/api/assessors/{county}", async (string county, AssessorRecord model, IAssessorStore assessors, HttpContext context, CancellationToken token) =>
+{
+    if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
+    model.County = county;
+    return Results.Ok(await assessors.SaveAsync(model, token));
+});
+app.MapGet("/api/collectors", async (ICollectorStore collectors, CancellationToken token) => Results.Ok(await collectors.GetAsync(token)));
+app.MapPut("/api/collectors/{county}", async (string county, CollectorRecord model, ICollectorStore collectors, HttpContext context, CancellationToken token) =>
+{
+    if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
+    model.County = county;
+    return Results.Ok(await collectors.SaveAsync(model, token));
 });
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>

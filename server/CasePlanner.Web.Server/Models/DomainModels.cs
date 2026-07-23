@@ -1017,6 +1017,37 @@ public sealed class CircuitClerkRecord
     public string? Notes { get; set; }
 }
 
+// County Assessor reference lookup - same shape/architecture as CircuitClerkRecord (fixed,
+// independent reference table keyed by County, zero auth/identity dependency), shown together with
+// Circuit Clerk and Collector in the case workspace's combined "County Officials" panel. Name can
+// be blank for a county that never published one (none currently do for Assessor, unlike
+// Collector's Lafayette/Searcy gaps) - Name is still non-nullable string like ClerkName since every
+// county's seed row does have one, but Notes carries the DISCREPANCY caveat for ~28 counties where
+// dfa.arkansas.gov and portal.arkansas.gov disagree on the current officeholder.
+public sealed class AssessorRecord
+{
+    public long Id { get; set; }
+    public string County { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string? Notes { get; set; }
+}
+
+// County Tax Collector reference lookup - same shape/architecture as CircuitClerkRecord/
+// AssessorRecord. Unlike those two, Name is genuinely nullable here: Lafayette and Searcy counties
+// have no collector name published by portal.arkansas.gov (address/phone still known), so Name is
+// string? rather than a non-nullable "" default, and those two rows are seeded with Name = null.
+public sealed class CollectorRecord
+{
+    public long Id { get; set; }
+    public string County { get; set; } = "";
+    public string? Name { get; set; }
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string? Notes { get; set; }
+}
+
 public sealed class WorkTemplateCandidate
 {
     public string Kind { get; set; } = "Task";

@@ -50,6 +50,8 @@ public sealed partial class CasePlannerRepository
         var deadlineTemplatesReseeded = await SeedDeadlineTemplatesAsync(connection);
         await SeedStaffDirectoryAsync(connection);
         await SeedCircuitClerksAsync(connection);
+        await SeedAssessorsAsync(connection);
+        await SeedCollectorsAsync(connection);
         await SeedAsync(connection, !databaseWasPresent);
         await EnsureImportSampleAsync();
         // Must run before the backfill below: it rekeys existing checklist_items to the
@@ -6110,6 +6112,343 @@ public sealed partial class CasePlannerRepository
         await tx.CommitAsync();
     }
 
+    // County Assessor reference lookup - see AssessorRecord for why this is architected exactly
+    // like Circuit Clerk above (GetCircuitClerksAsync/SaveCircuitClerkAsync/SeedCircuitClerksAsync).
+    public async Task<List<AssessorRecord>> GetAssessorsAsync()
+    {
+        var list = new List<AssessorRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id,county,name,address,phone,notes FROM assessors ORDER BY county";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new AssessorRecord
+            {
+                Id = reader.GetInt64(0),
+                County = reader.GetString(1),
+                Name = reader.GetString(2),
+                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Phone = reader.IsDBNull(4) ? null : reader.GetString(4),
+                Notes = reader.IsDBNull(5) ? null : reader.GetString(5),
+            });
+        }
+        return list;
+    }
+
+    // Keyed by County (the natural, stable lookup key the Settings-panel edit endpoint - PUT
+    // /api/assessors/{county} - actually addresses), not by Id: every county row already exists
+    // from the initial seed, so an edit here is always effectively an update, but this still
+    // resolves Id from County first so a caller never has to know the row's Id up front.
+    public async Task<AssessorRecord> SaveAssessorAsync(AssessorRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        if (model.Id == 0)
+        {
+            var lookupCmd = connection.CreateCommand(); lookupCmd.Transaction = tx;
+            lookupCmd.CommandText = "SELECT id FROM assessors WHERE county=@county";
+            lookupCmd.Parameters.AddWithValue("@county", model.County);
+            var existingId = await lookupCmd.ExecuteScalarAsync();
+            if (existingId is not null && existingId is not DBNull) model.Id = Convert.ToInt64(existingId);
+        }
+
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            cmd.CommandText = """
+                INSERT INTO assessors(county,name,address,phone,notes) VALUES(@county,@name,@address,@phone,@notes);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE assessors SET county=@county,name=@name,address=@address,phone=@phone,notes=@notes WHERE id=@id; SELECT @id;";
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@county", model.County);
+        cmd.Parameters.AddWithValue("@name", model.Name);
+        cmd.Parameters.AddWithValue("@address", DbValue(model.Address));
+        cmd.Parameters.AddWithValue("@phone", DbValue(model.Phone));
+        cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        return model;
+    });
+
+    // Seed data verbatim from dfa.arkansas.gov's Assessment Coordination Division directory
+    // (primary name/phone/address), cross-checked with portal.arkansas.gov county pages for
+    // additional office locations - see 054_assessors.sql for the SQL Server side of this same
+    // seed. Roughly 28 counties have a documented naming discrepancy between the two sources (most
+    // likely turnover/elections one source hasn't caught up on yet); the DFA name is kept here as
+    // primary and the full caveat is preserved verbatim in Notes so office staff see it rather than
+    // it being silently resolved one way. Counties with multiple office locations (e.g. Benton,
+    // Sebastian) are combined into one row with each office on its own line in Address, matching
+    // CircuitClerkRecord.Address's existing multi-address free-text convention for Carroll County.
+    private async Task SeedAssessorsAsync(SqliteConnection connection)
+    {
+        var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM assessors";
+        if (Convert.ToInt64(await countCmd.ExecuteScalarAsync()) > 0) return;
+
+        var seeds = new (string County, string Name, string Address, string Phone, string? Notes)[]
+        {
+            ("Arkansas", "Marcia Theis", "101 Court Square, DeWitt, 72042\n312 S. College, Stuttgart, 72160", "870-659-2105 / 870-673-6586", null),
+            ("Ashley", "Beth Rush", "205 E. Jefferson, Box #2, Hamburg, 71646\n209 Main Street, Crossett, 71635", "870-853-2060", null),
+            ("Baxter", "Jayme Nicholson", "6 E. 7th St., Mountain Home, 72653", "870-425-3453", null),
+            ("Benton", "Roderick Grieve", "Bentonville: 2401 SW D. Street Ste 3, Bentonville, 72712\nGravette: 901 1st Ave SE (Hwy 59) Ste C, Gravette, 72736\nRogers: 2109 W Walnut St, Rogers, 72756\nSiloam Springs: 707 Lincoln St, Siloam Springs, 72761", "479-271-1033 (DFA) / 479-271-1037 (portal)", null),
+            ("Boone", "Brandi Diffey", "P.O. Box 2425, Harrison, 72602\n220 N Arbor Drive, Harrison, 72601", "870-741-3783", null),
+            ("Bradley", "Stephanie Bigham", "101 E. Cedar, Ste. 107/8, Warren, 71671", "870-226-2211", "Portal spells this Bingham (same person)."),
+            ("Calhoun", "Teresa Carter", "309 Main, Hampton, 71744", "870-798-2740", "Portal lists Teresa Ables instead — verify before relying on this for a real notification"),
+            ("Carroll", "Jeannie Davidson", "108 Spring St., Berryville, 72616\n44 S. Main, Eureka Springs, 72632", "870-423-6400 (Berryville) / 870-423-2388 (Eureka Springs)", null),
+            ("Chicot", "Faye Tate", "108 Main St., Lake Village, 71653", "870-265-8025", "Portal lists Barbara Townsend instead — verify before relying on this for a real notification"),
+            ("Clark", "Mona Vance", "401 Clay St., Arkadelphia, 71923", "870-246-4431", "Portal lists Kasey Summerville instead — verify before relying on this for a real notification"),
+            ("Clay", "Tracy Gurley", "151 S. Second Ave., Piggott, 72454\n800 West Second, Corning, 72422", "870-598-3870 (Piggott) / 870-857-3133 (Corning)", null),
+            ("Cleburne", "Rachelle Miller", "301 W. Main St., Heber Springs, 72543", "501-362-8147", "Portal lists Judy Land instead — verify before relying on this for a real notification"),
+            ("Cleveland", "Barbara Reaves", "P.O. Box 391, Rison, 71665\n20 Magnolia St., Rison, 71665", "870-325-6695", "Portal spells this Reeves (same person)."),
+            ("Columbia", "Shannon Hair", "101 S. Court Square, Magnolia, 71753", "870-234-4380", "Portal lists Sandra Cawyer instead — verify before relying on this for a real notification"),
+            ("Conway", "Mark Stobaugh", "117 S. Moose St., Morrilton, 72110", "501-354-9622", null),
+            ("Craighead", "Hannah Towell", "511 S. Union St., Ste. 130, Jonesboro, 72401", "870-933-4572 (DFA) / 870-933-4570 (portal)", null),
+            ("Crawford", "Sandra Heiner", "300 Main St., Room 8, Van Buren, 72956", "479-474-1751", null),
+            ("Crittenden", "Kimberly Hollowell", "250 Pine St., Ste. 1, Marion, 72364", "870-739-3606", null),
+            ("Cross", "Sherri Williams", "705 E. Union, Room 5, Wynne, 72396", "870-238-5715", null),
+            ("Dallas", "Vanessa Pierce", "206 W. 3rd St., Fordyce, 71742", "870-352-7983", "Portal lists Donna Jones instead — verify before relying on this for a real notification"),
+            ("Desha", "Jessica Ferguson", "P.O. Box 366, Arkansas City, 71630\n604 President Street, Arkansas City, 71630", "870-222-0927", null),
+            ("Drew", "Cheri Adcock", "210 S. Main St., Monticello, 71655", "870-460-6240", null),
+            ("Faulkner", "Krissy Lewis", "806 Faulkner St., Conway, 72034", "501-450-4905 ext. 300", null),
+            ("Franklin", "Rose Mckinnon", "219 W. Main St., Ozark, 72949", "479-667-2415", "Portal lists Cathy Bennett instead — verify before relying on this for a real notification"),
+            ("Fulton", "Cari Long", "P.O. Box 586, Salem, 72576", "870-895-3592", "Portal lists Brad Schaufler instead — verify before relying on this for a real notification"),
+            ("Garland", "Shannon Sharp", "200 Woodbine, Ste. 123, Hot Springs, 71901", "501-622-3730", null),
+            ("Grant", "Kristy Pruitt", "101 N. Rose St., Room 102, Sheridan, 72150", "870-942-3711", null),
+            ("Greene", "Ashley Reynolds", "320 West Court Street, Paragould, 72450", "870-239-6303", "Portal lists Jane Wheeler Moudy instead — verify before relying on this for a real notification"),
+            ("Hempstead", "Renee Gilbert", "400 South Washington, Hope, 71802", "870-777-6190", "Portal lists Kim Smith instead — verify before relying on this for a real notification"),
+            ("Hot Spring", "Blake Riggan", "210 Locust St., Ste. 4, Malvern, 72104", "501-332-2461", null),
+            ("Howard", "Cindy Butler", "421 North Main, Nashville, 71852", "870-845-7511", "Portal lists Debbie Teague instead — verify before relying on this for a real notification"),
+            ("Independence", "Diane Tucker", "110 Broad St., Batesville, 72501", "870-793-8842", null),
+            ("Izard", "Tammy Sanders", "15 S Spring St Ste B, Melbourne, 72556\nP.O. Box 131, Melbourne, 72556", "870-368-7810", null),
+            ("Jackson", "Diann Ballard", "208 Main Street, Newport, 72112", "870-523-7410", "Portal lists Nora Gibson instead — verify before relying on this for a real notification"),
+            ("Jefferson", "Gloria Tillman", "101 E. Barraque St. #112, Pine Bluff, 71601", "870-541-5334 (DFA) / 870-541-5344 (portal)", "Portal lists Yvonne Humphrey instead — verify before relying on this for a real notification"),
+            ("Johnson", "Rusty Hardgrave", "108 S. Fulton, Clarksville, 72830\n215 West Main Street, Clarksville, 72830", "479-754-3863", "Portal lists Jill Tate instead — verify before relying on this for a real notification"),
+            ("Lafayette", "Bille Jo Pierson", "1 Courthouse Square, Lewisville, 71845", "870-921-4808", "Portal lists Becky Barnes instead — verify before relying on this for a real notification"),
+            ("Lawrence", "Becky Holder", "P.O. Box 187, Walnut Ridge, 72476\n315 West Main St., Walnut Ridge, 72476", "870-886-1135", null),
+            ("Lee", "Becky Hogan", "15 E. Chestnut St. #1, Marianna, 72360", "870-295-7750", null),
+            ("Lincoln", "Amy Harrison", "300 S. Drew St., Room 106, Star City, 71667", "870-628-4401", null),
+            ("Little River", "Allie Rosenbaum", "351 N. Second, Ste. 3, Ashdown, 71822", "870-898-7204", null),
+            ("Logan", "Shannon Tucker", "25 W. Walnut, Room 12, Paris, 72855", "479-963-2716", "Portal lists Shannon Cotton instead — verify before relying on this for a real notification"),
+            ("Lonoke", "Donna Pederson", "212 N. Center, Lonoke, 72086\n1604 S. Pine St., Suite E, Cabot, 72023", "501-676-6938", "Portal lists Jack McNally instead — verify before relying on this for a real notification"),
+            ("Madison", "Christal Ogden", "P.O. Box 334, Huntsville, 72740", "479-738-2325", "Portal lists Will Jones instead — verify before relying on this for a real notification"),
+            ("Marion", "Tonya Eppes", "P.O. Box 532, Yellville, 72687\n300 E. Old Main St., Yellville, 72687", "870-449-4113", null),
+            ("Miller", "Joyce Dennington", "400 Laurel St., Ste. 100, Texarkana, 71854", "870-774-1502", null),
+            ("Mississippi", "Brannah Bibbs", "200 West Walnut, Ste. 101, Blytheville, 72315", "870-763-6860", "Portal lists Harley Bradley instead — verify before relying on this for a real notification"),
+            ("Monroe", "Stacey Wilkerson", "123 Madison St., Clarendon, 72029", "870-747-3847", "Portal lists Renee Neal instead — verify before relying on this for a real notification"),
+            ("Montgomery", "Tammy McCarter", "105 Hwy 270 E., Ste. 8, Mount Ida, 71957", "870-867-3271", null),
+            ("Nevada", "Pam Box", "215 E. Second St. South, Ste. 106, Prescott, 71857", "870-887-3410", null),
+            ("Newton", "Stephen Willis", "P.O. Box 45, Jasper, 72641\n101 Court Street, Jasper, 72641", "870-446-2438 (DFA) / 870-446-2937 (portal)", null),
+            ("Ouachita", "Tonya McKenzie", "145 Jefferson St. SW, Camden, 71701", "870-837-2240", "Portal lists Debbie Lambert instead — verify before relying on this for a real notification"),
+            ("Perry", "Amanda Hawkins", "P.O. Box 6, Perryville, 72126\n310 West Main St. Ste. 101, Perryville, 72126", "501-889-2865", null),
+            ("Phillips", "Jerome Turner", "620 Cherry St., Ste. 100, Helena, 72342", "870-338-5535", null),
+            ("Pike", "Staci Stewart", "P.O. Box 356, Murfreesboro, 71958", "870-285-3316", "Portal lists Beckie Alden instead — verify before relying on this for a real notification"),
+            ("Poinsett", "Josh Bradley", "401 Market St., Harrisburg, 72432\nP.O. Box 543, Harrisburg, 72432", "870-578-4435 (DFA) / 870-578-0617 (portal)", null),
+            ("Polk", "Jovan Thomas", "507 Church Ave., Mena, 71953", "479-394-8121 (DFA) / 479-394-8157 (portal)", null),
+            ("Pope", "Dana Baker", "100 W. Main St., Russellville, 72801", "479-968-7418", null),
+            ("Prairie", "Karan Skarda", "200 Courthouse Square, Des Arc, 72040", "870-256-4692", "Portal lists Jeannie Lott instead — verify before relying on this for a real notification"),
+            ("Pulaski", "Janet Troutman-Ward", "201 S. Broadway, Ste. 310, Little Rock, 72201", "501-340-6170", null),
+            ("Randolph", "Krissy Massey", "107 W. Broadway St., Ste. I, Pocahontas, 72455", "870-892-3200", "Portal lists Stacy M. Ingram instead — verify before relying on this for a real notification"),
+            ("Saline", "Bob Ramsey", "215 N. Main, Ste. 7, Benton, 72015", "501-303-5622/5623", null),
+            ("Scott", "Kendall Fowler", "190 W. 1st St., Box 12, Waldron, 72958", "479-637-2666", "Portal lists Terri Churchill instead — verify before relying on this for a real notification"),
+            ("Searcy", "Randy Crumley", "P.O. Box 1335, Marshall, 72650\n200 North Highway 27, Marshall, 72650", "870-448-2464", "Portal.arkansas.gov did not list an assessor name for this county — DFA name used, unconfirmed by a second source."),
+            ("Sebastian", "Zach Johnson", "Fort Smith: 35 South 6th St. Room 105, Fort Smith, 72901\nGreenwood: 301 E. Center, Room 113, Greenwood\nPhoenix Ave East: 6515 Phoenix Avenue, Fort Smith, 72901", "479-784-1516 (DFA) / 479-783-8948 (portal)", null),
+            ("Sevier", "Sheila Ridley", "115 N. 3rd St., Ste. 117, DeQueen, 71832", "870-584-3182", null),
+            ("Sharp", "Kathy Nix", "P.O. Box 101, Ash Flat, 72513\n718 Ash Flat Drive, Ash Flat, 72513", "870-994-7327 (DFA) / 870-994-7328 (portal)", null),
+            ("St. Francis", "Ginadell Adams", "313 S. Izard, Ste. 7, Forrest City, 72335", "870-261-1710", "Portal lists Craig Jones instead — verify before relying on this for a real notification"),
+            ("Stone", "Heather Stevens", "108 W. Washington St., Mountain View, 72560", "870-269-5521 (DFA) / 870-269-3524 (portal)", null),
+            ("Union", "Michelle Barksdale", "101 N. Washington St., Ste. 107, El Dorado, 71730", "870-864-1920", "Portal lists Vickie Deaton instead — verify before relying on this for a real notification"),
+            ("Van Buren", "Emma Smiley", "1414 Hwy 65 S., Ste. 117, Clinton, 72031", "501-745-2464", null),
+            ("Washington", "Russell Hill", "280 N. College, Ste. 250, Fayetteville, 72758", "479-444-1500 (DFA) / 479-444-1520 (portal)", "Portal lists the zip as 72701 for this address; DFA lists 72758 — likely a typo on one source, unconfirmed which."),
+            ("White", "Gail Snyder", "119 W. Arch St., Searcy, 72143", "501-279-6208 (DFA) / 501-279-6205 (portal)", null),
+            ("Woodruff", "Leslie Collins", "500 N. Third St., Augusta, 72006", "870-347-5151", null),
+            ("Yell", "Sherry Hicks", "P.O. Box 607, Danville, 72833\nMain Street office, Danville, 72833", "479-495-4857 / 479-229-2693", null),
+        };
+
+        await using var tx = connection.BeginTransaction();
+        foreach (var (county, name, address, phone, notes) in seeds)
+        {
+            var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO assessors(county,name,address,phone,notes) VALUES(@county,@name,@address,@phone,@notes);";
+            cmd.Parameters.AddWithValue("@county", county);
+            cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddWithValue("@address", address);
+            cmd.Parameters.AddWithValue("@phone", phone);
+            cmd.Parameters.AddWithValue("@notes", DbValue(notes));
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();
+    }
+
+    // County Tax Collector reference lookup - see CollectorRecord for why this is architected
+    // exactly like Circuit Clerk/Assessor above, except Name is nullable (Lafayette and Searcy have
+    // no collector name published by the source).
+    public async Task<List<CollectorRecord>> GetCollectorsAsync()
+    {
+        var list = new List<CollectorRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT id,county,name,address,phone,notes FROM collectors ORDER BY county";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new CollectorRecord
+            {
+                Id = reader.GetInt64(0),
+                County = reader.GetString(1),
+                Name = reader.IsDBNull(2) ? null : reader.GetString(2),
+                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Phone = reader.IsDBNull(4) ? null : reader.GetString(4),
+                Notes = reader.IsDBNull(5) ? null : reader.GetString(5),
+            });
+        }
+        return list;
+    }
+
+    // Keyed by County (the natural, stable lookup key the Settings-panel edit endpoint - PUT
+    // /api/collectors/{county} - actually addresses), not by Id: every county row already exists
+    // from the initial seed, so an edit here is always effectively an update, but this still
+    // resolves Id from County first so a caller never has to know the row's Id up front.
+    public async Task<CollectorRecord> SaveCollectorAsync(CollectorRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        if (model.Id == 0)
+        {
+            var lookupCmd = connection.CreateCommand(); lookupCmd.Transaction = tx;
+            lookupCmd.CommandText = "SELECT id FROM collectors WHERE county=@county";
+            lookupCmd.Parameters.AddWithValue("@county", model.County);
+            var existingId = await lookupCmd.ExecuteScalarAsync();
+            if (existingId is not null && existingId is not DBNull) model.Id = Convert.ToInt64(existingId);
+        }
+
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            cmd.CommandText = """
+                INSERT INTO collectors(county,name,address,phone,notes) VALUES(@county,@name,@address,@phone,@notes);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE collectors SET county=@county,name=@name,address=@address,phone=@phone,notes=@notes WHERE id=@id; SELECT @id;";
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@county", model.County);
+        cmd.Parameters.AddWithValue("@name", DbValue(model.Name));
+        cmd.Parameters.AddWithValue("@address", DbValue(model.Address));
+        cmd.Parameters.AddWithValue("@phone", DbValue(model.Phone));
+        cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        return model;
+    });
+
+    // Seed data verbatim from portal.arkansas.gov county pages - no independent state-level
+    // collector directory exists, so this is the sole source (see 055_collectors.sql for the SQL
+    // Server side of this same seed). Lafayette and Searcy have no collector name published by the
+    // source (address/phone still known) - Name is null for those two rows with a Notes caveat to
+    // verify with the county directly, rather than guessing or leaving it silently blank.
+    private async Task SeedCollectorsAsync(SqliteConnection connection)
+    {
+        var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM collectors";
+        if (Convert.ToInt64(await countCmd.ExecuteScalarAsync()) > 0) return;
+
+        var seeds = new (string County, string? Name, string Address, string Phone, string? Notes)[]
+        {
+            ("Arkansas", "Dean Mannis", "101 Court Square, DeWitt, 72042\n302 South College St, Stuttgart, 72160", "870-659-2104", null),
+            ("Ashley", "Lori Pennington", "205 E Jefferson St, Hamburg, 71646", "870-853-2050", null),
+            ("Baxter", "Teresa Smith", "8 East 7th Street, Mountain Home, 72653", "870-425-8300", null),
+            ("Benton", "Gloria Peterson", "Bentonville: 2401 SW D. Street Ste 3, Bentonville, 72712\nGravette: 901 1st Ave SE (Hwy 59) Ste C, Gravette, 72736\nRogers: 2113 W Walnut St, Rogers, 72756\nSiloam Springs: 707 Lincoln St, Siloam Springs, 72761", "479-271-1040", null),
+            ("Boone", "Amy Jenkins", "220 N Arbor Drive, Harrison, 72601", "870-741-6646", null),
+            ("Bradley", "Wilmar Adair", "101 East Cedar, Warren, 71671", "870-226-3491", null),
+            ("Calhoun", "Vernon Morris", "109 South 2nd St., Hampton, 71744", "870-798-2357", null),
+            ("Carroll", "Kay Phillips-Brown", "108 Spring St., Berryville, 72616", "870-423-2867", "No separate Eureka Springs collector office listed in the source."),
+            ("Chicot", "Gail Seamans", "108 Main St., Lake Village, 71653", "870-265-8030", null),
+            ("Clark", "Jason C. Watson", "401 Clay Street, Arkadelphia, 71923", "870-246-2211", null),
+            ("Clay", "Terry Miller", "Clay County Courthouse, 2nd St., Piggott, 72454", "870-598-2266", null),
+            ("Cleburne", "Connie Caldwell", "301 West Main Street, Heber Springs, 72543", "501-362-8145", null),
+            ("Cleveland", "Patti Wilson", "20 Magnolia St., Rison, 71665", "870-325-7254", null),
+            ("Columbia", "Rachel Waller", "P.O. Box 98, Magnolia, 71754", "870-234-4171", null),
+            ("Conway", "Norbert Gunderman, Jr.", "117 South Moose Street, Morrilton, 72110", "501-354-9600", null),
+            ("Craighead", "Wes Eddington", "511 Union Street, Suite 107, Jonesboro, 72401", "870-933-4560", null),
+            ("Crawford", "Kevin Pixley", "300 Main St. #2, Van Buren, 72956", "479-474-1111", null),
+            ("Crittenden", "Ellen Foote", "250 Pine, Ste. 2, Marion, 72364", "870-739-3141", null),
+            ("Cross", "Kristy Davis", "705 E. Union Street, Wynne, 72396", "870-238-5710", null),
+            ("Dallas", "Brenda Williams-Black", "206 West 3rd Street, Fordyce, 71742\nP.O. Box 1024, Fordyce, 71742", "870-352-5181", null),
+            ("Desha", "Lisa Hutchison", "604 President Street, Arkansas City, 71630", "870-877-2525", null),
+            ("Drew", "Tonya Loveless", "210 S Main St, Monticello, 71655", "870-460-6240", null),
+            ("Faulkner", "Sherry Koonce", "806 Faulkner Street, Conway, 72034", "501-450-4921", null),
+            ("Franklin", "Amy Harris", "P.O. Box 1267, Ozark, 72949", "479-667-4124", null),
+            ("Fulton", "Michalle Watkins", "P.O. Box 126, Salem, 72576", "870-895-2457", null),
+            ("Garland", "Rebecca Dodd-Talbert", "200 Woodbine St #108, Hot Springs, 71901", "501-622-3710", null),
+            ("Grant", "Susan Whitehead", "101 West Center, County Courthouse, Sheridan, 72150", "870-942-4315", "General county line: 870-942-2551"),
+            ("Greene", "Cindy Tracer", "320 West Court Street, Rm. 103, Paragould, 72450", "870-239-6305", null),
+            ("Hempstead", "James Singleton", "400 South Washington, Hope, 71802\nP.O. Box 549, Hope, 71802", "870-777-4103", null),
+            ("Hot Spring", "Valerie Hearn", "210 Locust St., Malvern, 72104", "501-332-5857", null),
+            ("Howard", "Bryan McJunkins", "P.O. Box 36, Nashville, 71852", "870-845-7508", null),
+            ("Independence", "Paul Albert", "110 Broad Street, Batesville, 72501", "870-793-8823", null),
+            ("Izard", "Joshua Morehead", "P.O. Box 490, Melbourne, 72556", "870-368-7247", null),
+            ("Jackson", "Kelly Walker", "208 Main Street, Newport, 72112", "870-523-7410", null),
+            ("Jefferson", "Tony Washington", "Jefferson County Courthouse, P.O. Drawer A, Pine Bluff, 71611", "870-541-5313", null),
+            ("Johnson", "Leta Willis", "P.O. Box 344, Clarksville, 72830", "479-754-3056", null),
+            ("Lafayette", null, "6 Courthouse Square, Lewisville, 71845", "870-921-4255", "Name not published by the state source — verify with the county directly"),
+            ("Lawrence", "Stephanie Harris", "315 West Main, Walnut Ridge, 72476", "870-886-1114", null),
+            ("Lee", "Ocie Banks", "15 E Chestnut St #1, Marianna, 72360", "870-295-7752", null),
+            ("Lincoln", "Melissa Bumpass", "300 South Drew St. Room 102, Star City, 71667", "870-628-5020", null),
+            ("Little River", "Bobby Walraven", "351 N 2nd Street, Suite 2, Ashdown, 71822", "870-898-7216", null),
+            ("Logan", "Brittany Porter", "25 West Walnut St, Paris, 72855", "479-963-2038", null),
+            ("Lonoke", "Therese O'Donnell", "208 N Center Street, Lonoke, 72086", "501-676-6344", null),
+            ("Madison", "DeAnna McElhaney", "P.O. Box 1288, Huntsville, 72740", "479-738-6673", null),
+            ("Marion", "Cathy Brightwell", "P.O. Box 590, Yellville, 72687\n300 E. Old Main St., Yellville, 72687", "870-449-6253", null),
+            ("Miller", "Laura Bates", "400 Laurel Street, Ste. 111, Texarkana, 71854", "870-774-1001", null),
+            ("Mississippi", "Susan McCormick", "200 West Walnut St. Room 204, Blytheville, 72315", "870-763-6841", null),
+            ("Monroe", "Steve Mitchell", "123 Madison, Clarendon, 72029", "870-747-3722", null),
+            ("Montgomery", "David E. White", "105 U.S. 270, Mt. Ida, 71957", "870-867-3271", null),
+            ("Nevada", "Danny Martin", "215 E. 2nd St. C Suite, Prescott, 71857", "870-887-3511", null),
+            ("Newton", "Nedra Daniels", "100 E Court Street, Jasper, 72641", "870-446-2378", null),
+            ("Ouachita", "David Norwood", "145 Jefferson St SW, Camden, 71701", "870-837-2260", "General county line: 870-837-2210"),
+            ("Perry", "Scott Montgomery", "310 West Main Street, Perryville, 72126", "501-889-5285", null),
+            ("Phillips", "Neal Byrd", "620 Cherry Street, Suite 102, Helena, 72342", "870-338-5580", "General county line: 870-338-5500"),
+            ("Pike", "Travis Hill", "P.O. Box 217, Murfreesboro, 71958", "870-285-3121", null),
+            ("Poinsett", "Kevin Molder", "401 Market St., Harrisburg, 72432", "870-578-4415", "General county line: 870-578-5333"),
+            ("Polk", "Scott Sawyer", "507 Church Avenue, Mena, 71953", "479-394-8110", null),
+            ("Pope", "Jennifer Haley", "100 West Main, Russellville, 72801", "479-968-7016", null),
+            ("Prairie", "Rick Hickman", "200 Courthouse Square Ste. 101, Des Arc, 72040", "870-256-4137", null),
+            ("Pulaski", "Debra Buckner", "201 S. Broadway Suite 150, Little Rock, 72201", "501-340-6040", null),
+            ("Randolph", "Jennifer Zitzelberger", "107 W Broadway St Ste H, Pocahontas, 72455", "870-892-5491", null),
+            ("Saline", "Holly Sanders", "215 North Main, Suite 3, Benton, 72015\nNW Third Street, Suite 101G, Bryant, 72202", "501-303-5620", null),
+            ("Scott", "Randy Shores", "190 West 1st St., Box 14, Waldron, 72958", "479-637-1017", null),
+            ("Searcy", null, "P.O. Box 812, Marshall, 72650\n106 W. Nome Street, Marshall, 72650", "870-448-5050", "Name not published by the state source — verify with the county directly"),
+            ("Sebastian", "Lora Rice", "Fort Smith: 35 South 6th, Room 112, Fort Smith, 72901\nGreenwood: 301 E. Center St. Rm 112, Greenwood\nEastside: 6515 Phoenix Ave., Fort Smith, 72901", "479-783-4163", null),
+            ("Sevier", "Robert Gentry", "115 N 3rd St., De Queen, 71832", "870-642-2127", null),
+            ("Sharp", "Michelle Daggett", "P.O. Box 480, Ash Flat, 72513", "870-994-7334", null),
+            ("St. Francis", "Bobby May", "P.O. Box 1817, Forrest City, 72336", "870-261-1794", null),
+            ("Stone", "Sue Younger", "107 W. Main Street, Mountain View, 72560", "870-269-2211", null),
+            ("Union", "Karen Scott", "101 North Washington Room 106, El Dorado, 71730", "870-864-1930", null),
+            ("Van Buren", "Laura Shannon", "1414 Hwy. 65 South, Suite 118, Clinton, 72031\nP.O. Box 359, Clinton, 72031", "501-745-8550", null),
+            ("Washington", "Angela Wood", "280 N. College, Suite 202, Fayetteville, 72701\n2250 West Sunset, Springdale, 72762\n215 South Main, Lincoln, 72744", "479-444-1526", null),
+            ("White", "Beth Dorton", "115 W Arch St, Searcy, 72143", "501-279-6206", null),
+            ("Woodruff", "Phil Reynolds", "500 N 3rd St, Augusta, 72006", "870-347-5152", null),
+            ("Yell", "Bill Gilkey", "Main Street, Danville, 72833", "479-495-4868", "General county line: 479-495-4850"),
+        };
+
+        await using var tx = connection.BeginTransaction();
+        foreach (var (county, name, address, phone, notes) in seeds)
+        {
+            var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO collectors(county,name,address,phone,notes) VALUES(@county,@name,@address,@phone,@notes);";
+            cmd.Parameters.AddWithValue("@county", county);
+            cmd.Parameters.AddWithValue("@name", DbValue(name));
+            cmd.Parameters.AddWithValue("@address", address);
+            cmd.Parameters.AddWithValue("@phone", phone);
+            cmd.Parameters.AddWithValue("@notes", DbValue(notes));
+            await cmd.ExecuteNonQueryAsync();
+        }
+        await tx.CommitAsync();
+    }
+
     public async Task<List<WorkTemplateCandidate>> GetWorkTemplateCandidatesAsync(long caseId)
     {
         var ws = await GetCaseWorkspaceAsync(caseId) ?? throw new InvalidOperationException("Case not found.");
@@ -8752,6 +9091,22 @@ public sealed partial class CasePlannerRepository
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             county TEXT NOT NULL UNIQUE,
             clerk_name TEXT NOT NULL,
+            address TEXT,
+            phone TEXT,
+            notes TEXT
+        );
+        CREATE TABLE IF NOT EXISTS assessors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            county TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            address TEXT,
+            phone TEXT,
+            notes TEXT
+        );
+        CREATE TABLE IF NOT EXISTS collectors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            county TEXT NOT NULL UNIQUE,
+            name TEXT,
             address TEXT,
             phone TEXT,
             notes TEXT

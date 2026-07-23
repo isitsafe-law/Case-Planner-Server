@@ -13,24 +13,39 @@ export type CloseCaseDetails = {
   closedDate: string
   dispositionType: string
   finalJudgmentAmount: number
+  // Test-build feedback batch, items 2 & 3: a plain manually-entered fact, not auto-validated
+  // against the statutory attorney's-fee-shift threshold (Ark. Code Ann. Sec. 27-67-317(b), which
+  // only ever applies to a jury verdict, never a settlement) - that verification is already
+  // prompted separately by the "Post-Trial - Core" checklist template. Unlike
+  // dispositionType/finalJudgmentAmount above, neither of these is required to close the case -
+  // attorneyFeesAmount is only ever meaningful when attorneyFeesAwarded is true, and even then
+  // isn't force-required (see canSubmit below).
+  attorneyFeesAwarded: boolean
+  attorneyFeesAmount: number | null
 }
 
 export function CloseCaseDialog({
   initialClosedDate,
   initialDispositionType,
   initialFinalJudgmentAmount,
+  initialAttorneyFeesAwarded,
+  initialAttorneyFeesAmount,
   onSubmit,
   onCancel,
 }: {
   initialClosedDate: string
   initialDispositionType?: string | null
   initialFinalJudgmentAmount?: number | null
+  initialAttorneyFeesAwarded?: boolean | null
+  initialAttorneyFeesAmount?: number | null
   onSubmit: (details: CloseCaseDetails) => void
   onCancel: () => void
 }) {
   const [closedDate, setClosedDate] = useState(initialClosedDate)
   const [dispositionType, setDispositionType] = useState(initialDispositionType || '')
   const [amountText, setAmountText] = useState(initialFinalJudgmentAmount != null ? String(initialFinalJudgmentAmount) : '')
+  const [attorneyFeesAwarded, setAttorneyFeesAwarded] = useState(Boolean(initialAttorneyFeesAwarded))
+  const [feesAmountText, setFeesAmountText] = useState(initialAttorneyFeesAmount != null ? String(initialAttorneyFeesAmount) : '')
   const firstFieldRef = useRef<HTMLInputElement | null>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
 
@@ -53,6 +68,7 @@ export function CloseCaseDialog({
   }
 
   const amountValue = Number(amountText)
+  const feesAmountValue = Number(feesAmountText)
   const canSubmit = Boolean(closedDate) &&
     (dispositionTypeOptions as readonly string[]).includes(dispositionType) &&
     amountText.trim() !== '' && Number.isFinite(amountValue)
@@ -60,7 +76,13 @@ export function CloseCaseDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     if (!canSubmit) return
-    onSubmit({ closedDate, dispositionType, finalJudgmentAmount: amountValue })
+    onSubmit({
+      closedDate,
+      dispositionType,
+      finalJudgmentAmount: amountValue,
+      attorneyFeesAwarded,
+      attorneyFeesAmount: attorneyFeesAwarded && feesAmountText.trim() !== '' && Number.isFinite(feesAmountValue) ? feesAmountValue : null,
+    })
   }
 
   return (
@@ -107,6 +129,27 @@ export function CloseCaseDialog({
               required
             />
           </label>
+          <label className="toggle-inline">
+            <span>Attorney's Fees Awarded?</span>
+            <input
+              type="checkbox"
+              checked={attorneyFeesAwarded}
+              onChange={(event) => setAttorneyFeesAwarded(event.target.checked)}
+            />
+          </label>
+          {attorneyFeesAwarded && (
+            <label>
+              <span>Attorney's Fees Amount</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={feesAmountText}
+                onChange={(event) => setFeesAmountText(event.target.value)}
+                placeholder="0.00"
+              />
+            </label>
+          )}
           <div className="ui-confirm-actions">
             <button type="button" className="ui-btn ui-btn-secondary" onClick={onCancel}>Cancel</button>
             <button type="submit" className="ui-btn ui-btn-primary" disabled={!canSubmit}>Mark Closed</button>

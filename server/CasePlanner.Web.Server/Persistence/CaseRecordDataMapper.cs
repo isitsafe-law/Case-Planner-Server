@@ -99,8 +99,20 @@ internal static class CaseRecordDataMapper
             // row_version (SQL Server only) shifted from ordinal 78 to 80 to make room.
             AnswerFiled = reader.FieldCount > 78 && !reader.IsDBNull(78) && Bool(reader, 78),
             AnswerFiledDate = reader.FieldCount > 79 ? Date(reader, 79) : null,
-            RowVersion = reader.FieldCount > 80 && !reader.IsDBNull(80)
-                ? Convert.ToBase64String((byte[])reader.GetValue(80))
+            // Test-build feedback batch (8 independent field/feature additions) - appended after
+            // answer_filed_date, same FieldCount-guard pattern as every block above, row_version
+            // (SQL Server only) shifted from ordinal 80 to 89 to make room for these 9 columns.
+            AttorneyFeesAwarded = reader.FieldCount > 80 && !reader.IsDBNull(80) && Bool(reader, 80),
+            AttorneyFeesAmount = reader.FieldCount > 81 ? Decimal(reader, 81) : null,
+            Judge = reader.FieldCount > 82 ? String(reader, 82) : null,
+            Division = reader.FieldCount > 83 ? String(reader, 83) : null,
+            FapNumber = reader.FieldCount > 84 ? String(reader, 84) : null,
+            ParcelNumber = reader.FieldCount > 85 ? String(reader, 85) : null,
+            CaseStyle = reader.FieldCount > 86 ? String(reader, 86) : null,
+            OpposingCounselContact = reader.FieldCount > 87 ? String(reader, 87) : null,
+            CaseFolderPath = reader.FieldCount > 88 ? String(reader, 88) : null,
+            RowVersion = reader.FieldCount > 89 && !reader.IsDBNull(89)
+                ? Convert.ToBase64String((byte[])reader.GetValue(89))
                 : null
         };
     }

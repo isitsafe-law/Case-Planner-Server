@@ -12,17 +12,23 @@ public sealed class SqlServerWorkspaceQuery(
     SqlServerChecklistStore checklist,SqlServerDiscoveryTrackingStore discovery,SqlServerCaseNoteStore notes,
     SqlServerHearingStore hearings,SqlServerPublicationEntryStore publicationEntries,
     SqlServerActivityStore activities,SqlServerDocumentExportStore documents,SqlServerIssueTagStore issueTags,
-    SqlServerOpposingAttorneyStore opposingAttorneys,SqlServerCaseLegalAssistantStore caseLegalAssistants) : IOperationalWorkspaceQuery
+    SqlServerOpposingAttorneyStore opposingAttorneys,SqlServerCaseLegalAssistantStore caseLegalAssistants,
+    SqlServerCaseDefendantStore caseDefendants) : IOperationalWorkspaceQuery
 {
     public async Task<CaseWorkspaceResponse?> GetWorkspaceAsync(long caseId,IReadOnlySet<long>? visibleCaseIds=null,CancellationToken token=default)
     {
         if(visibleCaseIds is not null&&!visibleCaseIds.Contains(caseId))return null;
         var record=(await cases.GetCasesAsync(new(IncludeClosed:true),token)).FirstOrDefault(x=>x.Id==caseId);
         if(record is null)return null;
+        var defendants=await caseDefendants.GetAsync(caseId,token);
         // GetCasesAsync above (unlike the dashboard/list path below) doesn't run attention
         // computation, so the single-case workspace fetch needs its own DefaultPostureWarning
-        // stamp - the case header badge (App.tsx) reads it straight off this record.
-        record.DefaultPostureWarning=DefaultPostureCalculator.IsLikelyDefault(record.AnswerFiled,record.ServicePerfectedDate,DateOnly.FromDateTime(DateTime.UtcNow));
+        // stamp - the case header badge (App.tsx) reads it straight off this record. Once a case
+        // has defendant rows, the derived warning is defendant-list-driven rather than keyed off
+        // the legacy single case-level AnswerFiled bool - see DefaultPostureCalculator.
+        record.DefaultPostureWarning=defendants.Count>0
+            ?DefaultPostureCalculator.IsLikelyDefault(defendants,record.ServicePerfectedDate,DateOnly.FromDateTime(DateTime.UtcNow))
+            :DefaultPostureCalculator.IsLikelyDefault(record.AnswerFiled,record.ServicePerfectedDate,DateOnly.FromDateTime(DateTime.UtcNow));
         var publication=await GetPublicationAsync(caseId,token)??new PublicationRecord{CaseId=caseId};
         var dashboard=await GetDashboardAsync(visibleCaseIds,token);
         return new()
@@ -34,6 +40,7 @@ public sealed class SqlServerWorkspaceQuery(
             DocumentExports=await documents.GetAsync(caseId,token),ServiceStatus=ServiceStatusEngine.Build(record,publication),
             OpposingAttorneys=await opposingAttorneys.GetAsync(caseId,token),
             CaseLegalAssistants=await caseLegalAssistants.GetAsync(caseId,token),
+            CaseDefendants=defendants,
             OverviewSummary=dashboard
         };
     }
@@ -51,13 +58,21 @@ public sealed class SqlServerWorkspaceQuery(
         var activity=(await activities.GetAsync(null,token)).Where(x=>Visible(x.CaseId)).GroupBy(x=>x.CaseId)
             .ToDictionary(x=>x.Key,x=>x.Max(y=>y.OccurredAt));
         var deadlineGroups=allDeadlines.GroupBy(x=>x.CaseId).ToDictionary(x=>x.Key,x=>(IReadOnlyList<DeadlineItem>)x.ToList());
+        // Batched the same way deadlineGroups is above, rather than querying case_defendants once
+        // per case - needed so the loop below can tell, per case, whether the defendant-list-
+        // driven DefaultPostureWarning rule applies or the legacy single-bool fallback does.
+        var defendantGroups=(await caseDefendants.GetAsync(null,token)).Where(x=>Visible(x.CaseId)).GroupBy(x=>x.CaseId)
+            .ToDictionary(x=>x.Key,x=>(IReadOnlyList<CaseDefendantRecord>)x.ToList());
         var today=DateOnly.FromDateTime(DateTime.UtcNow);
         foreach(var c in allCases)
         {
             var last=activity.GetValueOrDefault(c.Id)??c.UpdatedAt;
             var attention=CaseAttentionEngine.Compute(deadlineGroups.GetValueOrDefault(c.Id,[]),last,c.Status);
             c.AttentionStatus=attention.Status;c.NextDeadlineDate=attention.NextDeadlineDate;c.NextDeadlineTitle=attention.NextDeadlineTitle;c.LastActivityAt=last;
-            c.DefaultPostureWarning=DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled,c.ServicePerfectedDate,today);
+            var caseDefendantRows=defendantGroups.GetValueOrDefault(c.Id,[]);
+            c.DefaultPostureWarning=caseDefendantRows.Count>0
+                ?DefaultPostureCalculator.IsLikelyDefault(caseDefendantRows,c.ServicePerfectedDate,today)
+                :DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled,c.ServicePerfectedDate,today);
         }
         return DashboardComposer.Compose(allCases,allDeadlines,allChecklist,allDiscovery,allHearings,publications,postures);
     }

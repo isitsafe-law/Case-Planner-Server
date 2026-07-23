@@ -55,6 +55,42 @@ public sealed class CaseRecord
     // never auto-inferred.
     public bool AnswerFiled { get; set; }
     public string? AnswerFiledDate { get; set; }
+    // Test-build feedback batch, items 2 & 3: a plain manually-entered fact captured at case
+    // closing (CloseCaseDialog), alongside DispositionType/FinalJudgmentAmount above - NOT an
+    // auto-calculated/validated value. The statutory attorney's-fee-shift threshold (Ark. Code
+    // Ann. Sec. 27-67-317(b)) only ever applies to a jury verdict, never a settlement, and whether
+    // that threshold was actually met is already the subject of a manual-verification reminder in
+    // the "Post-Trial - Core" checklist template (see TemplateSeeds) - this field intentionally
+    // does not duplicate or auto-check that logic.
+    public bool AttorneyFeesAwarded { get; set; }
+    public decimal? AttorneyFeesAmount { get; set; }
+    // Test-build feedback batch, item 5: standard Arkansas circuit-court case metadata (the
+    // assigned judge and numbered division) - plain text, no dropdown/lookup (unlike
+    // District/TakingType above, this isn't a fixed enumeration).
+    public string? Judge { get; set; }
+    public string? Division { get; set; }
+    // Test-build feedback batch, item 6: additional case identifiers alongside JobNumber/Tract
+    // (which remain the primary identifier pair, untouched) - FapNumber is the Federal Aid Project
+    // number, ParcelNumber is the county assessor/collector's parcel identifier used when notifying
+    // that office about the case action.
+    public string? FapNumber { get; set; }
+    public string? ParcelNumber { get; set; }
+    // Test-build feedback batch, item 7: the full case caption (e.g. "State of Arkansas ex rel.
+    // Arkansas State Highway Commission v. John Doe, et al.") - can be long/multi-line, captured
+    // purely so it's fast to copy into documents drafted elsewhere. No document-generation
+    // merge/token coupling - this repo has no existing case-field-to-document-token mechanism to
+    // hook into, so this is scoped as a field + client-side copy affordance only.
+    public string? CaseStyle { get; set; }
+    // Test-build feedback batch, item 8: opposing counsel's phone/email/address as free text, not
+    // separate structured fields - mirrors OpposingCounsel (the older plain-string field, now
+    // superseded in the client UI by the OpposingAttorney child-table list) in staying a simple
+    // string rather than adding new structure.
+    public string? OpposingCounselContact { get; set; }
+    // Test-build feedback batch, item 9: a network (UNC) path the user pastes in, e.g.
+    // \\fileserver\share\JobNumber\Tract - read by POST /api/cases/{id}/open-folder to launch
+    // Windows Explorer via Process.Start on the same machine the app runs on (single-machine
+    // deployment model - see that endpoint's comments in Program.cs).
+    public string? CaseFolderPath { get; set; }
     public string? ServiceDeadline120 { get; set; }
     public string? ServiceDeadlineBasisDate { get; set; }
     public string? ServiceMethod { get; set; }
@@ -426,6 +462,35 @@ public sealed class CaseLegalAssistantRecord
     public long CaseId { get; set; }
     public string Name { get; set; } = "";
     public int SortOrder { get; set; }
+}
+
+// Multiple defendants (often heirs to a property) can answer at genuinely different times - one
+// attorney appearing, or an answer being filed at all, typically signals the primary landowner
+// engaging on just compensation, while a distant heir who never responds shouldn't necessarily
+// read as the whole case being in default. The prior case-level AnswerFiled/AnswerFiledDate pair
+// (a single global boolean) could not represent that. CaseDefendantRecord is a real one-to-many
+// child table (case_defendants) mirroring CaseLegalAssistantRecord/case_legal_assistants's shape,
+// with additional per-defendant fields needed to track service and answer status individually.
+// Address is deliberately kept as one free-text field rather than a nested one-to-many address
+// sub-table - a defendant occasionally has more than one address, or a mix of an address and a
+// note (e.g. "186 Carr Court, Harrison, AR 72601, and P.O. Box 21, Western Grove, AR 72685"), and
+// that is fine to represent as plain text. ServiceMethod must support "Warning Order" as a real
+// value since Unknown Heirs entries are served that way with no address - see
+// DefaultPostureCalculator.IsLikelyDefaultForDefendants, which treats a Warning-Order-only entry
+// with no address as not "actually served" for default-posture purposes.
+public sealed class CaseDefendantRecord
+{
+    public long Id { get; set; }
+    public string? RowVersion { get; set; }
+    public long CaseId { get; set; }
+    public int SortOrder { get; set; }
+    public string Name { get; set; } = "";
+    public string? Address { get; set; }
+    public string? ServiceMethod { get; set; }
+    public string? ServedDate { get; set; }
+    public bool AnswerFiled { get; set; }
+    public string? AnswerFiledDate { get; set; }
+    public string? Notes { get; set; }
 }
 
 public sealed class UpcomingWorkItemRecord
@@ -1569,6 +1634,7 @@ public sealed class CaseWorkspaceResponse
     public List<ServiceLogEntry> ServiceLogEntries { get; set; } = [];
     public List<OpposingAttorneyRecord> OpposingAttorneys { get; set; } = [];
     public List<CaseLegalAssistantRecord> CaseLegalAssistants { get; set; } = [];
+    public List<CaseDefendantRecord> CaseDefendants { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];
     public List<IssueTagRecord> AvailableIssueTags { get; set; } = [];
     public List<CaseNoteRecord> CaseNotes { get; set; } = [];

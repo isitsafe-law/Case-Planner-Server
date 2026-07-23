@@ -158,6 +158,11 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["final_judgment_amount"] = model.FinalJudgmentAmount, ["disposition_type"] = Null(model.DispositionType),
         ["taking_type"] = Null(model.TakingType), ["district"] = Null(model.District),
         ["answer_filed"] = model.AnswerFiled ? 1L : 0L, ["answer_filed_date"] = Null(model.AnswerFiledDate),
+        ["attorney_fees_awarded"] = model.AttorneyFeesAwarded ? 1L : 0L, ["attorney_fees_amount"] = model.AttorneyFeesAmount,
+        ["judge"] = Null(model.Judge), ["division"] = Null(model.Division),
+        ["fap_number"] = Null(model.FapNumber), ["parcel_number"] = Null(model.ParcelNumber),
+        ["case_style"] = Null(model.CaseStyle), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
+        ["case_folder_path"] = Null(model.CaseFolderPath),
         ["project_name"] = Null(model.ProjectName), ["tax_owed_amount"] = model.TaxOwedAmount, ["whole_property_acres"] = model.WholePropertyAcres,
         ["acquisition_acres"] = model.AcquisitionAcres, ["landowner_appraiser_name"] = Null(model.LandownerAppraiserName),
         ["additional_deposit_amount"] = model.AdditionalDepositAmount, ["additional_deposit_date"] = Null(model.AdditionalDepositDate),
@@ -231,7 +236,10 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                COALESCE(status_mapping_review, 0) AS status_mapping_review,
                date_opened, trial_end_date, property_description,
                final_judgment_amount, disposition_type, taking_type, district,
-               answer_filed, answer_filed_date, row_version
+               answer_filed, answer_filed_date,
+               attorney_fees_awarded, attorney_fees_amount, judge, division,
+               fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
+               row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0
           AND (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))

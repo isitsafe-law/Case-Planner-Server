@@ -117,6 +117,15 @@ type CaseRecord = {
   dispositionType?: string | null
   takingType?: string | null
   district?: string | null
+  attorneyFeesAwarded?: boolean
+  attorneyFeesAmount?: number | null
+  judge?: string | null
+  division?: string | null
+  fapNumber?: string | null
+  parcelNumber?: string | null
+  caseStyle?: string | null
+  opposingCounselContact?: string | null
+  caseFolderPath?: string | null
 }
 
 type DeadlineHistoryEntry = {
@@ -228,6 +237,29 @@ type CaseLegalAssistant = {
   name: string
   sortOrder?: number
   rowVersion?: string | null
+}
+
+// Multiple defendants (often heirs to a property) can answer at genuinely different times - one
+// attorney appearing, or an answer being filed at all, typically signals the primary landowner
+// engaging on just compensation, while a distant heir who never responds shouldn't necessarily
+// read as the whole case being in default. Converted the prior single case-level
+// answerFiled/answerFiledDate pair into this one-to-many child table (case_defendants), mirroring
+// CaseLegalAssistant's shape plus the extra per-defendant fields needed to track service and
+// answer status individually. The case-level fields stay intact as a dormant fallback for cases
+// with no defendant rows yet - see the "Answer Filed" quick-action block (Service & Publication
+// tab), which only shows the legacy global toggle when caseDefendants is empty.
+type CaseDefendant = {
+  id: number
+  caseId: number
+  sortOrder?: number
+  rowVersion?: string | null
+  name: string
+  address?: string | null
+  serviceMethod?: string | null
+  servedDate?: string | null
+  answerFiled?: boolean
+  answerFiledDate?: string | null
+  notes?: string | null
 }
 
 type DiscoveryItem = {
@@ -588,6 +620,7 @@ type WorkspaceResponse = {
   serviceLogEntries: ServiceLogEntry[]
   opposingAttorneys: OpposingAttorney[]
   caseLegalAssistants: CaseLegalAssistant[]
+  caseDefendants: CaseDefendant[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -1565,6 +1598,15 @@ function emptyCase(): CaseRecord {
     nextReviewDate: '',
     pipelineStage: '',
     shortPostureSummary: '',
+    attorneyFeesAwarded: false,
+    attorneyFeesAmount: null,
+    judge: '',
+    division: '',
+    fapNumber: '',
+    parcelNumber: '',
+    caseStyle: '',
+    opposingCounselContact: '',
+    caseFolderPath: '',
     createdAt: '',
     updatedAt: '',
   }
@@ -2223,6 +2265,11 @@ function App() {
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
   const [opposingAttorneys, setOpposingAttorneys] = useState<OpposingAttorney[]>([])
   const [caseLegalAssistants, setCaseLegalAssistants] = useState<CaseLegalAssistant[]>([])
+  const [caseDefendants, setCaseDefendants] = useState<CaseDefendant[]>([])
+  // Per-row version of answerFiledConfirming above - tracks which defendant row's confirm dialog
+  // is open (keyed by the row's id; unsaved rows, which have id 0, use a negative -(index+1) key
+  // instead so multiple blank draft rows can't collide on the same key).
+  const [defendantAnswerConfirmingKey, setDefendantAnswerConfirmingKey] = useState<number | null>(null)
   // Work Queue task rows span many cases at once - cache each case's assignable staff (its
   // existing Phase 1 case-assignment list) on demand rather than loading the whole office roster.
   // Test-build feedback batch (task assignment): cached per-case assignable-name lists for the
@@ -2284,10 +2331,12 @@ function App() {
     initialClosedDate: string
     initialDispositionType?: string | null
     initialFinalJudgmentAmount?: number | null
+    initialAttorneyFeesAwarded?: boolean | null
+    initialAttorneyFeesAmount?: number | null
   } | null>(null)
   const closeCaseResolverRef = useRef<((value: CloseCaseDetails | null) => void) | null>(null)
 
-  function requestCloseCaseDetails(request: { initialClosedDate: string; initialDispositionType?: string | null; initialFinalJudgmentAmount?: number | null }): Promise<CloseCaseDetails | null> {
+  function requestCloseCaseDetails(request: { initialClosedDate: string; initialDispositionType?: string | null; initialFinalJudgmentAmount?: number | null; initialAttorneyFeesAwarded?: boolean | null; initialAttorneyFeesAmount?: number | null }): Promise<CloseCaseDetails | null> {
     return new Promise((resolve) => {
       closeCaseResolverRef.current = resolve
       setCloseCaseRequest(request)
@@ -2775,6 +2824,8 @@ function App() {
       setPublicationEntryFormOpen(false)
       setOpposingAttorneys(data.opposingAttorneys ?? [])
       setCaseLegalAssistants(data.caseLegalAssistants ?? [])
+      setCaseDefendants(data.caseDefendants ?? [])
+      setDefendantAnswerConfirmingKey(null)
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -3718,6 +3769,14 @@ function App() {
       takingType: normalizeTextValue(draft.takingType),
       dispositionType: normalizeTextValue(draft.dispositionType),
       finalJudgmentAmount: draft.finalJudgmentAmount == null || Number.isNaN(draft.finalJudgmentAmount) ? null : draft.finalJudgmentAmount,
+      attorneyFeesAmount: draft.attorneyFeesAmount == null || Number.isNaN(draft.attorneyFeesAmount) ? null : draft.attorneyFeesAmount,
+      judge: normalizeTextValue(draft.judge),
+      division: normalizeTextValue(draft.division),
+      fapNumber: normalizeTextValue(draft.fapNumber),
+      parcelNumber: normalizeTextValue(draft.parcelNumber),
+      caseStyle: normalizeTextValue(draft.caseStyle),
+      opposingCounselContact: normalizeTextValue(draft.opposingCounselContact),
+      caseFolderPath: normalizeTextValue(draft.caseFolderPath),
     }
   }
 
@@ -3898,6 +3957,16 @@ function App() {
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to update answer-filed status.') }
   }
 
+  // Test-build feedback batch, item 9: launches Windows Explorer (server-side, same machine the
+  // app runs on) pointed at the case's stored network folder path. The button that calls this is
+  // only rendered when selectedCase.caseFolderPath is set, but this still guards defensively.
+  async function openCaseFolder() {
+    if (!selectedCase?.id || !selectedCase.caseFolderPath) return
+    try {
+      await api(`/api/cases/${selectedCase.id}/open-folder`, { method: 'POST' })
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to open the case folder.') }
+  }
+
   async function changeStatus(newStatus: string) {
     const record = workspace?.case
     if (!record?.id || newStatus === (record.status || 'Active')) return
@@ -3907,11 +3976,15 @@ function App() {
       let closedDate = record.closedDate
       let dispositionType = record.dispositionType
       let finalJudgmentAmount = record.finalJudgmentAmount
+      let attorneyFeesAwarded = record.attorneyFeesAwarded
+      let attorneyFeesAmount = record.attorneyFeesAmount
       if (newStatus === 'Closed') {
         const details = await requestCloseCaseDetails({
           initialClosedDate: closedDate || new Date().toISOString().slice(0, 10),
           initialDispositionType: dispositionType,
           initialFinalJudgmentAmount: finalJudgmentAmount,
+          initialAttorneyFeesAwarded: attorneyFeesAwarded,
+          initialAttorneyFeesAmount: attorneyFeesAmount,
         })
         // Cancelling the dialog must leave the case's status unchanged - bail out before the
         // status/closedDate/etc. patch below ever reaches the API.
@@ -3919,9 +3992,11 @@ function App() {
         closedDate = details.closedDate
         dispositionType = details.dispositionType
         finalJudgmentAmount = details.finalJudgmentAmount
+        attorneyFeesAwarded = details.attorneyFeesAwarded
+        attorneyFeesAmount = details.attorneyFeesAmount
       }
       if (newStatus !== 'Closed' && record.closedDate && await confirmAction({ title: 'Clear Date Closed?', message: 'The prior value remains in audit history.', confirmLabel: 'Clear date', cancelLabel: 'Keep date' })) closedDate = null
-      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify({ ...record, status: newStatus, closedDate, dispositionType, finalJudgmentAmount }) })
+      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify({ ...record, status: newStatus, closedDate, dispositionType, finalJudgmentAmount, attorneyFeesAwarded, attorneyFeesAmount }) })
       await refreshAll(record.id)
       setMessage(newStatus === 'Closed' ? 'Case marked Closed.' : 'Case reopened.')
     } catch (error) {
@@ -5544,6 +5619,72 @@ function App() {
     }
   }
 
+  // Same shape as addCaseLegalAssistantRow above - not gated on already having a caseId, so a
+  // brand-new unsaved case can still hold locally-drafted rows (id: 0).
+  function addCaseDefendantRow() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    setCaseDefendants((prev) => [...prev, { id: 0, caseId: caseId || 0, name: '', address: '', serviceMethod: '', servedDate: '', answerFiled: false, answerFiledDate: '', notes: '', sortOrder: prev.length }])
+  }
+
+  // Generic per-field updater for one defendant row - covers name/address/serviceMethod/
+  // servedDate/notes edits, mirroring changeCaseLegalAssistantName's optimistic-update-then-
+  // persist shape but generalized across CaseDefendant's several editable fields. Requires a
+  // non-blank name before persisting (same rule as legal assistants) so a half-filled blank row
+  // doesn't spam the API.
+  async function changeCaseDefendantField(index: number, patch: Partial<CaseDefendant>) {
+    setCaseDefendants((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+    const caseId = selectedCaseId ?? caseDraft.id
+    const row = caseDefendants[index]
+    if (!caseId || !row) return
+    const next = { ...row, ...patch, caseId }
+    if (!next.name.trim()) return
+    try {
+      setErrorMessage('')
+      const saved = await api<CaseDefendant>(`/api/cases/${caseId}/defendants`, { method: 'POST', body: JSON.stringify(next) })
+      setCaseDefendants((prev) => prev.map((r, i) => (i === index ? saved : r)))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save defendant.')
+    }
+  }
+
+  async function removeCaseDefendantRow(index: number) {
+    const row = caseDefendants[index]
+    if (!row) return
+    if (row.id === 0) {
+      setCaseDefendants((prev) => prev.filter((_, i) => i !== index))
+      return
+    }
+    if (!(await confirmAction({ title: 'Remove defendant?', message: `${row.name || 'This entry'} will be removed from the case.`, confirmLabel: 'Remove', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/defendants/${row.id}`, { method: 'DELETE' })
+      setCaseDefendants((prev) => prev.filter((_, i) => i !== index))
+      setMessage('Defendant removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove defendant.')
+    }
+  }
+
+  // Per-defendant version of toggleAnswerFiled - same confirm-then-stamp-today's-date shape, but
+  // scoped to one row instead of the whole case. Reverting to "not filed" intentionally leaves any
+  // previously recorded date in place, same as the case-level toggle. Refreshes the whole
+  // workspace afterward because DefaultPostureWarning (the case header badge) is now derived from
+  // this defendant list server-side once any defendant rows exist - see DefaultPostureCalculator.
+  async function toggleCaseDefendantAnswerFiled(index: number, filed: boolean) {
+    const row = caseDefendants[index]
+    const caseId = selectedCaseId ?? caseDraft.id
+    if (!row || !row.id || !caseId) return
+    try {
+      setErrorMessage('')
+      const answerFiledDate = filed ? (row.answerFiledDate || new Date().toISOString().slice(0, 10)) : row.answerFiledDate
+      await api<CaseDefendant>(`/api/cases/${caseId}/defendants`, { method: 'POST', body: JSON.stringify({ ...row, answerFiled: filed, answerFiledDate, caseId }) })
+      await refreshAll(caseId)
+      setMessage(filed ? 'Answer marked filed for defendant.' : 'Answer marked not filed for defendant.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update defendant answer-filed status.')
+    }
+  }
+
   function startNarrativeGeneration() {
     setNarrativeInputDraft(emptyRiskNarrativeInputs())
   }
@@ -5705,20 +5846,26 @@ function App() {
     const total = caseloadStatusMatrix.reduce((sum, row) => sum + row.total, 0)
     return [...caseloadStatusMatrix, { name: 'Division-wide total', counts, total }]
   }, [caseloadStatusMatrix, caseloadViewAttorney])
+  // Test-build feedback item: trial density specifically (not caseloadDeadlineDensity below, which
+  // stays 30/60/90 - the feedback was about trials only) extended to also report 120/180-day
+  // windows, since a trial 4-6 months out is still useful to see coming for staffing/prep purposes.
   const caseloadTrialDensity = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
+    const trialDensityWindows = [30, 60, 90, 120, 180]
     const perAttorney = caseloadAttorneyRows.map((row) => {
       const rowCases = caseloadCasesByRow.get(row) || []
-      const counts = { d30: 0, d60: 0, d90: 0 }
+      const counts = { d30: 0, d60: 0, d90: 0, d120: 0, d180: 0 }
       for (const record of rowCases) {
-        const matches = caseloadWindowMatches(record.trialDate, today)
+        const matches = caseloadWindowMatches(record.trialDate, today, trialDensityWindows)
         if (matches.includes(30)) counts.d30++
         if (matches.includes(60)) counts.d60++
         if (matches.includes(90)) counts.d90++
+        if (matches.includes(120)) counts.d120++
+        if (matches.includes(180)) counts.d180++
       }
       return { name: row, ...counts }
     })
-    const totals = perAttorney.reduce((sum, row) => ({ d30: sum.d30 + row.d30, d60: sum.d60 + row.d60, d90: sum.d90 + row.d90 }), { d30: 0, d60: 0, d90: 0 })
+    const totals = perAttorney.reduce((sum, row) => ({ d30: sum.d30 + row.d30, d60: sum.d60 + row.d60, d90: sum.d90 + row.d90, d120: sum.d120 + row.d120, d180: sum.d180 + row.d180 }), { d30: 0, d60: 0, d90: 0, d120: 0, d180: 0 })
     return { perAttorney, totals }
   }, [caseloadAttorneyRows, caseloadCasesByRow])
   // Deadline density: DeadlineItem has no service/discovery type distinction today, so this is a
@@ -6702,6 +6849,13 @@ function App() {
       { label: 'Funds Withdrawn Date', value: displayDate(selectedCase.fundsWithdrawnDate), important: Boolean(selectedCase.fundsWithdrawnDate) },
       { label: 'Discovery Completed?', value: selectedCase.discoveryCompleted || '', important: Boolean(selectedCase.discoveryCompleted) },
       { label: 'Updated Appraisal?', value: selectedCase.updatedAppraisal || '', important: Boolean(selectedCase.updatedAppraisal) },
+      // Captured at closing (CloseCaseDialog) but, until now, never surfaced on the case view
+      // itself - only used in Reports. important is tied to the field actually being set, since
+      // most open cases won't have any of these three yet.
+      { label: 'Disposition Type', value: selectedCase.dispositionType || '', important: Boolean(selectedCase.dispositionType) },
+      { label: 'Final Judgment / Settlement Amount', value: selectedCase.finalJudgmentAmount == null ? '' : displayCurrency(selectedCase.finalJudgmentAmount), important: Boolean(selectedCase.dispositionType) },
+      { label: "Attorney's Fees Awarded?", value: selectedCase.attorneyFeesAwarded ? 'Yes' : '', important: Boolean(selectedCase.attorneyFeesAwarded) },
+      { label: "Attorney's Fees Amount", value: selectedCase.attorneyFeesAmount == null ? '' : displayCurrency(selectedCase.attorneyFeesAmount), important: Boolean(selectedCase.attorneyFeesAwarded) },
     ]
     // Definition-list display normalization: legacy formatters emit 'Not set' / '—' for missing
     // values; the kv list renders them all as a muted em dash per the design language.
@@ -6814,6 +6968,9 @@ function App() {
                 <button onClick={() => startChecklistModal()}>Add Task</button>
                 <button onClick={() => startDiscoveryModal()}>Add Discovery Item</button>
                 {!isNewCase && <button onClick={() => { startNewCaseNote(); setCaseTab('notes'); setNoteModalOpen(true) }}>Add Note</button>}
+                {!isNewCase && selectedCase.caseFolderPath && (
+                  <button onClick={() => void openCaseFolder()}>Open Case Folder</button>
+                )}
                 {!isNewCase && (
                   <button onClick={() => void changeStatus(selectedCase.status === 'Closed' ? 'Active' : 'Closed')}>
                     {selectedCase.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
@@ -6860,6 +7017,15 @@ function App() {
               <button className="summary-pill clickable" onClick={() => setCaseTab('discovery')}><span>{discoveryPosture?.isComplete ? 'Discovery Complete' : 'Discovery follow-up'}</span><strong>{discoveryPosture?.isComplete ? '✓' : String(openDiscoveryCount)}</strong></button>
               <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next event</span><strong>{nextUpcomingEvent ? `${nextUpcomingEvent.title} · ${displayDate(nextUpcomingEvent.hearingDate)}` : '—'}</strong></button>
             </div>
+
+            {selectedCase.caseStyle && (
+              <Panel title="Case Style">
+                <p className="case-style-text" style={{ whiteSpace: 'pre-wrap' }}>{selectedCase.caseStyle}</p>
+                <div className="button-row compact-actions top-gap-small">
+                  <Btn size="sm" onClick={() => void navigator.clipboard.writeText(selectedCase.caseStyle || '')}>Copy Case Style</Btn>
+                </div>
+              </Panel>
+            )}
 
             <div className="workspace-panel-grid two-col">
               <Panel title="Next Deadlines" headerAction={<button className="link-button" onClick={() => setCaseTab('work')}>View All</button>}>
@@ -7080,19 +7246,79 @@ function App() {
                   </span>
                 )}
               </div>
-              <div className="button-row compact-actions top-gap-small">
-                <span>Answer Filed</span>
-                <span className={`pill pill-${selectedCase.answerFiled ? 'success' : 'neutral'}`}>{selectedCase.answerFiled ? `Filed ${displayDate(selectedCase.answerFiledDate)}` : 'Not Filed'}</span>
-                {selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
-                {!answerFiledConfirming ? (
-                  <button onClick={() => setAnswerFiledConfirming(true)}>{selectedCase.answerFiled ? 'Mark Not Filed…' : 'Mark Answer Filed…'}</button>
-                ) : (
-                  <span className="button-row compact-actions">
-                    <span className="helper-text">{selectedCase.answerFiled ? 'Confirm reverting this case to no answer on file?' : 'Confirm an answer or appearance has been filed for this case?'}</span>
-                    <button className="primary" onClick={() => { void toggleAnswerFiled(!selectedCase.answerFiled); setAnswerFiledConfirming(false) }}>Confirm</button>
-                    <button onClick={() => setAnswerFiledConfirming(false)}>Cancel</button>
-                  </span>
+              {caseDefendants.length === 0 && (
+                <div className="button-row compact-actions top-gap-small">
+                  <span>Answer Filed</span>
+                  <span className={`pill pill-${selectedCase.answerFiled ? 'success' : 'neutral'}`}>{selectedCase.answerFiled ? `Filed ${displayDate(selectedCase.answerFiledDate)}` : 'Not Filed'}</span>
+                  {selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
+                  {!answerFiledConfirming ? (
+                    <button onClick={() => setAnswerFiledConfirming(true)}>{selectedCase.answerFiled ? 'Mark Not Filed…' : 'Mark Answer Filed…'}</button>
+                  ) : (
+                    <span className="button-row compact-actions">
+                      <span className="helper-text">{selectedCase.answerFiled ? 'Confirm reverting this case to no answer on file?' : 'Confirm an answer or appearance has been filed for this case?'}</span>
+                      <button className="primary" onClick={() => { void toggleAnswerFiled(!selectedCase.answerFiled); setAnswerFiledConfirming(false) }}>Confirm</button>
+                      <button onClick={() => setAnswerFiledConfirming(false)}>Cancel</button>
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="top-gap-small">
+                <div className="button-row compact-actions">
+                  <span>Defendants</span>
+                  {caseDefendants.length > 0 && selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
+                </div>
+                <p className="helper-text">Track each defendant's address, service, and answer status individually — heirs often answer at genuinely different times. Once any defendant rows exist here, the case's default-posture warning above is derived from this list instead of the single global Answer Filed toggle.</p>
+                {caseDefendants.length > 0 && (
+                  <div className="table-wrap compact-table-wrap">
+                    <table className="compact-table">
+                      <thead>
+                        <tr><th>Name</th><th>Address</th><th>Service Method</th><th>Served Date</th><th>Answer Filed</th><th>Actions</th></tr>
+                      </thead>
+                      <tbody>
+                        {caseDefendants.map((row, index) => {
+                          const rowKey = row.id || -(index + 1)
+                          const knownMethod = (serviceMethods as readonly string[]).includes(row.serviceMethod || '')
+                          return (
+                            <tr key={rowKey}>
+                              <td><input value={row.name} onChange={(event) => void changeCaseDefendantField(index, { name: event.target.value })} placeholder="Defendant name" /></td>
+                              <td><textarea rows={2} value={row.address || ''} onChange={(event) => void changeCaseDefendantField(index, { address: event.target.value })} placeholder="Address (free text — multiple addresses OK)" /></td>
+                              <td>
+                                <select
+                                  value={knownMethod ? (row.serviceMethod || '') : (row.serviceMethod ? '__custom' : '')}
+                                  onChange={(event) => void changeCaseDefendantField(index, { serviceMethod: event.target.value === '__custom' ? '' : event.target.value })}
+                                >
+                                  <option value="">Select method</option>
+                                  {serviceMethods.map((method) => <option key={method} value={method}>{method}</option>)}
+                                  <option value="__custom">Custom…</option>
+                                </select>
+                                {!knownMethod && row.serviceMethod && (
+                                  <input className="top-gap-small" value={row.serviceMethod || ''} onChange={(event) => void changeCaseDefendantField(index, { serviceMethod: event.target.value })} placeholder="Custom method" />
+                                )}
+                              </td>
+                              <td><input type="date" value={row.servedDate || ''} onChange={(event) => void changeCaseDefendantField(index, { servedDate: event.target.value })} /></td>
+                              <td>
+                                <div className="button-row compact-actions">
+                                  <span className={`pill pill-${row.answerFiled ? 'success' : 'neutral'}`}>{row.answerFiled ? `Filed ${displayDate(row.answerFiledDate)}` : 'Not Filed'}</span>
+                                  {row.id !== 0 && (defendantAnswerConfirmingKey !== rowKey ? (
+                                    <button type="button" onClick={() => setDefendantAnswerConfirmingKey(rowKey)}>{row.answerFiled ? 'Mark Not Filed…' : 'Mark Filed…'}</button>
+                                  ) : (
+                                    <span className="button-row compact-actions">
+                                      <button className="primary" type="button" onClick={() => { void toggleCaseDefendantAnswerFiled(index, !row.answerFiled); setDefendantAnswerConfirmingKey(null) }}>Confirm</button>
+                                      <button type="button" onClick={() => setDefendantAnswerConfirmingKey(null)}>Cancel</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td><button type="button" onClick={() => void removeCaseDefendantRow(index)}>Remove</button></td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
+                {caseDefendants.length === 0 && <p className="helper-text top-gap-small">No defendants added.</p>}
+                <button type="button" className="top-gap-small" onClick={addCaseDefendantRow}>+ Add Defendant</button>
               </div>
               <form className="form-grid top-gap-small" onSubmit={savePublication}>
                 <label><span>First Publication Date</span><input type="date" value={publicationDraft.firstPublicationDate || ''} onChange={(event) => setPublicationDraft({ ...publicationDraft, firstPublicationDate: event.target.value })} /></label>
@@ -8690,6 +8916,8 @@ function App() {
                 </label>
                 <label><span>Job Number</span><input value={caseDraft.jobNumber} onChange={(event) => patchCaseDraft({ jobNumber: event.target.value })} placeholder="Job number" /></label>
                 <label><span>Tract</span><input value={caseDraft.tract} onChange={(event) => patchCaseDraft({ tract: event.target.value })} placeholder="Tract" /></label>
+                <label><span>FAP No.</span><input value={caseDraft.fapNumber || ''} onChange={(event) => patchCaseDraft({ fapNumber: event.target.value })} placeholder="Federal Aid Project number" /></label>
+                <label><span>Parcel No.</span><input value={caseDraft.parcelNumber || ''} onChange={(event) => patchCaseDraft({ parcelNumber: event.target.value })} placeholder="Assessor/collector parcel number" /></label>
                 <label>
                   <span>County</span>
                   <select value={caseDraft.county || ''} onChange={(event) => {
@@ -8711,6 +8939,8 @@ function App() {
                     ))}
                   </select>
                 </label>
+                <label><span>Judge</span><input value={caseDraft.judge || ''} onChange={(event) => patchCaseDraft({ judge: event.target.value })} placeholder="Assigned judge" /></label>
+                <label><span>Division</span><input value={caseDraft.division || ''} onChange={(event) => patchCaseDraft({ division: event.target.value })} placeholder="e.g. Division 3" /></label>
                 <label><span>Project Name</span><input value={caseDraft.projectName || ''} onChange={(event) => patchCaseDraft({ projectName: event.target.value })} placeholder="e.g. Highway 5 Widening" /></label>
                 <label>
                   <span>Taking Type</span>
@@ -8728,6 +8958,8 @@ function App() {
                 {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && (
                   <label><span>Current Holder</span><select value={caseDraft.currentHolder || 'Legal Assistant'} onChange={(event) => patchCaseDraft({ currentHolder: event.target.value })}><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Other</option></select></label>
                 )}
+                <label className="full-span"><span>Case Style</span><textarea value={caseDraft.caseStyle || ''} onChange={(event) => patchCaseDraft({ caseStyle: event.target.value })} placeholder="Full case caption, e.g. State of Arkansas ex rel. Arkansas State Highway Commission v. John Doe, et al." /></label>
+                <label className="full-span"><span>Case Folder Path</span><input value={caseDraft.caseFolderPath || ''} onChange={(event) => patchCaseDraft({ caseFolderPath: event.target.value })} placeholder={String.raw`\\fileserver\share\JobNumber\Tract`} /></label>
               </div>
             </section>
 
@@ -8785,6 +9017,7 @@ function App() {
                   {opposingAttorneys.length === 0 && <p className="helper-text top-gap-small">No opposing attorneys added.</p>}
                   <button type="button" className="top-gap-small" onClick={addOpposingAttorneyRow}>+ Add Opposing Attorney</button>
                 </div>
+                <label className="full-span"><span>Opposing Counsel Contact</span><textarea value={caseDraft.opposingCounselContact || ''} onChange={(event) => patchCaseDraft({ opposingCounselContact: event.target.value })} placeholder="Phone, email, and/or mailing address" /></label>
               </div>
             </section>
 
@@ -9545,7 +9778,7 @@ function App() {
 
                 {/* The seven former always-visible side panels, folded into one tabbed panel so
                     the working surface is the queue plus exactly one context view at a time. */}
-                <Panel title="Case Insight">
+                <CollapsiblePanel title="Case Insight">
                   <div className="segmented-tabs compact-segments">
                     {([
                       { key: 'docket', label: 'Docket' },
@@ -9619,7 +9852,7 @@ function App() {
                       </>
                     )}
                   </div>
-                </Panel>
+                </CollapsiblePanel>
               </div>
 
               <div className="ui-table-panel" style={{ marginTop: '1rem' }}>
@@ -9719,6 +9952,8 @@ function App() {
           initialClosedDate={closeCaseRequest.initialClosedDate}
           initialDispositionType={closeCaseRequest.initialDispositionType}
           initialFinalJudgmentAmount={closeCaseRequest.initialFinalJudgmentAmount}
+          initialAttorneyFeesAwarded={closeCaseRequest.initialAttorneyFeesAwarded}
+          initialAttorneyFeesAmount={closeCaseRequest.initialAttorneyFeesAmount}
           onSubmit={(details) => resolveCloseCaseDetails(details)}
           onCancel={() => resolveCloseCaseDetails(null)}
         />
@@ -9900,14 +10135,16 @@ function App() {
                   <MetricTile label="Next 30 days" value={caseloadTrialDensity.totals.d30} />
                   <MetricTile label="Next 60 days" value={caseloadTrialDensity.totals.d60} />
                   <MetricTile label="Next 90 days" value={caseloadTrialDensity.totals.d90} />
+                  <MetricTile label="Next 120 days" value={caseloadTrialDensity.totals.d120} />
+                  <MetricTile label="Next 180 days" value={caseloadTrialDensity.totals.d180} />
                 </div>
                 {!caseloadViewAttorney && (
                   <div className="table-wrap top-gap-small">
                     <table className="ui-table compact-table">
-                      <thead><tr><th>Attorney</th><th>Next 30</th><th>Next 60</th><th>Next 90</th></tr></thead>
+                      <thead><tr><th>Attorney</th><th>Next 30</th><th>Next 60</th><th>Next 90</th><th>Next 120</th><th>Next 180</th></tr></thead>
                       <tbody>
                         {caseloadTrialDensity.perAttorney.map((row) => (
-                          <tr key={row.name}><td>{row.name}</td><td className="ui-data">{row.d30}</td><td className="ui-data">{row.d60}</td><td className="ui-data">{row.d90}</td></tr>
+                          <tr key={row.name}><td>{row.name}</td><td className="ui-data">{row.d30}</td><td className="ui-data">{row.d60}</td><td className="ui-data">{row.d90}</td><td className="ui-data">{row.d120}</td><td className="ui-data">{row.d180}</td></tr>
                         ))}
                       </tbody>
                     </table>

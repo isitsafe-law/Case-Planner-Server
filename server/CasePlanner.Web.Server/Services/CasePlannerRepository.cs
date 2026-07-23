@@ -1016,7 +1016,9 @@ public sealed partial class CasePlannerRepository
                    COALESCE(status_mapping_review, 0) AS status_mapping_review,
                    date_opened, trial_end_date, property_description,
                    final_judgment_amount, disposition_type, taking_type, district,
-                   answer_filed, answer_filed_date
+                   answer_filed, answer_filed_date,
+                   attorney_fees_awarded, attorney_fees_amount, judge, division,
+                   fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -1062,6 +1064,13 @@ public sealed partial class CasePlannerRepository
         var deadlines = await GetDeadlinesAsync(null);
         var deadlinesByCase = deadlines.GroupBy(d => d.CaseId).ToDictionary(g => g.Key, g => (IReadOnlyList<DeadlineItem>)g.ToList());
 
+        // Batched the same way deadlinesByCase is above, rather than querying case_defendants
+        // once per case - needed so ApplyCaseAttentionAsync can tell, per case, whether the
+        // defendant-list-driven DefaultPostureWarning rule applies or the legacy single-bool
+        // fallback does (see DefaultPostureCalculator.IsLikelyDefault(IReadOnlyList<...>, ...)).
+        var defendants = await GetCaseDefendantsAsync(null);
+        var defendantsByCase = defendants.GroupBy(d => d.CaseId).ToDictionary(g => g.Key, g => (IReadOnlyList<CaseDefendantRecord>)g.ToList());
+
         var lastActivityByCase = new Dictionary<long, string>();
         await using (var connection = new SqliteConnection(ConnectionString))
         {
@@ -1105,7 +1114,9 @@ public sealed partial class CasePlannerRepository
             c.NextDeadlineDate = nextDate;
             c.NextDeadlineTitle = nextTitle;
             c.LastActivityAt = lastActivity;
-            c.DefaultPostureWarning = DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled, c.ServicePerfectedDate, today);
+            c.DefaultPostureWarning = defendantsByCase.TryGetValue(c.Id, out var caseDefendants) && caseDefendants.Count > 0
+                ? DefaultPostureCalculator.IsLikelyDefault(caseDefendants, c.ServicePerfectedDate, today)
+                : DefaultPostureCalculator.IsLikelyDefault(c.AnswerFiled, c.ServicePerfectedDate, today);
         }
     }
 
@@ -1132,6 +1143,7 @@ public sealed partial class CasePlannerRepository
             ServiceLogEntries = await GetServiceLogEntriesAsync(caseId),
             OpposingAttorneys = await GetOpposingAttorneysAsync(caseId),
             CaseLegalAssistants = await GetCaseLegalAssistantsAsync(caseId),
+            CaseDefendants = await GetCaseDefendantsAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
             CaseIssueTags = await GetCaseIssueTagsAsync(caseId),
             CaseNotes = await GetCaseNotesAsync(caseId),
@@ -1210,6 +1222,7 @@ public sealed partial class CasePlannerRepository
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
             "service-log"=>"service_log_entries","publication-entry"=>"publication_dates","discovery"=>"discovery_tracking",
             "opposing-attorney"=>"case_opposing_attorneys","legal-assistant"=>"case_legal_assistants",
+            "defendant"=>"case_defendants",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -3569,6 +3582,105 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task<List<CaseDefendantRecord>> GetCaseDefendantsAsync(long? caseId)
+    {
+        var list = new List<CaseDefendantRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, name, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order
+            FROM case_defendants
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY sort_order, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new CaseDefendantRecord
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                Name = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+                ServiceMethod = reader.IsDBNull(4) ? null : reader.GetString(4),
+                ServedDate = reader.IsDBNull(5) ? null : reader.GetString(5),
+                AnswerFiled = !reader.IsDBNull(6) && reader.GetInt64(6) == 1,
+                AnswerFiledDate = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Notes = reader.IsDBNull(8) ? null : reader.GetString(8),
+                SortOrder = reader.IsDBNull(9) ? 0 : reader.GetInt32(9)
+            });
+        }
+
+        return list;
+    }
+
+    public async Task<CaseDefendantRecord> SaveCaseDefendantAsync(CaseDefendantRecord model)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            if (model.Id == 0)
+            {
+                var nextOrderCmd = connection.CreateCommand();
+                nextOrderCmd.Transaction = tx;
+                nextOrderCmd.CommandText = "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM case_defendants WHERE case_id=@case_id";
+                nextOrderCmd.Parameters.AddWithValue("@case_id", model.CaseId);
+                model.SortOrder = Convert.ToInt32(await nextOrderCmd.ExecuteScalarAsync());
+
+                cmd.CommandText = """
+                    INSERT INTO case_defendants (case_id, name, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order, created_at, updated_at)
+                    VALUES (@case_id, @name, @address, @service_method, @served_date, @answer_filed, @answer_filed_date, @notes, @sort_order, @created_at, @updated_at);
+                    SELECT last_insert_rowid();
+                    """;
+            }
+            else
+            {
+                cmd.CommandText = """
+                    UPDATE case_defendants
+                    SET name=@name, address=@address, service_method=@service_method, served_date=@served_date,
+                        answer_filed=@answer_filed, answer_filed_date=@answer_filed_date, notes=@notes,
+                        sort_order=@sort_order, updated_at=@updated_at
+                    WHERE id=@id;
+                    SELECT @id;
+                    """;
+                cmd.Parameters.AddWithValue("@id", model.Id);
+            }
+
+            cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@name", model.Name);
+            cmd.Parameters.AddWithValue("@address", (object?)model.Address ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@service_method", (object?)model.ServiceMethod ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@served_date", (object?)model.ServedDate ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@answer_filed", model.AnswerFiled ? 1 : 0);
+            cmd.Parameters.AddWithValue("@answer_filed_date", (object?)model.AnswerFiledDate ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@notes", (object?)model.Notes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sort_order", model.SortOrder);
+            cmd.Parameters.AddWithValue("@created_at", now);
+            cmd.Parameters.AddWithValue("@updated_at", now);
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved defendant {model.Name} at {DateTime.Now:G}");
+            return model;
+        });
+    }
+
+    public async Task DeleteCaseDefendantAsync(long id)
+    {
+        await WithWriteAsync(async (connection, tx) =>
+        {
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM case_defendants WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted defendant {id} at {DateTime.Now:G}");
+            return 0;
+        });
+    }
+
     public async Task<List<IssueTagRecord>> GetIssueTagsAsync()
     {
         var list = new List<IssueTagRecord>();
@@ -5440,6 +5552,17 @@ public sealed partial class CasePlannerRepository
         // service_perfected/service_perfected_date above.
         await AddColumnIfMissingAsync(connection, "cases", "answer_filed", "INTEGER DEFAULT 0");
         await AddColumnIfMissingAsync(connection, "cases", "answer_filed_date", "TEXT");
+        // Test-build feedback batch (8 independent field/feature additions) - each new cases
+        // column follows the same AddColumnIfMissingAsync convention as every field above.
+        await AddColumnIfMissingAsync(connection, "cases", "attorney_fees_awarded", "INTEGER DEFAULT 0");
+        await AddColumnIfMissingAsync(connection, "cases", "attorney_fees_amount", "REAL");
+        await AddColumnIfMissingAsync(connection, "cases", "judge", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "division", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "fap_number", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "parcel_number", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "case_style", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel_contact", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "case_folder_path", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -7407,6 +7530,8 @@ public sealed partial class CasePlannerRepository
                     trial_end_date, property_description,
                     final_judgment_amount, disposition_type, taking_type, district,
                     answer_filed, answer_filed_date,
+                    attorney_fees_awarded, attorney_fees_amount, judge, division,
+                    fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
                     created_at, updated_at
                 ) VALUES (
                     @case_number, @case_name, @job_number, @tract, @county, @status, @stage, @track, @filing_date,
@@ -7427,6 +7552,8 @@ public sealed partial class CasePlannerRepository
                     @trial_end_date, @property_description,
                     @final_judgment_amount, @disposition_type, @taking_type, @district,
                     @answer_filed, @answer_filed_date,
+                    @attorney_fees_awarded, @attorney_fees_amount, @judge, @division,
+                    @fap_number, @parcel_number, @case_style, @opposing_counsel_contact, @case_folder_path,
                     @created_at, @updated_at
                 );
                 SELECT last_insert_rowid();
@@ -7510,6 +7637,15 @@ public sealed partial class CasePlannerRepository
                     district=@district,
                     answer_filed=@answer_filed,
                     answer_filed_date=@answer_filed_date,
+                    attorney_fees_awarded=@attorney_fees_awarded,
+                    attorney_fees_amount=@attorney_fees_amount,
+                    judge=@judge,
+                    division=@division,
+                    fap_number=@fap_number,
+                    parcel_number=@parcel_number,
+                    case_style=@case_style,
+                    opposing_counsel_contact=@opposing_counsel_contact,
+                    case_folder_path=@case_folder_path,
                     updated_at=@updated_at
                 WHERE id=@id;
                 SELECT @id;
@@ -7613,6 +7749,15 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@district", DbValue(model.District));
         cmd.Parameters.AddWithValue("@answer_filed", model.AnswerFiled ? 1 : 0);
         cmd.Parameters.AddWithValue("@answer_filed_date", DbValue(model.AnswerFiledDate));
+        cmd.Parameters.AddWithValue("@attorney_fees_awarded", model.AttorneyFeesAwarded ? 1 : 0);
+        cmd.Parameters.AddWithValue("@attorney_fees_amount", model.AttorneyFeesAmount.HasValue ? model.AttorneyFeesAmount.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@judge", DbValue(model.Judge));
+        cmd.Parameters.AddWithValue("@division", DbValue(model.Division));
+        cmd.Parameters.AddWithValue("@fap_number", DbValue(model.FapNumber));
+        cmd.Parameters.AddWithValue("@parcel_number", DbValue(model.ParcelNumber));
+        cmd.Parameters.AddWithValue("@case_style", DbValue(model.CaseStyle));
+        cmd.Parameters.AddWithValue("@opposing_counsel_contact", DbValue(model.OpposingCounselContact));
+        cmd.Parameters.AddWithValue("@case_folder_path", DbValue(model.CaseFolderPath));
         cmd.Parameters.AddWithValue("@created_at", now);
         cmd.Parameters.AddWithValue("@updated_at", now);
     }
@@ -8067,6 +8212,20 @@ public sealed partial class CasePlannerRepository
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS case_defendants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT,
+            service_method TEXT,
+            served_date TEXT,
+            answer_filed INTEGER NOT NULL DEFAULT 0,
+            answer_filed_date TEXT,
+            notes TEXT,
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT,
             updated_at TEXT

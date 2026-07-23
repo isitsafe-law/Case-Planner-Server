@@ -1,4 +1,5 @@
 using Microsoft.Extensions.FileProviders;
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
@@ -209,6 +210,12 @@ builder.Services.AddSingleton<ICaseLegalAssistantStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCaseLegalAssistantStore>()
         : services.GetRequiredService<SqliteCaseLegalAssistantStore>());
+builder.Services.AddSingleton<SqliteCaseDefendantStore>();
+builder.Services.AddSingleton<SqlServerCaseDefendantStore>();
+builder.Services.AddSingleton<ICaseDefendantStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerCaseDefendantStore>()
+        : services.GetRequiredService<SqliteCaseDefendantStore>());
 builder.Services.AddSingleton<SqliteAttorneyStore>();
 builder.Services.AddSingleton<SqlServerAttorneyStore>();
 builder.Services.AddSingleton<IAttorneyStore>(services =>
@@ -730,6 +737,25 @@ app.MapGet("/api/cases/{id:long}", async (long id,IOperationalWorkspaceQuery wor
     var result = await workspace.GetWorkspaceAsync(id,await access.GetVisibleCaseIdsAsync(token),token);
     return result is null ? Results.NotFound() : Results.Ok(result);
 });
+// Test-build feedback batch, item 9: opens the case's network folder in Windows Explorer on the
+// same machine the app runs on. This only makes sense in the current single-machine deployment
+// model (the app runs on each user's own Windows machine as a local process, so Process.Start
+// opens Explorer on that same user's desktop) - no hypothetical centrally-hosted deployment to
+// guard for here. Gated the same read-scoped way as other case-scoped read endpoints (e.g.
+// /api/cases/{id}/export-notes above). ArgumentList (not a concatenated Arguments string) avoids
+// any injection/escaping risk from the pasted UNC path.
+app.MapPost("/api/cases/{id:long}/open-folder", async (long id,IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token) =>
+{
+    if (!await access.CanReadAsync(id, token)) return Results.Forbid();
+    var result = await workspace.GetWorkspaceAsync(id, null, token);
+    if (result is null) return Results.NotFound();
+    var path = result.Case.CaseFolderPath;
+    if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "This case has no folder path set." });
+    var startInfo = new ProcessStartInfo { FileName = "explorer.exe", UseShellExecute = true };
+    startInfo.ArgumentList.Add(path);
+    Process.Start(startInfo);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/cases",async(CaseRecord model,ICaseCatalogStore cases,CaseAccessService access,CancellationToken token)=>
 {
     var allowed=model.Id==0?access.CanCreateCases:await access.CanWriteAsync(model.Id,token);
@@ -911,6 +937,18 @@ app.MapDelete("/api/legal-assistants/{id:long}", async (long id,ICaseLegalAssist
 {
     var caseId=await children.GetCaseIdAsync("legal-assistant",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
     await legalAssistants.DeleteAsync(id);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/defendants", async (long id, ICaseDefendantStore defendants) => Results.Ok(await defendants.GetAsync(id)));
+app.MapPost("/api/cases/{id:long}/defendants", async (long id, CaseDefendantRecord model,ICaseDefendantStore defendants,CaseAccessService access,CancellationToken token) =>
+{
+    model.CaseId = id;
+    return await access.CanWriteAsync(id,token)?Results.Ok(await defendants.SaveAsync(model,token)):Results.Forbid();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/defendants/{id:long}", async (long id,ICaseDefendantStore defendants,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
+{
+    var caseId=await children.GetCaseIdAsync("defendant",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
+    await defendants.DeleteAsync(id);
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/exhibits", async (long id, IExhibitStore exhibits) => Results.Ok(await exhibits.GetAsync(id)));

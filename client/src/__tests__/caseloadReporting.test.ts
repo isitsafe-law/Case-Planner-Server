@@ -94,6 +94,16 @@ describe('caseloadWindowMatches', () => {
   it('a date beyond 90 days out matches none of the windows', () => {
     expect(caseloadWindowMatches('2026-12-01', today)).toEqual([])
   })
+
+  // Trial density reporting passes an explicit [30, 60, 90, 120, 180] windowSizes array (see
+  // caseloadTrialDensity) rather than relying on the default caseloadWindowSizes - these exercise
+  // that custom-windowSizes path specifically.
+  it('accepts a custom windowSizes array with more than three windows (trial density: 30/60/90/120/180)', () => {
+    const windows = [30, 60, 90, 120, 180]
+    expect(caseloadWindowMatches('2026-11-01', today, windows)).toEqual([120, 180]) // 104 days out
+    expect(caseloadWindowMatches('2027-01-16', today, windows)).toEqual([180]) // 180 days out exactly
+    expect(caseloadWindowMatches('2027-02-01', today, windows)).toEqual([]) // beyond every window
+  })
 })
 
 describe('legalAssistantLoad', () => {

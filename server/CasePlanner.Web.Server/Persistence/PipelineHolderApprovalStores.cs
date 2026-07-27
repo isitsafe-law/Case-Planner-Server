@@ -47,18 +47,153 @@ internal static class PipelinePromotionGate
 
     // Milestone 2's analogous gate on the case-status transition itself (rather than the holder
     // handoff): a case/tract cannot leave Pipeline status - i.e. be saved with CaseStatus changing
-    // to anything else - until Chief Counsel has recorded an "Approved" decision for it. True only
-    // for a genuine forward move out of Pipeline; staying in Pipeline (or a blank/no-op newCaseStatus)
-    // is never gated here.
+    // to anything else - until the Director's real-world Declaration of Taking signature has been
+    // recorded (case_prefiling_milestones, milestone="DirectorSignatureReceived" - see
+    // EnsureFilingReady below). True only for a genuine forward move out of Pipeline; staying in
+    // Pipeline (or a blank/no-op newCaseStatus) is never gated here.
+    //
+    // Manager/Administrator Dashboard Milestone 4 correction: this check basis used to be "Chief
+    // Counsel has recorded an Approved decision in pipeline_holder_approvals" (EnsureFilingApproved,
+    // now removed) - that modeled the WRONG thing. ARDOT's actual pleadings-package/
+    // Declaration-of-Taking sign-off process happens outside this system entirely, by email; there
+    // is no in-system "Chief Counsel approves the filing" action. RequiresFilingApproval's trigger
+    // condition (previousCaseStatus=="Pipeline", newCaseStatus a genuine change away from
+    // "Pipeline") is unchanged from Milestone 2 - only what EnsureFilingReady checks has changed.
     public static bool RequiresFilingApproval(string? previousCaseStatus, string? newCaseStatus) =>
         string.Equals(previousCaseStatus, "Pipeline", StringComparison.Ordinal)
         && !string.IsNullOrWhiteSpace(newCaseStatus)
         && !string.Equals(newCaseStatus, "Pipeline", StringComparison.Ordinal);
 
-    public static void EnsureFilingApproved(string? mostRecentChiefCounselApprovalStatus)
+    // Replaces EnsureFilingApproved (Milestone 2). directorSignatureMarked comes from
+    // case_prefiling_milestones (is_marked for milestone="DirectorSignatureReceived") rather than
+    // pipeline_holder_approvals. When the Director's signature isn't yet on record, a manager (or
+    // Chief Counsel/Administrator/local-dev - see below) may still push the case forward by
+    // supplying a non-blank override reason; "Attorney" is the only resolved
+    // IApplicationActorContext.Role excluded from the override, since only a manager should be able
+    // to force this through. Deliberately a pure function - no entraOptions/HTTP-layer concerns
+    // here, just the role string and the override reason.
+    public static void EnsureFilingReady(bool directorSignatureMarked, string? actorRole, string? overrideReason)
     {
-        if (mostRecentChiefCounselApprovalStatus != "Approved")
-            throw new InvalidOperationException("Chief Counsel must approve the Complaint in Condemnation before this case can leave Pipeline status.");
+        if (directorSignatureMarked) return;
+        if (!string.IsNullOrWhiteSpace(overrideReason))
+        {
+            if (actorRole == "Attorney") throw new InvalidOperationException("Only a manager can override the Director signature requirement.");
+            return; // manager/chief counsel/admin/local-dev override, with reason - allowed
+        }
+        throw new InvalidOperationException("The Director signature milestone must be marked before this case can leave Pipeline status (or a manager must override with a reason).");
+    }
+}
+
+// Manager/Administrator Dashboard Milestone 4 correction: enforces the strict sequential order of
+// the four pre-filing milestones case_prefiling_milestones tracks. Kept in this file (rather than a
+// separate one) because PipelineHolderApprovalStores.cs is this codebase's established home for
+// pipeline-related gate logic, even though this gate is otherwise unrelated to
+// PipelinePromotionGate's holder-chain/filing-approval gates above.
+internal static class PreFilingMilestoneGate
+{
+    // Strict order: marking milestone N requires milestone N-1 to already be marked (except
+    // PleadingsPackageSent, which has no prerequisite); un-marking milestone N requires that no
+    // milestone AFTER it is currently marked.
+    public static readonly string[] Order =
+    [
+        "PleadingsPackageSent",
+        "ChiefCounselSignaturesReceived",
+        "DeclarationOfTakingSentToDirector",
+        "DirectorSignatureReceived",
+    ];
+
+    // "PleadingsPackageSent" -> "Pleadings Package Sent", etc., for readable error messages and
+    // exception text - never persisted, purely a display/message helper.
+    public static string Label(string milestone) => milestone switch
+    {
+        "PleadingsPackageSent" => "Pleadings Package Sent",
+        "ChiefCounselSignaturesReceived" => "Chief Counsel Signatures Received",
+        "DeclarationOfTakingSentToDirector" => "Declaration of Taking Sent to Director",
+        "DirectorSignatureReceived" => "Director Signature Received",
+        _ => milestone,
+    };
+
+    // currentlyMarked: the case's existing milestone rows, keyed by milestone name, true if
+    // is_marked. A milestone absent from the dictionary is treated as not marked (a case with none
+    // of the four rows yet on file passes an empty dictionary here).
+    public static void EnsureCanMark(string milestone, IReadOnlyDictionary<string, bool> currentlyMarked)
+    {
+        var index = Array.IndexOf(Order, milestone);
+        if (index < 0) throw new ArgumentException($"Milestone must be one of: {string.Join(", ", Order)}.");
+        if (currentlyMarked.TryGetValue(milestone, out var already) && already)
+            throw new InvalidOperationException($"\"{Label(milestone)}\" is already marked.");
+        if (index > 0)
+        {
+            var prerequisite = Order[index - 1];
+            if (!currentlyMarked.TryGetValue(prerequisite, out var prereqMarked) || !prereqMarked)
+                throw new InvalidOperationException($"{Label(prerequisite)} must be marked before {Label(milestone)}.");
+        }
+    }
+
+    public static void EnsureCanUnmark(string milestone, IReadOnlyDictionary<string, bool> currentlyMarked)
+    {
+        var index = Array.IndexOf(Order, milestone);
+        if (index < 0) throw new ArgumentException($"Milestone must be one of: {string.Join(", ", Order)}.");
+        if (!currentlyMarked.TryGetValue(milestone, out var already) || !already)
+            throw new InvalidOperationException($"\"{Label(milestone)}\" is not currently marked.");
+        for (var i = index + 1; i < Order.Length; i++)
+        {
+            if (currentlyMarked.TryGetValue(Order[i], out var laterMarked) && laterMarked)
+                throw new InvalidOperationException($"{Label(Order[i])} is still marked; unmark it before unmarking {Label(milestone)}.");
+        }
+    }
+
+    // Shared by CasePlannerRepository.GetPreFilingMilestoneAgingAsync (SQLite) and
+    // SqlServerPreFilingMilestoneStore.GetAgingAsync so the "furthest marked milestone" derivation
+    // lives in exactly one place. pipelineCases: every case currently in CaseStatus="Pipeline".
+    // markedAtByCase: case id -> (milestone -> MarkedAt), containing only rows where is_marked=1.
+    public static PreFilingMilestoneAgingSummary BuildAgingSummary(
+        IEnumerable<(long CaseId, string? JobNumber, string? Tract, string? CaseName)> pipelineCases,
+        IReadOnlyDictionary<long, Dictionary<string, string?>> markedAtByCase)
+    {
+        var summary = new PreFilingMilestoneAgingSummary();
+        var bucketCounts = new Dictionary<string, int> { ["None"] = 0 };
+        foreach (var m in Order) bucketCounts[m] = 0;
+        var now = DateTime.UtcNow;
+
+        foreach (var c in pipelineCases)
+        {
+            var furthest = "None";
+            string? markedAt = null;
+            if (markedAtByCase.TryGetValue(c.CaseId, out var marks))
+            {
+                for (var i = Order.Length - 1; i >= 0; i--)
+                {
+                    if (marks.TryGetValue(Order[i], out var at) && at is not null)
+                    {
+                        furthest = Order[i];
+                        markedAt = at;
+                        break;
+                    }
+                }
+            }
+
+            bucketCounts[furthest] = bucketCounts.GetValueOrDefault(furthest) + 1;
+            int? days = null;
+            if (markedAt is not null && DateTime.TryParse(markedAt, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var markedDate))
+            {
+                days = (int)(now - markedDate).TotalDays;
+            }
+
+            summary.Cases.Add(new PreFilingMilestoneAgingCase
+            {
+                CaseId = c.CaseId,
+                JobNumber = c.JobNumber,
+                Tract = c.Tract,
+                CaseName = c.CaseName,
+                FurthestMilestone = furthest,
+                DaysSinceMarked = days,
+            });
+        }
+
+        summary.Buckets = bucketCounts.Select(kv => new PreFilingMilestoneAgingBucket { Milestone = kv.Key, Count = kv.Value }).ToList();
+        return summary;
     }
 }
 

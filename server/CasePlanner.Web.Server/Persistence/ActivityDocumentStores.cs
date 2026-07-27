@@ -11,7 +11,10 @@ namespace CasePlanner.Web.Server.Persistence;
 public sealed class SqlServerActivityStore(IDatabaseConnectionFactory connections,IApplicationActorContext actor)
 {
     private static readonly HashSet<string> MeaningfulTypes=new(StringComparer.Ordinal)
-    {"ComplaintFiled","AnswerFiled","ServiceCompleted","PublicationCompleted","DiscoveryServed","DiscoveryResponsesReceived","DiscoveryResponsesReviewed","DepositionHeld","AppraisalReceived","AppraisalReviewed","NegotiationPositionChanged","SettlementAuthorityRequested","SettlementAuthorityReceived","MotionFiled","MotionDecided","MediationScheduled","MediationHeld","TrialPrepMilestoneCompleted","AttorneyStrategyDecisionRecorded","SettlementAuthorityDenied","SettlementAuthorityInfoRequested"};
+    {"ComplaintFiled","AnswerFiled","ServiceCompleted","PublicationCompleted","DiscoveryServed","DiscoveryResponsesReceived","DiscoveryResponsesReviewed","DepositionHeld","AppraisalReceived","AppraisalReviewed","NegotiationPositionChanged","SettlementAuthorityRequested","SettlementAuthorityReceived","MotionFiled","MotionDecided","MediationScheduled","MediationHeld","TrialPrepMilestoneCompleted","AttorneyStrategyDecisionRecorded","SettlementAuthorityDenied","SettlementAuthorityInfoRequested",
+    // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker and
+    // the manager-override path on the filing gate itself are meaningful case events too.
+    "PreFilingMilestoneMarked","PreFilingMilestoneUnmarked","FilingGateOverridden"};
     public async Task<List<ActivityLogEntry>> GetAsync(long? caseId, CancellationToken token = default)
     {
         var result = new List<ActivityLogEntry>();

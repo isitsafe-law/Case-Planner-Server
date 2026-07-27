@@ -236,68 +236,15 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
             service.RecordAsync(c.Id, new RecordPipelineHolderApprovalRequest { HolderRole = "Filing Staff", Status = "Approved" }));
     }
 
-    // --- Milestone 2: the Filing Approval gate on the case-status transition itself
-    // (PipelinePromotionGate.RequiresFilingApproval/EnsureFilingApproved), exercised through
-    // CasePlannerRepository.SaveCaseAsync -> SaveCaseInternalAsync. A case/tract cannot leave
-    // CaseStatus="Pipeline" until Chief Counsel has recorded an "Approved" decision for it -
-    // analogous to Task B's holder-promotion gate above, but on the case-status column itself
-    // rather than current_holder. ---
-
-    [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_BlockedWithoutAnyChiefCounselApprovalRow()
-    {
-        var c = await CreatePipelineCaseAsync();
-        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        loaded.CaseStatus = "Filed / Service Pending";
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
-        Assert.Contains("Chief Counsel", ex.Message);
-        Assert.Contains("Complaint in Condemnation", ex.Message);
-
-        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Pipeline", reloaded.CaseStatus);
-    }
-
-    [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_SucceedsOnceChiefCounselHasApproved()
-    {
-        var c = await CreatePipelineCaseAsync();
-        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
-        {
-            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Approved",
-        });
-        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        loaded.CaseStatus = "Filed / Service Pending";
-
-        await _fixture.Repository.SaveCaseAsync(loaded);
-
-        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
-    }
-
-    [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_BlockedWhenMostRecentChiefCounselRowWasReturned()
-    {
-        var c = await CreatePipelineCaseAsync();
-        // An older Approved row exists, but the most recent Chief Counsel row is Returned - the
-        // gate must key off the latest row, not "any Approved row ever" (mirrors Task B's
-        // equivalent test for the holder-promotion gate).
-        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
-        {
-            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Approved",
-        });
-        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
-        {
-            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Returned",
-        });
-        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        loaded.CaseStatus = "Filed / Service Pending";
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
-
-        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Pipeline", reloaded.CaseStatus);
-    }
+    // --- Milestone 2's Filing Approval gate on the case-status transition itself
+    // (PipelinePromotionGate.RequiresFilingApproval), exercised through
+    // CasePlannerRepository.SaveCaseAsync -> SaveCaseInternalAsync. RequiresFilingApproval's trigger
+    // condition is unchanged from Milestone 2 (still exercised by the two tests below, which don't
+    // depend on WHICH check basis blocks the save). Milestone 4 corrected what actually gates a
+    // Pipeline exit - it's no longer "Chief Counsel recorded an Approved decision in
+    // pipeline_holder_approvals" but "the Director Signature Received milestone is marked in
+    // case_prefiling_milestones" (PipelinePromotionGate.EnsureFilingReady) - see
+    // PreFilingMilestoneTests.cs for that coverage now. ---
 
     [Fact]
     public async Task SaveCaseAsync_StayingInPipeline_UnrelatedFieldEditsNeverTriggerTheGate()
@@ -353,7 +300,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
         loaded.CaseNumber = "1CV-24-777";
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
-        Assert.Contains("Chief Counsel", ex.Message);
+        Assert.Contains("Director signature", ex.Message);
 
         var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
         Assert.Equal("Pipeline", reloaded.CaseStatus);

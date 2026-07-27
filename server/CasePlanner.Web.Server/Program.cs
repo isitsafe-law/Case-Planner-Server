@@ -259,6 +259,12 @@ builder.Services.AddSingleton<ISettlementAuthorityRequestStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerSettlementAuthorityRequestStore>()
         : services.GetRequiredService<SqliteSettlementAuthorityRequestStore>());
+builder.Services.AddSingleton<SqlitePreFilingMilestoneStore>();
+builder.Services.AddSingleton<SqlServerPreFilingMilestoneStore>();
+builder.Services.AddSingleton<IPreFilingMilestoneStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerPreFilingMilestoneStore>()
+        : services.GetRequiredService<SqlitePreFilingMilestoneStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -574,6 +580,17 @@ bool IsAdministratorOrManager(HttpContext context) =>
 // authenticated user, matching circuit-clerks/pipeline-approvals) but never this action right.
 bool IsChiefCounsel(HttpContext context) =>
     context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile && profile.ManagerTier == "ChiefCounsel";
+// Manager/Administrator Dashboard Milestone 4 correction: mark/unmark rights on the pre-filing
+// milestone tracker go to "the assigned attorney, their assistant, any manager, and the Chief
+// Counsel" (verbatim from the user's spec). Deliberately grants any Manager or the Chief Counsel
+// action rights on ANY case (not just ones they're personally assigned to) - matching this
+// dashboard's whole "managers have full authority, exercised by drilling into a case" premise -
+// while access.CanWriteAsync still covers the assigned attorney/their assistant via the normal
+// per-case write-access check. Used for BOTH mark and unmark - the user did not specify a stricter
+// gate for un-marking beyond "requires a reason" (enforced separately, in
+// UnmarkPreFilingMilestoneRequest.Reason).
+async Task<bool> CanActOnPreFilingMilestone(long caseId, HttpContext context, CaseAccessService access, CancellationToken token) =>
+    IsAdministratorOrManager(context) || IsChiefCounsel(context) || await access.CanWriteAsync(caseId, token);
 app.MapGet("/api/staff-directory/attorneys", async (IAttorneyStore attorneys, CancellationToken token) => Results.Ok(await attorneys.GetAsync(token)));
 app.MapPost("/api/staff-directory/attorneys", async (AttorneyRecord model, IAttorneyStore attorneys, HttpContext context, CancellationToken token) =>
 {
@@ -651,6 +668,32 @@ app.MapPost("/api/settlement-authority-requests/{id:long}/decide", async (long i
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+
+// Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker - see
+// PreFilingMilestoneRecord's doc comment (DomainModels.cs) for the full rationale on why this
+// replaces part of Milestone 2's Filing Approval gate. Data model + write-action endpoints only -
+// no dashboard UI consumes these yet (Milestone 5's "Needs Attention" tab). GET is open to any
+// authenticated user (or unrestricted when Entra is disabled), matching circuit-clerks/
+// pipeline-approvals/settlement-authority-requests above. Mark/unmark are both gated by
+// CanActOnPreFilingMilestone (see its doc comment above).
+app.MapGet("/api/cases/{caseId:long}/prefiling-milestones", async (long caseId, IPreFilingMilestoneStore milestones, CancellationToken token) =>
+    Results.Ok(await milestones.GetAsync(caseId, token)));
+app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/mark", async (long caseId, string milestone, MarkPreFilingMilestoneRequest request, IPreFilingMilestoneStore milestones, HttpContext context, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await CanActOnPreFilingMilestone(caseId, context, access, token)) return Results.Forbid();
+    try { return Results.Ok(await milestones.MarkAsync(caseId, milestone, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/unmark", async (long caseId, string milestone, UnmarkPreFilingMilestoneRequest request, IPreFilingMilestoneStore milestones, HttpContext context, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await CanActOnPreFilingMilestone(caseId, context, access, token)) return Results.Forbid();
+    try { return Results.Ok(await milestones.UnmarkAsync(caseId, milestone, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapGet("/api/prefiling-milestones/aging", async (IPreFilingMilestoneStore milestones, CancellationToken token) =>
+    Results.Ok(await milestones.GetAgingAsync(token)));
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());

@@ -174,6 +174,12 @@ public sealed class CaseRecord
     // Pre-filing tract's current blocking issue (spec's "CurrentIssue" pipeline field) - a short
     // display string, distinct from the free-form case_notes thread.
     public string? CurrentIssue { get; set; }
+    // Transient: optional reason captured on save when a manager overrides
+    // PipelinePromotionGate.EnsureFilingReady's Director-signature-milestone requirement so the
+    // case can leave Pipeline status anyway. Never persisted to the cases row itself - read once
+    // during the gate check in SaveCaseInternalAsync/SqlServerCaseCatalogReader.SaveCaseAsync, then
+    // discarded. Follows the exact precedent of DeadlineItem.ReasonForChange above.
+    public string? FilingGateOverrideReason { get; set; }
 }
 
 public sealed class DiscoveryPosture
@@ -532,6 +538,99 @@ public sealed class PipelineHolderApprovalRecord
     // PipelineHandoffRecord.CreatedBy already carries. This enforces PROCESS (you can't advance
     // without clicking Approve), not IDENTITY.
     public string? SetByDisplayName { get; set; }
+}
+
+// Manager/Administrator Dashboard Milestone 4 correction: ARDOT's actual pre-filing sign-off
+// process happens outside this system by email, and does not involve the concept above
+// (PipelineHolderApprovalRecord's in-system desk-to-desk Approve/Return chain, which is left
+// completely alone). The pleadings package (Complaint in Condemnation, Declaration of Taking, and
+// other documents varying by case) is emailed to the Chief Counsel, who signs and emails it back;
+// the Declaration of Taking then goes separately to the Director of Highways and Transportation for
+// signature - the Director is NOT a user of this system and never logs in. This table does not
+// gate, route, or collect those approvals - it RECORDS that the out-of-band sign-offs occurred, one
+// row per (CaseId, Milestone), so the division can see what each Pipeline tract is waiting on.
+// Unlike PipelineHolderApprovalRecord (append-only), this updates in place - the same shape
+// settlement_authority_requests uses - so marking or unmarking the same milestone again just
+// updates this one row rather than inserting a new one. See PreFilingMilestoneGate
+// (PipelineHolderApprovalStores.cs) for the four-milestone strict sequential-order enforcement, and
+// PipelinePromotionGate.EnsureFilingReady for how DirectorSignatureReceived now gates a case
+// leaving Pipeline status (replacing Milestone 2's old, incorrectly-modeled Chief-Counsel-approval
+// check).
+public sealed class PreFilingMilestoneRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    // "PleadingsPackageSent" | "ChiefCounselSignaturesReceived" | "DeclarationOfTakingSentToDirector"
+    // | "DirectorSignatureReceived" - enforced in C# (PreFilingMilestoneGate), not a DB constraint,
+    // matching manager_tier's/CaseRecord.CaseStatus's existing convention.
+    public string Milestone { get; set; } = "";
+    public bool IsMarked { get; set; }
+    // The user-entered date the signature/action actually occurred - null while IsMarked is false.
+    // Deliberately unvalidated against "today or earlier" - per the user's own spec this will often
+    // be backdated to reflect when the real-world sign-off actually happened.
+    public string? OccurredDate { get; set; }
+    // Automatic - stamped on whichever mark/unmark action most recently changed this row, distinct
+    // from OccurredDate (which is the user-entered real-world event date).
+    public string? MarkedAt { get; set; }
+    // Who last changed this row's mark state, and their IApplicationActorContext.Role at that time -
+    // same "free text, no cryptographic proof" limitation every other actor-stamped field in this
+    // app already carries.
+    public string? MarkedByUserId { get; set; }
+    public string? MarkedByDisplay { get; set; }
+    public string? MarkedByRole { get; set; }
+    // Optional. On "PleadingsPackageSent" specifically, the client may format this as a simple
+    // checklist-style text list since package contents vary by case - a client-side UX choice only;
+    // there is deliberately no separate structured document-checklist table here.
+    public string? Note { get; set; }
+    // SQL Server optimistic-concurrency token. Null while the active runtime remains SQLite.
+    public string? RowVersion { get; set; }
+}
+
+// Client-facing shape for POST /api/cases/{caseId}/prefiling-milestones/{milestone}/mark.
+// OccurredDate defaults to today client-side but the server accepts whatever string it's given -
+// see PreFilingMilestoneRecord.OccurredDate's doc comment on why this is never validated.
+public sealed class MarkPreFilingMilestoneRequest
+{
+    public string OccurredDate { get; set; } = "";
+    public string? Note { get; set; }
+}
+
+// Client-facing shape for POST /api/cases/{caseId}/prefiling-milestones/{milestone}/unmark. Reason
+// is required (non-blank) - unlike marking, un-marking a milestone that's already on record always
+// needs an explanation of why the recorded sign-off no longer holds.
+public sealed class UnmarkPreFilingMilestoneRequest
+{
+    public string Reason { get; set; } = "";
+}
+
+// Data contract for GET /api/prefiling-milestones/aging (Manager/Administrator Dashboard Milestone
+// 4) - data layer only, no dashboard UI consumes this yet (that's Milestone 5's "Needs Attention"
+// tab). For every case currently in CaseStatus="Pipeline", reports its furthest-marked milestone
+// (in PreFilingMilestoneGate.Order's sequence; "None" when nothing is marked yet) and how many days
+// have elapsed since that milestone's MarkedAt timestamp.
+public sealed class PreFilingMilestoneAgingSummary
+{
+    public List<PreFilingMilestoneAgingBucket> Buckets { get; set; } = [];
+    public List<PreFilingMilestoneAgingCase> Cases { get; set; } = [];
+}
+
+public sealed class PreFilingMilestoneAgingBucket
+{
+    // One of PreFilingMilestoneGate.Order, or "None" for a Pipeline case with nothing marked yet.
+    public string Milestone { get; set; } = "None";
+    public int Count { get; set; }
+}
+
+public sealed class PreFilingMilestoneAgingCase
+{
+    public long CaseId { get; set; }
+    public string? JobNumber { get; set; }
+    public string? Tract { get; set; }
+    public string? CaseName { get; set; }
+    // "None" when no milestone has been marked yet for this case.
+    public string FurthestMilestone { get; set; } = "None";
+    // Null when FurthestMilestone is "None" - there is no MarkedAt timestamp to measure from.
+    public int? DaysSinceMarked { get; set; }
 }
 
 // Client-facing shape for POST /api/cases/{id}/pipeline-approvals (Task C's Approve / Return for

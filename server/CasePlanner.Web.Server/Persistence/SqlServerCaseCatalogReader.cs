@@ -7,7 +7,7 @@ namespace CasePlanner.Web.Server.Persistence;
 
 public sealed class CaseConcurrencyException(long caseId) : Exception($"Case {caseId} was changed by another user. Reload it before saving again.");
 
-public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connectionFactory, IHttpContextAccessor httpContextAccessor, IApplicationActorContext actor) : ICaseCatalogStore
+public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connectionFactory, IHttpContextAccessor httpContextAccessor, IApplicationActorContext actor, SqlServerActivityStore activity) : ICaseCatalogStore
 {
     public string Provider => "SqlServer";
 
@@ -56,6 +56,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
 
         string? previousHolder = null;
         string? previousStage = null;
+        var overrideApplied = false;
         if (isNew)
         {
             command.CommandText = $"INSERT INTO dbo.cases ({string.Join(",", assignments.Select(a => $"[{a.Key}]"))}) OUTPUT INSERTED.id, INSERTED.row_version VALUES ({string.Join(",", assignments.Select(a => a.Parameter))})";
@@ -85,18 +86,24 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                 }
             }
 
-            // Milestone 2 gate: analogous to SqlServerCaseQuickActionService.SetHolderAsync's Task B
-            // holder-promotion gate, but on the case-status transition itself. model.CaseStatus is
-            // already finalized by NormalizeForSave (called at the top of this method) before this
-            // point, so no separate post-recompute concern here. Must run before the UPDATE below.
+            // Milestone 2 gate (corrected in Milestone 4): analogous to
+            // SqlServerCaseQuickActionService.SetHolderAsync's Task B holder-promotion gate, but on
+            // the case-status transition itself. model.CaseStatus is already finalized by
+            // NormalizeForSave (called at the top of this method) before this point, so no separate
+            // post-recompute concern here. Must run before the UPDATE below. The check basis is now
+            // dbo.case_prefiling_milestones (milestone='DirectorSignatureReceived') rather than
+            // dbo.pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc
+            // comment for why.
             if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
             {
-                await using var statusCmd = connection.CreateCommand();
-                statusCmd.Transaction = transaction;
-                statusCmd.CommandText = "SELECT TOP (1) status FROM dbo.pipeline_holder_approvals WHERE case_id=@caseId AND holder_role='Chief Counsel' ORDER BY id DESC";
-                statusCmd.Parameters.Add(new SqlParameter("@caseId", model.Id));
-                var mostRecentChiefCounselStatus = (await statusCmd.ExecuteScalarAsync(cancellationToken)) as string;
-                PipelinePromotionGate.EnsureFilingApproved(mostRecentChiefCounselStatus);
+                await using var milestoneCmd = connection.CreateCommand();
+                milestoneCmd.Transaction = transaction;
+                milestoneCmd.CommandText = "SELECT is_marked FROM dbo.case_prefiling_milestones WHERE case_id=@caseId AND milestone='DirectorSignatureReceived'";
+                milestoneCmd.Parameters.Add(new SqlParameter("@caseId", model.Id));
+                var isMarkedValue = await milestoneCmd.ExecuteScalarAsync(cancellationToken);
+                var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToBoolean(isMarkedValue);
+                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, actor.Role, model.FilingGateOverrideReason);
+                overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
             }
         }
 
@@ -124,6 +131,14 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         audit.Parameters.Add(new SqlParameter("@details", $"{{\"caseNumber\":\"{JsonEscape(model.CaseNumber)}\"}}"));
         await audit.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        // Same "audit write happens as its own call, after the transaction has already committed"
+        // convention as SqlServerSettlementAuthorityRequestStore's actions.
+        if (overrideApplied)
+        {
+            await activity.RecordAsync(model.Id, "FilingGateOverridden", model.FilingGateOverrideReason, null, cancellationToken, "CaseStatus", "Pipeline", model.CaseStatus);
+        }
+
         return model;
     }
 

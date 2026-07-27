@@ -1237,12 +1237,26 @@ public sealed partial class CasePlannerRepository
     {
         if (DateOnly.TryParse(model.DateOpened, out var opened) && DateOnly.TryParse(model.ClosedDate, out var closed) && closed < opened)
             throw new ArgumentException("Date Closed cannot be before Date Opened.");
-        return await WithWriteAsync(async (connection, tx) =>
+        // Captured before SaveCaseInternalAsync runs (which never mutates FilingGateOverrideReason
+        // itself) so it's still available for the post-commit activity_log write below - model.Id
+        // is only guaranteed populated after the save, but the override reason is set on the
+        // incoming model from the start.
+        var filingGateOverrideReason = model.FilingGateOverrideReason;
+        var overrideApplied = await WithWriteAsync(async (connection, tx) =>
         {
-            await SaveCaseInternalAsync(connection, tx, model);
+            var applied = await SaveCaseInternalAsync(connection, tx, model);
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved case {model.CaseNumber} at {DateTime.Now:G}");
-            return model;
+            return applied;
         });
+
+        // Same "audit write happens as its own call, after the transaction has already committed"
+        // convention as CreateSettlementAuthorityRequestAsync/DecideSettlementAuthorityRequestAsync.
+        if (overrideApplied)
+        {
+            await RecordActivityAsync(model.Id, "FilingGateOverridden", filingGateOverrideReason, null, "CaseStatus", "Pipeline", model.CaseStatus);
+        }
+
+        return model;
     }
 
     public async Task DeleteCaseAsync(long caseId)
@@ -2338,6 +2352,10 @@ public sealed partial class CasePlannerRepository
         // Settlement Authority decision - alongside SettlementAuthorityRequested/Received above,
         // these are meaningful case events too.
         "SettlementAuthorityDenied", "SettlementAuthorityInfoRequested",
+        // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker
+        // (case_prefiling_milestones) and the manager-override path on the filing gate itself
+        // (PipelinePromotionGate.EnsureFilingReady) are meaningful case events too.
+        "PreFilingMilestoneMarked", "PreFilingMilestoneUnmarked", "FilingGateOverridden",
     };
 
     // The one place last_meaningful_activity_date gets written - everything else that touches a
@@ -3984,6 +4002,241 @@ public sealed partial class CasePlannerRepository
         await RecordActivityAsync(caseId, activityType, decision.Comment, null, "SettlementAuthorizedCeiling", previousLabel, newValueLabel);
 
         return updated;
+    }
+
+    // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker (see
+    // PreFilingMilestoneRecord's doc comment in DomainModels.cs and PreFilingMilestoneGate in
+    // PipelineHolderApprovalStores.cs). Updates in place, one row per (case_id, milestone) - like
+    // settlement_authority_requests above, not like pipeline_holder_approvals.
+    public async Task<List<PreFilingMilestoneRecord>> GetPreFilingMilestonesAsync(long? caseId)
+    {
+        var list = new List<PreFilingMilestoneRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
+                   marked_by_user_id, marked_by_display, marked_by_role, note
+            FROM case_prefiling_milestones
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY case_id, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(ReadPreFilingMilestone(reader));
+        }
+
+        return list;
+    }
+
+    private static PreFilingMilestoneRecord ReadPreFilingMilestone(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt64(0),
+        CaseId = reader.GetInt64(1),
+        Milestone = reader.IsDBNull(2) ? "" : reader.GetString(2),
+        IsMarked = !reader.IsDBNull(3) && reader.GetInt64(3) != 0,
+        OccurredDate = reader.IsDBNull(4) ? null : reader.GetString(4),
+        MarkedAt = reader.IsDBNull(5) ? null : reader.GetString(5),
+        MarkedByUserId = reader.IsDBNull(6) ? null : reader.GetString(6),
+        MarkedByDisplay = reader.IsDBNull(7) ? null : reader.GetString(7),
+        MarkedByRole = reader.IsDBNull(8) ? null : reader.GetString(8),
+        Note = reader.IsDBNull(9) ? null : reader.GetString(9),
+    };
+
+    private static async Task<Dictionary<string, bool>> LoadPreFilingMilestoneMarksAsync(SqliteConnection connection, SqliteTransaction tx, long caseId)
+    {
+        var marks = new Dictionary<string, bool>();
+        var cmd = connection.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT milestone, is_marked FROM case_prefiling_milestones WHERE case_id=@case_id";
+        cmd.Parameters.AddWithValue("@case_id", caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) marks[reader.GetString(0)] = reader.GetInt64(1) != 0;
+        return marks;
+    }
+
+    // Marking N requires N-1 to already be marked (PreFilingMilestoneGate.EnsureCanMark); marking an
+    // already-marked milestone throws too, so a client can't double-fire the action by accident.
+    public async Task<PreFilingMilestoneRecord> MarkPreFilingMilestoneAsync(long caseId, string milestone, MarkPreFilingMilestoneRequest request)
+    {
+        var saved = await WithWriteAsync(async (connection, tx) =>
+        {
+            var currentlyMarked = await LoadPreFilingMilestoneMarksAsync(connection, tx, caseId);
+            PreFilingMilestoneGate.EnsureCanMark(milestone, currentlyMarked);
+
+            var now = DateTime.UtcNow.ToString("O");
+            var lookupCmd = connection.CreateCommand();
+            lookupCmd.Transaction = tx;
+            lookupCmd.CommandText = "SELECT id FROM case_prefiling_milestones WHERE case_id=@case_id AND milestone=@milestone";
+            lookupCmd.Parameters.AddWithValue("@case_id", caseId);
+            lookupCmd.Parameters.AddWithValue("@milestone", milestone);
+            var existingId = await lookupCmd.ExecuteScalarAsync();
+
+            long id;
+            if (existingId is null)
+            {
+                var insert = connection.CreateCommand();
+                insert.Transaction = tx;
+                insert.CommandText = """
+                    INSERT INTO case_prefiling_milestones
+                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note)
+                    VALUES
+                        (@case_id, @milestone, 1, @occurred_date, @marked_at, @marked_by_user_id, @marked_by_display, @marked_by_role, @note);
+                    SELECT last_insert_rowid();
+                    """;
+                insert.Parameters.AddWithValue("@case_id", caseId);
+                insert.Parameters.AddWithValue("@milestone", milestone);
+                insert.Parameters.AddWithValue("@occurred_date", DbValue(request.OccurredDate));
+                insert.Parameters.AddWithValue("@marked_at", now);
+                insert.Parameters.AddWithValue("@marked_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
+                insert.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
+                insert.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
+                insert.Parameters.AddWithValue("@note", DbValue(request.Note));
+                id = Convert.ToInt64(await insert.ExecuteScalarAsync());
+            }
+            else
+            {
+                id = Convert.ToInt64(existingId);
+                var update = connection.CreateCommand();
+                update.Transaction = tx;
+                update.CommandText = """
+                    UPDATE case_prefiling_milestones SET
+                        is_marked=1, occurred_date=@occurred_date, marked_at=@marked_at,
+                        marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
+                        marked_by_role=@marked_by_role, note=@note
+                    WHERE id=@id
+                    """;
+                update.Parameters.AddWithValue("@occurred_date", DbValue(request.OccurredDate));
+                update.Parameters.AddWithValue("@marked_at", now);
+                update.Parameters.AddWithValue("@marked_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
+                update.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
+                update.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
+                update.Parameters.AddWithValue("@note", DbValue(request.Note));
+                update.Parameters.AddWithValue("@id", id);
+                await update.ExecuteNonQueryAsync();
+            }
+
+            var readBackCmd = connection.CreateCommand();
+            readBackCmd.Transaction = tx;
+            readBackCmd.CommandText = """
+                SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
+                       marked_by_user_id, marked_by_display, marked_by_role, note
+                FROM case_prefiling_milestones WHERE id=@id
+                """;
+            readBackCmd.Parameters.AddWithValue("@id", id);
+            await using var readBackReader = await readBackCmd.ExecuteReaderAsync();
+            await readBackReader.ReadAsync();
+            return ReadPreFilingMilestone(readBackReader);
+        });
+
+        // Same convention as every other quick-action write in this file (e.g.
+        // CreateSettlementAuthorityRequestAsync's RecordActivityAsync call) - the audit write
+        // happens as its own call, after the main transaction has already committed.
+        await RecordActivityAsync(caseId, "PreFilingMilestoneMarked", request.Note, null, milestone, "Unmarked", request.OccurredDate);
+        return saved;
+    }
+
+    // Un-marking N requires no milestone AFTER N to currently be marked (PreFilingMilestoneGate.
+    // EnsureCanUnmark); un-marking an already-unmarked milestone throws too.
+    public async Task<PreFilingMilestoneRecord> UnmarkPreFilingMilestoneAsync(long caseId, string milestone, UnmarkPreFilingMilestoneRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new ArgumentException("A reason is required to unmark a pre-filing milestone.");
+
+        string? previousOccurredDate = null;
+        var saved = await WithWriteAsync(async (connection, tx) =>
+        {
+            var currentlyMarked = await LoadPreFilingMilestoneMarksAsync(connection, tx, caseId);
+            PreFilingMilestoneGate.EnsureCanUnmark(milestone, currentlyMarked);
+
+            var lookupCmd = connection.CreateCommand();
+            lookupCmd.Transaction = tx;
+            lookupCmd.CommandText = "SELECT id, occurred_date FROM case_prefiling_milestones WHERE case_id=@case_id AND milestone=@milestone";
+            lookupCmd.Parameters.AddWithValue("@case_id", caseId);
+            lookupCmd.Parameters.AddWithValue("@milestone", milestone);
+            long id;
+            await using (var reader = await lookupCmd.ExecuteReaderAsync())
+            {
+                if (!await reader.ReadAsync())
+                    throw new InvalidOperationException($"\"{PreFilingMilestoneGate.Label(milestone)}\" is not currently marked.");
+                id = reader.GetInt64(0);
+                previousOccurredDate = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+
+            var now = DateTime.UtcNow.ToString("O");
+            var update = connection.CreateCommand();
+            update.Transaction = tx;
+            update.CommandText = """
+                UPDATE case_prefiling_milestones SET
+                    is_marked=0, occurred_date=NULL, marked_at=@marked_at,
+                    marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
+                    marked_by_role=@marked_by_role, note=@note
+                WHERE id=@id
+                """;
+            update.Parameters.AddWithValue("@marked_at", now);
+            update.Parameters.AddWithValue("@marked_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
+            update.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
+            update.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
+            update.Parameters.AddWithValue("@note", request.Reason);
+            update.Parameters.AddWithValue("@id", id);
+            await update.ExecuteNonQueryAsync();
+
+            var readBackCmd = connection.CreateCommand();
+            readBackCmd.Transaction = tx;
+            readBackCmd.CommandText = """
+                SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
+                       marked_by_user_id, marked_by_display, marked_by_role, note
+                FROM case_prefiling_milestones WHERE id=@id
+                """;
+            readBackCmd.Parameters.AddWithValue("@id", id);
+            await using var readBackReader = await readBackCmd.ExecuteReaderAsync();
+            await readBackReader.ReadAsync();
+            return ReadPreFilingMilestone(readBackReader);
+        });
+
+        await RecordActivityAsync(caseId, "PreFilingMilestoneUnmarked", request.Reason, null, milestone, previousOccurredDate ?? "Unmarked", "Unmarked");
+        return saved;
+    }
+
+    // Data layer only for now (no dashboard UI - that's Milestone 5's "Needs Attention" tab). For
+    // every case currently in CaseStatus="Pipeline", determines its furthest-marked milestone and
+    // days elapsed since that milestone's marked_at, then buckets counts by furthest milestone.
+    public async Task<PreFilingMilestoneAgingSummary> GetPreFilingMilestoneAgingAsync()
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        var cases = new List<(long CaseId, string? JobNumber, string? Tract, string? CaseName)>();
+        var casesCmd = connection.CreateCommand();
+        casesCmd.CommandText = "SELECT id, job_number, tract, case_name FROM cases WHERE COALESCE(case_status,'Pipeline')='Pipeline'";
+        await using (var reader = await casesCmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                cases.Add((
+                    reader.GetInt64(0),
+                    reader.IsDBNull(1) ? null : reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3)));
+            }
+        }
+
+        var marks = new Dictionary<long, Dictionary<string, string?>>();
+        var marksCmd = connection.CreateCommand();
+        marksCmd.CommandText = "SELECT case_id, milestone, marked_at FROM case_prefiling_milestones WHERE is_marked=1";
+        await using (var reader = await marksCmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var caseId = reader.GetInt64(0);
+                if (!marks.TryGetValue(caseId, out var dict)) marks[caseId] = dict = new();
+                dict[reader.GetString(1)] = reader.IsDBNull(2) ? null : reader.GetString(2);
+            }
+        }
+
+        return PreFilingMilestoneGate.BuildAgingSummary(cases, marks);
     }
 
     public async Task<List<IssueTagRecord>> GetIssueTagsAsync()
@@ -8288,7 +8541,11 @@ public sealed partial class CasePlannerRepository
         }
     }
 
-    private async Task SaveCaseInternalAsync(SqliteConnection connection, SqliteTransaction tx, CaseRecord model)
+    // Returns true when the Milestone 4 filing gate would have blocked this save (Director signature
+    // milestone not marked) but a valid manager override reason let it through anyway - the caller
+    // (SaveCaseAsync) uses this to decide whether to write a "FilingGateOverridden" activity_log
+    // entry once the transaction has committed.
+    private async Task<bool> SaveCaseInternalAsync(SqliteConnection connection, SqliteTransaction tx, CaseRecord model)
     {
         if (string.IsNullOrWhiteSpace(model.Status)) model.Status = "Pipeline";
         if (string.IsNullOrWhiteSpace(model.CaseStatus) || model.CaseStatus == "Pipeline" && model.Status != "Pipeline")
@@ -8312,6 +8569,7 @@ public sealed partial class CasePlannerRepository
         var isUpdate = model.Id != 0;
         string? previousHolder = null;
         string? previousStage = null;
+        var overrideApplied = false;
         if (isUpdate)
         {
             var priorCmd = connection.CreateCommand();
@@ -8329,18 +8587,23 @@ public sealed partial class CasePlannerRepository
                 }
             }
 
-            // Milestone 2 gate: analogous to the Task B holder-promotion gate above, but on the
-            // case-status transition itself. Must run using model.CaseStatus's finalized,
-            // post-auto-recompute value (see the block at the top of this method) and must run
-            // before the actual INSERT/UPDATE below.
+            // Milestone 2 gate (corrected in Milestone 4): analogous to the Task B holder-promotion
+            // gate above, but on the case-status transition itself. Must run using model.CaseStatus's
+            // finalized, post-auto-recompute value (see the block at the top of this method) and must
+            // run before the actual INSERT/UPDATE below. The check basis is now
+            // case_prefiling_milestones (milestone="DirectorSignatureReceived") rather than
+            // pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc comment
+            // for why.
             if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
             {
-                var statusCmd = connection.CreateCommand();
-                statusCmd.Transaction = tx;
-                statusCmd.CommandText = "SELECT status FROM pipeline_holder_approvals WHERE case_id=@case_id AND holder_role='Chief Counsel' ORDER BY id DESC LIMIT 1";
-                statusCmd.Parameters.AddWithValue("@case_id", model.Id);
-                var mostRecentChiefCounselStatus = (await statusCmd.ExecuteScalarAsync()) as string;
-                PipelinePromotionGate.EnsureFilingApproved(mostRecentChiefCounselStatus);
+                var milestoneCmd = connection.CreateCommand();
+                milestoneCmd.Transaction = tx;
+                milestoneCmd.CommandText = "SELECT is_marked FROM case_prefiling_milestones WHERE case_id=@case_id AND milestone='DirectorSignatureReceived'";
+                milestoneCmd.Parameters.AddWithValue("@case_id", model.Id);
+                var isMarkedValue = await milestoneCmd.ExecuteScalarAsync();
+                var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToInt64(isMarkedValue) != 0;
+                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, _actor.Role, model.FilingGateOverrideReason);
+                overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
             }
         }
 
@@ -8501,6 +8764,8 @@ public sealed partial class CasePlannerRepository
         {
             await RecordHolderTransitionIfChangedAsync(connection, tx, model.Id, previousHolder, model.CurrentHolder, previousStage, model.PipelineStage);
         }
+
+        return overrideApplied;
     }
 
     private static string MapConsolidatedCaseStatus(string? status, string? stage, string? track, string? caseNumber = null, string? pipelineStage = null)
@@ -9389,11 +9654,25 @@ public sealed partial class CasePlannerRepository
             decided_by_role TEXT,
             decision_comment TEXT
         );
+        CREATE TABLE IF NOT EXISTS case_prefiling_milestones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            milestone TEXT NOT NULL,
+            is_marked INTEGER NOT NULL DEFAULT 0,
+            occurred_date TEXT,
+            marked_at TEXT,
+            marked_by_user_id TEXT,
+            marked_by_display TEXT,
+            marked_by_role TEXT,
+            note TEXT,
+            UNIQUE(case_id, milestone)
+        );
         CREATE INDEX IF NOT EXISTS idx_discovery_postures_case_id ON discovery_postures(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_history_activity_id ON activity_log_history(activity_id);
         CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read_created ON notifications(recipient_user_id, is_read, created_at);
         CREATE INDEX IF NOT EXISTS idx_settlement_authority_requests_case_id ON settlement_authority_requests(case_id);
+        CREATE INDEX IF NOT EXISTS idx_case_prefiling_milestones_case_id ON case_prefiling_milestones(case_id);
         """;
 
     // These indexes touch cases columns added via AddColumnIfMissingAsync below, so they must run

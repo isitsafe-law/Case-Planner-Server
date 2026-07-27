@@ -111,8 +111,12 @@ internal static class CaseRecordDataMapper
             CaseStyle = reader.FieldCount > 86 ? String(reader, 86) : null,
             OpposingCounselContact = reader.FieldCount > 87 ? String(reader, 87) : null,
             CaseFolderPath = reader.FieldCount > 88 ? String(reader, 88) : null,
-            RowVersion = reader.FieldCount > 89 && !reader.IsDBNull(89)
-                ? Convert.ToBase64String((byte[])reader.GetValue(89))
+            // Manager/Administrator Dashboard Milestone 3 - appended after case_folder_path, same
+            // FieldCount-guard pattern as every block above; row_version (SQL Server only) shifted
+            // from ordinal 89 to 90 to make room for this column.
+            SettlementAuthorizedCeiling = reader.FieldCount > 89 ? Decimal(reader, 89) : null,
+            RowVersion = reader.FieldCount > 90 && !reader.IsDBNull(90)
+                ? Convert.ToBase64String((byte[])reader.GetValue(90))
                 : null
         };
     }

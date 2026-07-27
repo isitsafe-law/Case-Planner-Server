@@ -181,6 +181,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["fap_number"] = Null(model.FapNumber), ["parcel_number"] = Null(model.ParcelNumber),
         ["case_style"] = Null(model.CaseStyle), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
         ["case_folder_path"] = Null(model.CaseFolderPath),
+        ["settlement_authorized_ceiling"] = model.SettlementAuthorizedCeiling,
         ["project_name"] = Null(model.ProjectName), ["tax_owed_amount"] = model.TaxOwedAmount, ["whole_property_acres"] = model.WholePropertyAcres,
         ["acquisition_acres"] = model.AcquisitionAcres, ["landowner_appraiser_name"] = Null(model.LandownerAppraiserName),
         ["additional_deposit_amount"] = model.AdditionalDepositAmount, ["additional_deposit_date"] = Null(model.AdditionalDepositDate),
@@ -257,6 +258,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                answer_filed, answer_filed_date,
                attorney_fees_awarded, attorney_fees_amount, judge, division,
                fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
+               settlement_authorized_ceiling,
                row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0

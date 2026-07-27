@@ -114,6 +114,13 @@ public sealed class CaseRecord
     public string? PropertyDescription { get; set; }
     public decimal? AdditionalDepositAmount { get; set; }
     public string? AdditionalDepositDate { get; set; }
+    // Manager/Administrator Dashboard Milestone 3 (Settlement Authority workflow): the ceiling
+    // Chief Counsel has most recently granted via an approved SettlementAuthorityRequestRecord
+    // (see ISettlementAuthorityRequestStore.DecideAsync). Null until a request is ever approved for
+    // this case; a later approval simply overwrites it - there is no history of prior ceilings
+    // here, that lives in activity_log's FieldChanged="SettlementAuthorizedCeiling" entries. Feeds
+    // TrialWatchEntry.SettlementAuthority, previously a dead hardcoded-null placeholder.
+    public decimal? SettlementAuthorizedCeiling { get; set; }
     public string? CreatedAt { get; set; }
     public string? UpdatedAt { get; set; }
     public int ChecklistTotal { get; set; }
@@ -1055,6 +1062,70 @@ public sealed class CollectorRecord
     public string? Address { get; set; }
     public string? Phone { get; set; }
     public string? Notes { get; set; }
+}
+
+// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - a request for
+// authority to settle up to a given amount, decided EXCLUSIVELY by Chief Counsel (no amount
+// threshold, no Deputy Chief Counsel action rights, and deliberately no Administrator override -
+// stricter than every other admin-gated action in this app). Updates in place (like
+// DiscoveryPosture), not append-only (unlike PipelineHolderApprovalRecord) - only one open thread
+// (Status Pending/InfoRequested) may exist per case at a time, enforced by
+// ISettlementAuthorityRequestStore.CreateAsync. The full decision history (who decided what, when,
+// with what comment) lives in activity_log, not here - this row is just the current/most-recent
+// state for quick display.
+public sealed class SettlementAuthorityRequestRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public decimal RequestedAmount { get; set; }
+    // The attorney of record for the request - free text, may differ from RequestedByDisplay
+    // (whoever actually clicked submit).
+    public string? RequestingAttorney { get; set; }
+    public string? RequestNotes { get; set; }
+    // "Pending" | "Approved" | "Denied" | "InfoRequested" - enforced in C#
+    // (ISettlementAuthorityRequestStore.DecideAsync), not a DB constraint, matching
+    // manager_tier's/CaseStatus's existing convention.
+    public string Status { get; set; } = "Pending";
+    // Only ever set when Status="Approved" - defaults to RequestedAmount when the deciding Chief
+    // Counsel doesn't override it with a different DecideSettlementAuthorityRequest.GrantedAmount.
+    public decimal? GrantedAmount { get; set; }
+    public string RequestedAt { get; set; } = "";
+    public string? RequestedByUserId { get; set; }
+    public string? RequestedByDisplay { get; set; }
+    // Decision fields stay null until a decision is actually made.
+    public string? DecidedAt { get; set; }
+    public string? DecidedByUserId { get; set; }
+    public string? DecidedByDisplay { get; set; }
+    // From IApplicationActorContext.Role at decision time - always "Chief Counsel" in practice once
+    // populated, since that's the only role the decide endpoint permits, but stored as free text
+    // (not re-derived) like ActivityLogEntry.ActorRoleAtAction.
+    public string? DecidedByRole { get; set; }
+    // The most recent decision's comment ("every action requires a comment" - see DecideAsync). The
+    // full audit trail of every decision ever made lives in activity_log, not here.
+    public string? DecisionComment { get; set; }
+    // SQL Server optimistic-concurrency token. Null while the active runtime remains SQLite.
+    public string? RowVersion { get; set; }
+}
+
+// Client-facing shape for POST /api/cases/{caseId}/settlement-authority-requests - the initial ask.
+// No special role gate: any user with normal case write access can submit one, matching how any
+// attorney would actually ask for authority.
+public sealed class CreateSettlementAuthorityRequest
+{
+    public decimal RequestedAmount { get; set; }
+    public string? RequestingAttorney { get; set; }
+    public string? RequestNotes { get; set; }
+}
+
+// Client-facing shape for POST /api/settlement-authority-requests/{id}/decide - gated to Chief
+// Counsel only (see Program.cs's IsChiefCounsel helper). Comment is required for every Action.
+public sealed class DecideSettlementAuthorityRequest
+{
+    // "Approved" | "Denied" | "InfoRequested".
+    public string Action { get; set; } = "";
+    public string Comment { get; set; } = "";
+    // Only meaningful when Action="Approved" - null means "grant exactly what was requested".
+    public decimal? GrantedAmount { get; set; }
 }
 
 public sealed class WorkTemplateCandidate

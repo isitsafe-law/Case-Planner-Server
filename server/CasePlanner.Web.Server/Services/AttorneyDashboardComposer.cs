@@ -133,6 +133,14 @@ public static class AttorneyDashboardComposer
     private static TrialWatchEntry Trial(CaseRecord c,DiscoveryPosture? posture,DateOnly today)=>
         new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),TrialDate=c.TrialDate,
             DaysUntilTrial=Date(c.TrialDate) is { } trial?trial.DayNumber-today.DayNumber:null,Deposit=c.DepositAmount,
+            // Milestone 3 (Settlement Authority workflow): the ceiling most recently granted by
+            // Chief Counsel, if any (see CaseRecord.SettlementAuthorizedCeiling). This is the real,
+            // live trial-watch path - both CasePlannerRepository (SQLite) and SqlServerWorkspaceQuery
+            // route the Attorney Dashboard through AttorneyDashboardComposer.Compose, which calls
+            // this method; CasePlannerRepository.BuildTrialWatchEntry, by contrast, sits behind
+            // unreachable code (see GetAttorneyDashboardAsync's early return) and is fixed
+            // separately only for consistency, not because anything still calls it.
+            SettlementAuthority=c.SettlementAuthorizedCeiling,
             FeeComparisonNote=AttorneyDashboardEngine.BuildFeeComparisonNote(c.DepositAmount,null,null),
             DiscoveryStatus=posture is null?"Strategy not selected":posture.IsComplete?"Discovery complete":posture.Strategy,
             NextTrialDecision=string.IsNullOrWhiteSpace(c.NextAction)?"Confirm final valuation position and settlement recommendation":c.NextAction};

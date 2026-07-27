@@ -694,6 +694,12 @@ app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/unmark", 
 });
 app.MapGet("/api/prefiling-milestones/aging", async (IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAgingAsync(token)));
+// Manager/Administrator Dashboard Milestone 4: a global (no case-scoped path segment) read, so the
+// dashboard's Incoming Pipeline panel can fetch every case's milestones in one call - mirrors
+// GET /api/settlement-authority-requests's optional-caseId shape exactly. The per-case
+// GET /api/cases/{caseId}/prefiling-milestones route above stays for case-workspace use.
+app.MapGet("/api/prefiling-milestones", async (long? caseId, IPreFilingMilestoneStore milestones, CancellationToken token) =>
+    Results.Ok(await milestones.GetAsync(caseId, token)));
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());

@@ -13,6 +13,17 @@ public sealed class CaseAccessService(
     public bool IsAdministrator =>
         accessor.HttpContext is { } context && CaseAccessEvaluator.IsAdministrator(context.User, options);
 
+    // Manager/Administrator Dashboard Milestone 4: any Manager (is_manager) or tiered role (Chief
+    // Counsel/Deputy Chief Counsel, manager_tier) gets the same unrestricted case visibility
+    // Administrator already has - decided explicitly with the user, since the whole premise of this
+    // dashboard ("a 30,000-foot view of the entire division... exercised by drilling into a case")
+    // requires a manager to actually see every case, not just the ones they happen to be assigned
+    // to. Deliberately broad: this affects every existing AssignmentAwareEndpointMetadata-tagged
+    // endpoint (case list, case workspace, exports, attorney dashboard), not just the new dashboard.
+    public bool IsManagerTierOrHigher =>
+        accessor.HttpContext?.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile
+        && (profile.IsManager || profile.ManagerTier is "ChiefCounsel" or "DeputyChiefCounsel");
+
     public bool CanCreateCases => !options.Enabled || IsAdministrator;
 
     public async Task<bool> CanReadAsync(long caseId, CancellationToken token = default) =>
@@ -33,7 +44,7 @@ public sealed class CaseAccessService(
         return ids;
     }
 
-    private bool IsUnrestricted => !options.Enabled || IsAdministrator;
+    private bool IsUnrestricted => !options.Enabled || IsAdministrator || IsManagerTierOrHigher;
 
     private async Task<string?> GetRoleAsync(long caseId, CancellationToken token)
     {

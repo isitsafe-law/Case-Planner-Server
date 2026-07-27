@@ -260,3 +260,69 @@ export const PIPELINE_STAGES: PipelineStage[] = [
   'Approved for Filing',
   'Filed',
 ]
+
+// Manager/Administrator Dashboard Milestone 4. Mirrors server/CasePlanner.Web.Server/Models/
+// DomainModels.cs's PreFilingMilestoneRecord and SettlementAuthorityRequestRecord field-for-field.
+
+export type PreFilingMilestone =
+  | 'PleadingsPackageSent'
+  | 'ChiefCounselSignaturesReceived'
+  | 'DeclarationOfTakingSentToDirector'
+  | 'DirectorSignatureReceived'
+
+export type PreFilingMilestoneRecord = {
+  id: number
+  caseId: number
+  milestone: string
+  isMarked: boolean
+  occurredDate?: string | null
+  markedAt?: string | null
+  markedByUserId?: string | null
+  markedByDisplay?: string | null
+  markedByRole?: string | null
+  note?: string | null
+  rowVersion?: string | null
+}
+
+export type SettlementAuthorityRequestStatus = 'Pending' | 'Approved' | 'Denied' | 'InfoRequested'
+
+export type SettlementAuthorityRequestRecord = {
+  id: number
+  caseId: number
+  requestedAmount: number
+  requestingAttorney?: string | null
+  requestNotes?: string | null
+  status: SettlementAuthorityRequestStatus
+  grantedAmount?: number | null
+  requestedAt: string
+  requestedByUserId?: string | null
+  requestedByDisplay?: string | null
+  decidedAt?: string | null
+  decidedByUserId?: string | null
+  decidedByDisplay?: string | null
+  decidedByRole?: string | null
+  decisionComment?: string | null
+  rowVersion?: string | null
+}
+
+// Fixed, stable four-milestone order for the pre-filing sign-off tracker. The server's
+// PreFilingMilestoneGate.Order/Label (CasePlannerRepository.cs) enforces this same order and
+// labeling but isn't exposed as an API - this is a deliberate, small client-side duplication of
+// that fixed vocabulary rather than a new endpoint just to fetch four static strings.
+export const PRE_FILING_MILESTONE_ORDER: PreFilingMilestone[] = [
+  'PleadingsPackageSent',
+  'ChiefCounselSignaturesReceived',
+  'DeclarationOfTakingSentToDirector',
+  'DirectorSignatureReceived',
+]
+
+const PRE_FILING_MILESTONE_LABELS: Record<PreFilingMilestone, string> = {
+  PleadingsPackageSent: 'Pleadings Package Sent',
+  ChiefCounselSignaturesReceived: 'Chief Counsel Signatures Received',
+  DeclarationOfTakingSentToDirector: 'Declaration of Taking Sent to Director',
+  DirectorSignatureReceived: 'Director Signature Received',
+}
+
+export function preFilingMilestoneLabel(milestone: string): string {
+  return PRE_FILING_MILESTONE_LABELS[milestone as PreFilingMilestone] ?? milestone
+}

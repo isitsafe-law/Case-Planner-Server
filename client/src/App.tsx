@@ -1,7 +1,8 @@
 import type { FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord } from './dashboard/types'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
+import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
 import { ActionQueueRow, type ActionQueueHandlers } from './dashboard/ActionQueueRow'
 import { DiscoveryControlPanel } from './dashboard/DiscoveryControlPanel'
@@ -33,7 +34,7 @@ import { CloseCaseDialog, dispositionTypeOptions, type CloseCaseDetails } from '
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 
-type PageKey = 'dashboard' | 'cases' | 'queues' | 'reports' | 'settings'
+type PageKey = 'dashboard' | 'managerDashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
@@ -44,7 +45,7 @@ type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
 type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'notifications' | 'developer'
 
-type CaseRecord = {
+export type CaseRecord = {
   id: number
   rowVersion?: string | null
   caseNumber: string
@@ -108,6 +109,11 @@ type CaseRecord = {
   deferredAt?: string | null
   deferredBy?: string | null
   currentHolder?: string | null
+  // Mirrors the server's CaseRecord.DateSentToCurrentHolder (DomainModels.cs) - previously omitted
+  // from this client-side type even though the server already round-trips it; added for the
+  // Manager/Administrator Dashboard's Incoming Pipeline panel (Milestone 4), which sorts pipeline
+  // tracts by this field.
+  dateSentToCurrentHolder?: string | null
   nextReviewDate?: string | null
   pipelineStage?: string | null
   shortPostureSummary?: string | null
@@ -526,7 +532,7 @@ const eventTypes = ['Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Ot
 
 const eventStatuses = ['Scheduled', 'Completed', 'Continued', 'Canceled'] as const
 
-type Hearing = {
+export type Hearing = {
   id: number
   caseId: number
   title: string
@@ -1067,6 +1073,7 @@ type ApiError = {
 
 const navItems: { key: PageKey; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
+  { key: 'managerDashboard', label: 'Division Overview' },
   { key: 'cases', label: 'Cases' },
   { key: 'queues', label: 'Work Queues' },
   { key: 'reports', label: 'Reports' },
@@ -2230,6 +2237,10 @@ function App() {
   const [queueDiscovery, setQueueDiscovery] = useState<DiscoveryItem[]>([])
   const [queueService, setQueueService] = useState<ServiceQueueItem[]>([])
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
+  // Manager/Administrator Dashboard Milestone 4: division-wide (no caseId query param), the same
+  // way circuitClerksData/assessorsData are fetched - see loadInitial below.
+  const [settlementAuthorityRequests, setSettlementAuthorityRequests] = useState<SettlementAuthorityRequestRecord[]>([])
+  const [preFilingMilestones, setPreFilingMilestones] = useState<PreFilingMilestoneRecord[]>([])
   // Bulk cross-case pipeline-handoff fetch (GET /api/work-queues/pipeline-handoffs) - used only by
   // Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections, not wired into the work queues,
   // the per-case Handoff-history dialog, or anything else.
@@ -2773,7 +2784,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, settlementAuthorityRequestsData, preFilingMilestonesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2796,6 +2807,8 @@ function App() {
         api<CircuitClerkRecord[]>('/api/circuit-clerks'),
         api<AssessorRecord[]>('/api/assessors'),
         api<CollectorRecord[]>('/api/collectors'),
+        api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'),
+        api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2819,6 +2832,8 @@ function App() {
       setCircuitClerks(circuitClerksData)
       setAssessors(assessorsData)
       setCollectors(collectorsData)
+      setSettlementAuthorityRequests(settlementAuthorityRequestsData)
+      setPreFilingMilestones(preFilingMilestonesData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -10244,6 +10259,16 @@ function App() {
             </>
           )}
         </main>
+      )}
+
+      {page === 'managerDashboard' && (
+        <ManagerDashboard
+          allCases={allCases}
+          hearings={queueHearings}
+          settlementAuthorityRequests={settlementAuthorityRequests}
+          preFilingMilestones={preFilingMilestones}
+          onOpenCase={(caseId) => openCase(caseId, 'overview')}
+        />
       )}
 
       {handoffTarget && (

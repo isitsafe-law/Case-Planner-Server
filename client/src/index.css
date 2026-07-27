@@ -2302,6 +2302,32 @@ code {
   }
 }
 
+/* Manager/Administrator Dashboard Milestone 4: Calendar tab's wide chronological table + narrower
+   Incoming Pipeline panel, side by side (design principle - table views over card grids, aggregate
+   first). Reverse proportions of .rep-grid (wide content first, narrow rail second). */
+.mgr-calendar-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .mgr-calendar-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sub-header row inside a plain tbody (week-of grouping in the Manager Dashboard's Calendar tab,
+   and similar future grouped tables) - a full-width muted label row, not a data row. */
+.ui-week-row td {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.4rem 0.6rem;
+}
+
 /* Open-case age distribution: direct-labeled horizontal bars, no legend. */
 .bars {
   display: grid;

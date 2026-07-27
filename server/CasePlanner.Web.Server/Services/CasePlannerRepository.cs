@@ -2339,7 +2339,7 @@ public sealed partial class CasePlannerRepository
     // case (routine field edits, tag changes, renames) does NOT call this, so the momentum clock
     // only resets on a real qualifying event. "Other" activity types are logged (visible in the
     // case's activity history) but never treated as meaningful.
-    public async Task<ActivityLogEntry> RecordActivityAsync(long caseId, string activityType, string? notes, string? occurredAt)
+    public async Task<ActivityLogEntry> RecordActivityAsync(long caseId, string activityType, string? notes, string? occurredAt, string? fieldChanged = null, string? previousValue = null, string? newValue = null)
     {
         return await WithWriteAsync(async (connection, tx) =>
         {
@@ -2347,12 +2347,13 @@ public sealed partial class CasePlannerRepository
             activityType = string.IsNullOrWhiteSpace(activityType) ? "Other" : activityType;
             var isMeaningful = MeaningfulActivityTypes.Contains(activityType);
             var occurred = string.IsNullOrWhiteSpace(occurredAt) ? now : occurredAt;
+            var role = _actor.Role;
 
             var insertCmd = connection.CreateCommand();
             insertCmd.Transaction = tx;
             insertCmd.CommandText = """
-                INSERT INTO activity_log (case_id, activity_type, is_meaningful, occurred_at, notes, created_at, actor_user_id, actor_display)
-                VALUES (@case_id, @activity_type, @is_meaningful, @occurred_at, @notes, @now, @actor_user_id, @actor_display);
+                INSERT INTO activity_log (case_id, activity_type, is_meaningful, occurred_at, notes, created_at, actor_user_id, actor_display, actor_role_at_action, field_changed, previous_value, new_value)
+                VALUES (@case_id, @activity_type, @is_meaningful, @occurred_at, @notes, @now, @actor_user_id, @actor_display, @actor_role_at_action, @field_changed, @previous_value, @new_value);
                 SELECT last_insert_rowid();
                 """;
             insertCmd.Parameters.AddWithValue("@case_id", caseId);
@@ -2363,6 +2364,10 @@ public sealed partial class CasePlannerRepository
             insertCmd.Parameters.AddWithValue("@now", now);
             insertCmd.Parameters.AddWithValue("@actor_user_id",(object?)_actor.UserId?.ToString("D")??DBNull.Value);
             insertCmd.Parameters.AddWithValue("@actor_display",_actor.AuditLabel);
+            insertCmd.Parameters.AddWithValue("@actor_role_at_action", DbValue(role));
+            insertCmd.Parameters.AddWithValue("@field_changed", DbValue(fieldChanged));
+            insertCmd.Parameters.AddWithValue("@previous_value", DbValue(previousValue));
+            insertCmd.Parameters.AddWithValue("@new_value", DbValue(newValue));
             var id = Convert.ToInt64(await insertCmd.ExecuteScalarAsync());
 
             if (isMeaningful)
@@ -2386,7 +2391,8 @@ public sealed partial class CasePlannerRepository
                 IsMeaningful = isMeaningful,
                 OccurredAt = occurred,
                 Notes = notes,
-                CreatedAt = now,ActorUserId=_actor.UserId?.ToString("D"),ActorDisplay=_actor.AuditLabel
+                CreatedAt = now,ActorUserId=_actor.UserId?.ToString("D"),ActorDisplay=_actor.AuditLabel,
+                ActorRoleAtAction=role,FieldChanged=fieldChanged,PreviousValue=previousValue,NewValue=newValue
             };
         });
     }
@@ -2398,7 +2404,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, activity_type, is_meaningful, occurred_at, notes, created_at, actor_user_id, actor_display
+            SELECT id, case_id, activity_type, is_meaningful, occurred_at, notes, created_at, actor_user_id, actor_display, actor_role_at_action, field_changed, previous_value, new_value
             FROM activity_log
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY occurred_at DESC
@@ -2417,7 +2423,9 @@ public sealed partial class CasePlannerRepository
                     OccurredAt = reader.IsDBNull(4) ? "" : reader.GetString(4),
                     Notes = reader.IsDBNull(5) ? null : reader.GetString(5),
                     CreatedAt = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    ActorUserId=reader.IsDBNull(7)?null:reader.GetString(7),ActorDisplay=reader.IsDBNull(8)?null:reader.GetString(8)
+                    ActorUserId=reader.IsDBNull(7)?null:reader.GetString(7),ActorDisplay=reader.IsDBNull(8)?null:reader.GetString(8),
+                    ActorRoleAtAction=reader.IsDBNull(9)?null:reader.GetString(9),FieldChanged=reader.IsDBNull(10)?null:reader.GetString(10),
+                    PreviousValue=reader.IsDBNull(11)?null:reader.GetString(11),NewValue=reader.IsDBNull(12)?null:reader.GetString(12)
                 });
             }
         }
@@ -5587,6 +5595,13 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection,"document_exports","qa_reviewed_by_display","TEXT");
         await AddColumnIfMissingAsync(connection,"activity_log","actor_user_id","TEXT");
         await AddColumnIfMissingAsync(connection,"activity_log","actor_display","TEXT");
+        // Manager/Administrator Dashboard Milestone 1: actor_role_at_action is stamped on every
+        // write; the three diff columns stay null until a later milestone's manager-override call
+        // path populates them (see RecordActivityAsync below).
+        await AddColumnIfMissingAsync(connection,"activity_log","actor_role_at_action","TEXT");
+        await AddColumnIfMissingAsync(connection,"activity_log","field_changed","TEXT");
+        await AddColumnIfMissingAsync(connection,"activity_log","previous_value","TEXT");
+        await AddColumnIfMissingAsync(connection,"activity_log","new_value","TEXT");
         await AddColumnIfMissingAsync(connection,"activity_log_history","edited_by_user_id","TEXT");
         await AddColumnIfMissingAsync(connection,"activity_log_history","edited_by_display","TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "matter_type", "TEXT DEFAULT 'FiledCase'");

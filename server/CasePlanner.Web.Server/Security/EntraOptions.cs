@@ -12,9 +12,14 @@ public sealed class EntraOptions
 }
 
 public sealed record EntraPublicConfiguration(bool Enabled, string Authority, string ClientId, string ApiScope);
-public sealed record AuthenticatedUserProfile(Guid Id, string TenantId, string ObjectId, string DisplayName, string? Email, IReadOnlyList<string> Roles, bool IsManager);
-public sealed record AppUserSummary(Guid Id, string DisplayName, string? Email, bool IsActive, DateTime CreatedUtc, DateTime UpdatedUtc, DateTime? LastLoginUtc, bool IsManager);
+// ManagerTier is null ("no tier"), "DeputyChiefCounsel", or "ChiefCounsel" - see 056_manager_tier.sql.
+// It is separate from IsManager (039_manager_flag.sql): a user can be IsManager with no tier (an
+// ordinary Manager), or hold a tier. Validation of the allowed string values lives in
+// SqlServerCaseAssignmentRepository.SetUserManagerTierAsync, not a DB constraint.
+public sealed record AuthenticatedUserProfile(Guid Id, string TenantId, string ObjectId, string DisplayName, string? Email, IReadOnlyList<string> Roles, bool IsManager, string? ManagerTier);
+public sealed record AppUserSummary(Guid Id, string DisplayName, string? Email, bool IsActive, DateTime CreatedUtc, DateTime UpdatedUtc, DateTime? LastLoginUtc, bool IsManager, string? ManagerTier);
 public sealed record CaseAssignmentRecord(long CaseId, Guid UserId, string DisplayName, string? Email, string AssignmentRole, string CaseRole, DateTime AssignedUtc, Guid? AssignedByUserId, string RowVersion);
 public sealed record SaveCaseAssignmentRequest(long CaseId, Guid UserId, string AssignmentRole, string CaseRole);
 public sealed record SetUserActiveRequest(bool IsActive);
 public sealed record SetUserManagerRequest(bool IsManager);
+public sealed record SetUserManagerTierRequest(string? ManagerTier);

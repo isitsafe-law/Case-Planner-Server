@@ -3652,7 +3652,13 @@ function App() {
     }
   }
 
-  async function submitCaseRecordDecision(payload: { activityType: string; notes: string }) {
+  async function submitCaseRecordDecision(payload: {
+    activityType: string
+    notes: string
+    fieldChanged?: string
+    previousValue?: string
+    newValue?: string
+  }) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
     try {

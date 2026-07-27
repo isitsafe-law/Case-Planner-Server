@@ -496,7 +496,7 @@ app.MapGet("/api/auth/config", () => Results.Ok(new EntraPublicConfiguration(
     entraOptions.Enabled ? publicApiScope : "")));
 app.MapGet("/api/auth/me", (HttpContext context) =>
     context.Items.TryGetValue(EntraUserProvisioningMiddleware.ProfileItemKey, out var profile) && profile is AuthenticatedUserProfile authenticated
-        ? Results.Ok(new { authenticated.Id, authenticated.TenantId, authenticated.ObjectId, authenticated.DisplayName, authenticated.Email, authenticated.Roles, IsAdmin = CaseAccessEvaluator.IsAdministrator(context.User, entraOptions), authenticated.IsManager })
+        ? Results.Ok(new { authenticated.Id, authenticated.TenantId, authenticated.ObjectId, authenticated.DisplayName, authenticated.Email, authenticated.Roles, IsAdmin = CaseAccessEvaluator.IsAdministrator(context.User, entraOptions), authenticated.IsManager, authenticated.ManagerTier })
         : Results.Unauthorized()).WithMetadata(new AssignmentAwareEndpointMetadata());
 // Read-only: any signed-in user can see who's on staff / who's assigned to a case (it's a
 // staff directory, not sensitive data). Only mutation (below) is admin-gated.
@@ -540,6 +540,14 @@ app.MapPut("/api/admin/users/{userId:guid}/manager", async (Guid userId, SetUser
     if (!CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
     if (context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is not AuthenticatedUserProfile actor) return Results.Unauthorized();
     return await assignments.SetUserManagerAsync(userId, request.IsManager, actor.Id, token) ? Results.NoContent() : Results.NotFound();
+});
+app.MapPut("/api/admin/users/{userId:guid}/manager-tier", async (Guid userId, SetUserManagerTierRequest request, HttpContext context, SqlServerCaseAssignmentRepository assignments, CancellationToken token) =>
+{
+    if (!entraOptions.Enabled) return Results.NotFound();
+    if (!CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    if (context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is not AuthenticatedUserProfile actor) return Results.Unauthorized();
+    try { return await assignments.SetUserManagerTierAsync(userId, request.ManagerTier, actor.Id, token) ? Results.NoContent() : Results.NotFound(); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 // Staff Directory: a fixed list of real attorney/legal-assistant names for case metadata and
 // reporting - separate from the app_users roster above, zero auth/identity dependency, fully

@@ -18,14 +18,31 @@ export function RecordDecisionDialog({
   caseName,
   onClose,
   onSubmit,
+  fieldChanged,
+  previousValue,
+  newValue,
 }: {
   caseName: string
   onClose: () => void
-  onSubmit: (payload: { activityType: string; notes: string }) => Promise<void>
+  onSubmit: (payload: {
+    activityType: string
+    notes: string
+    fieldChanged?: string
+    previousValue?: string
+    newValue?: string
+  }) => Promise<void>
+  // When provided (a manager-override call path in a later milestone), the dialog shows a read-only
+  // "what's changing" summary and requires notes/reason before submit. Absent by default, in which
+  // case this component's behavior and appearance are unchanged from before these props existed.
+  fieldChanged?: string
+  previousValue?: string
+  newValue?: string
 }) {
   const [activityType, setActivityType] = useState('AttorneyStrategyDecisionRecorded')
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
+  const isFieldChange = fieldChanged !== undefined || previousValue !== undefined || newValue !== undefined
+  const notesRequired = isFieldChange && notes.trim() === ''
 
   return (
     <ModalShell title={`Record Decision: ${caseName}`} onClose={onClose}>
@@ -33,14 +50,20 @@ export function RecordDecisionDialog({
         className="stacked-form"
         onSubmit={async (e) => {
           e.preventDefault()
+          if (notesRequired) return
           setBusy(true)
           try {
-            await onSubmit({ activityType, notes })
+            await onSubmit({ activityType, notes, fieldChanged, previousValue, newValue })
           } finally {
             setBusy(false)
           }
         }}
       >
+        {isFieldChange && (
+          <p className="field-change-summary">
+            Changing {fieldChanged}: {previousValue ?? '(none)'} &rarr; {newValue ?? '(none)'}
+          </p>
+        )}
         <label>
           What happened
           <select value={activityType} onChange={(e) => setActivityType(e.currentTarget.value)}>
@@ -53,11 +76,11 @@ export function RecordDecisionDialog({
           </select>
         </label>
         <label>
-          Notes
-          <textarea value={notes} onChange={(e) => setNotes(e.currentTarget.value)} rows={3} placeholder="What was decided and why" />
+          Notes{isFieldChange ? ' (required)' : ''}
+          <textarea value={notes} onChange={(e) => setNotes(e.currentTarget.value)} rows={3} placeholder="What was decided and why" required={isFieldChange} />
         </label>
         <div className="button-row">
-          <button className="primary" type="submit" disabled={busy}>Record</button>
+          <button className="primary" type="submit" disabled={busy || notesRequired}>Record</button>
           <button type="button" onClick={onClose}>Cancel</button>
         </div>
       </form>

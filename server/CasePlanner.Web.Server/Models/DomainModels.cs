@@ -228,6 +228,15 @@ public sealed class ActivityLogEntry
     public string? ActorUserId { get; set; }
     public string? ActorDisplay { get; set; }
     public string? RowVersion { get; set; }
+    // Manager/Administrator Dashboard Milestone 1: ActorRoleAtAction is stamped on every write from
+    // IApplicationActorContext.Role (never null in practice, but nullable to match every other actor
+    // field's read-path convention). FieldChanged/PreviousValue/NewValue are optional and stay null
+    // for every ordinary activity write today - only a later milestone's manager-override call path
+    // will populate them, to record a plain field-level before/after without a second logging table.
+    public string? ActorRoleAtAction { get; set; }
+    public string? FieldChanged { get; set; }
+    public string? PreviousValue { get; set; }
+    public string? NewValue { get; set; }
     // Edit history (original value / new value / reason, no silent overwrite) - same pattern as
     // DeadlineItem.History. Empty for never-edited entries.
     public List<ActivityLogHistoryEntry> History { get; set; } = [];
@@ -1155,6 +1164,12 @@ public sealed class RecordActivityRequest
     public string ActivityType { get; set; } = "Other";
     public string? Notes { get; set; }
     public string? OccurredAt { get; set; }
+    // Optional field-level diff, only ever populated by a manager-override call path (Milestone 1
+    // just plumbs these through to storage - RecordDecisionDialog.tsx's default "record a decision"
+    // flow never sends them).
+    public string? FieldChanged { get; set; }
+    public string? PreviousValue { get; set; }
+    public string? NewValue { get; set; }
 }
 
 public sealed class ShortNoteRequest

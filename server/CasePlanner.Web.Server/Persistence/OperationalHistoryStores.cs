@@ -53,7 +53,7 @@ public sealed class SqliteActivityStore(CasePlannerRepository repository) : IAct
     public Task<List<ActivityLogEntry>> GetAsync(long? caseId, CancellationToken token = default) => repository.GetActivityLogAsync(caseId);
     public Task<long?> GetCaseIdAsync(long activityId, CancellationToken token = default) => repository.GetChildCaseIdAsync("activity", activityId);
     public Task<ActivityLogEntry> RecordAsync(long caseId, RecordActivityRequest request, CancellationToken token = default) =>
-        repository.RecordActivityAsync(caseId, request.ActivityType, request.Notes, request.OccurredAt);
+        repository.RecordActivityAsync(caseId, request.ActivityType, request.Notes, request.OccurredAt, request.FieldChanged, request.PreviousValue, request.NewValue);
     public Task<ActivityLogEntry> UpdateAsync(long activityId, UpdateActivityRequest request, CancellationToken token = default) =>
         repository.UpdateActivityEntryAsync(activityId, request);
 }
@@ -286,7 +286,7 @@ public sealed class SqlServerActivityService(SqlServerActivityStore store) : IAc
     public Task<List<ActivityLogEntry>> GetAsync(long? caseId,CancellationToken token=default)=>store.GetAsync(caseId,token);
     public Task<long?> GetCaseIdAsync(long activityId,CancellationToken token=default)=>store.GetCaseIdAsync(activityId,token);
     public Task<ActivityLogEntry> RecordAsync(long caseId,RecordActivityRequest request,CancellationToken token=default)=>
-        store.RecordAsync(caseId,request.ActivityType,request.Notes,request.OccurredAt,token);
+        store.RecordAsync(caseId,request.ActivityType,request.Notes,request.OccurredAt,token,request.FieldChanged,request.PreviousValue,request.NewValue);
     public Task<ActivityLogEntry> UpdateAsync(long activityId,UpdateActivityRequest request,CancellationToken token=default)=>
         store.UpdateAsync(activityId,request,request.RowVersion,token);
 }

@@ -27,40 +27,41 @@ public sealed class SqlServerAppUserRepository(IDatabaseConnectionFactory connec
             }
         }
         if (provisioned is null) throw new InvalidOperationException("The authenticated Entra user could not be provisioned.");
-        return new(provisioned.Value.Id, identity.TenantId, identity.ObjectId, identity.DisplayName, identity.Email, identity.Roles, provisioned.Value.IsManager);
+        return new(provisioned.Value.Id, identity.TenantId, identity.ObjectId, identity.DisplayName, identity.Email, identity.Roles, provisioned.Value.IsManager, provisioned.Value.ManagerTier);
     }
 
     // is_manager, unlike is_administrator, is never derived from the Entra token - there is no app
-    // role for it, so it is only ever set by an admin via SetUserManagerAsync. Provisioning just
-    // reads back whatever value is already on the row (OUTPUT INSERTED.is_manager) rather than
-    // writing one, so a new row simply gets the column default (0/false).
-    private static async Task<(Guid Id, bool IsManager)?> UpdateAsync(System.Data.Common.DbConnection connection, EntraIdentity identity, bool isAdministrator, CancellationToken token)
+    // role for it, so it is only ever set by an admin via SetUserManagerAsync. manager_tier
+    // (056_manager_tier.sql) is the same story, via SetUserManagerTierAsync. Provisioning just
+    // reads back whatever value is already on the row (OUTPUT INSERTED.is_manager/manager_tier)
+    // rather than writing one, so a new row simply gets the column default (0/false, NULL).
+    private static async Task<(Guid Id, bool IsManager, string? ManagerTier)?> UpdateAsync(System.Data.Common.DbConnection connection, EntraIdentity identity, bool isAdministrator, CancellationToken token)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE dbo.app_users
             SET display_name=@name, email=@email, entra_tenant_id=@tenant, entra_object_id=@object,
                 is_administrator=@isAdministrator, last_login_utc=SYSUTCDATETIME(), updated_utc=SYSUTCDATETIME()
-            OUTPUT INSERTED.id, INSERTED.is_manager
+            OUTPUT INSERTED.id, INSERTED.is_manager, INSERTED.manager_tier
             WHERE external_subject=@subject AND is_active=1
             """;
         AddParameters(command, identity, isAdministrator);
         await using var reader = await command.ExecuteReaderAsync(token);
-        return await reader.ReadAsync(token) ? (reader.GetGuid(0), reader.GetBoolean(1)) : null;
+        return await reader.ReadAsync(token) ? (reader.GetGuid(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetString(2)) : null;
     }
 
-    private static async Task<(Guid Id, bool IsManager)> InsertAsync(System.Data.Common.DbConnection connection, EntraIdentity identity, bool isAdministrator, CancellationToken token)
+    private static async Task<(Guid Id, bool IsManager, string? ManagerTier)> InsertAsync(System.Data.Common.DbConnection connection, EntraIdentity identity, bool isAdministrator, CancellationToken token)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO dbo.app_users (external_subject, entra_tenant_id, entra_object_id, display_name, email, is_administrator, last_login_utc)
-            OUTPUT INSERTED.id, INSERTED.is_manager
+            OUTPUT INSERTED.id, INSERTED.is_manager, INSERTED.manager_tier
             VALUES (@subject,@tenant,@object,@name,@email,@isAdministrator,SYSUTCDATETIME())
             """;
         AddParameters(command, identity, isAdministrator);
         await using var reader = await command.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)) throw new InvalidOperationException("User insert returned no identifier.");
-        return (reader.GetGuid(0), reader.GetBoolean(1));
+        return (reader.GetGuid(0), reader.GetBoolean(1), reader.IsDBNull(2) ? null : reader.GetString(2));
     }
 
     private static void AddParameters(System.Data.Common.DbCommand command, EntraIdentity identity, bool isAdministrator)

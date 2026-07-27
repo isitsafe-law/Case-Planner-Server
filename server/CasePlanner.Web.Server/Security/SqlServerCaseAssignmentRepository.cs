@@ -12,10 +12,10 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         await using var connection = connectionFactory.CreateConnection();
         await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,display_name,email,is_active,created_utc,updated_utc,last_login_utc,is_manager FROM dbo.app_users ORDER BY display_name,email";
+        command.CommandText = "SELECT id,display_name,email,is_active,created_utc,updated_utc,last_login_utc,is_manager,manager_tier FROM dbo.app_users ORDER BY display_name,email";
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
-            result.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetBoolean(3), reader.GetDateTime(4), reader.GetDateTime(5), reader.IsDBNull(6) ? null : reader.GetDateTime(6), reader.GetBoolean(7)));
+            result.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetBoolean(3), reader.GetDateTime(4), reader.GetDateTime(5), reader.IsDBNull(6) ? null : reader.GetDateTime(6), reader.GetBoolean(7), reader.IsDBNull(8) ? null : reader.GetString(8)));
         return result;
     }
 
@@ -183,6 +183,38 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         command.Parameters.Add(new SqlParameter("@id", userId));
         var changed = await command.ExecuteNonQueryAsync(token) > 0;
         if (changed) await AuditAsync(connection, transaction, null, actorUserId, isManager ? "UserManagerGranted" : "UserManagerRevoked", userId.ToString(), null, token);
+        await transaction.CommitAsync(token);
+        return changed;
+    }
+
+    // manager_tier (056_manager_tier.sql) is orthogonal to is_manager above: it exists purely to gate
+    // UI/action buttons in a later Manager/Administrator Dashboard milestone (approval routing always
+    // goes to Chief Counsel only, with no Administrator override - already decided outside this
+    // change). Allowed values are enforced here in C#, not a DB constraint, matching is_manager's
+    // convention. Same no-self-service-guard note as SetUserManagerAsync above applies.
+    public async Task<bool> SetUserManagerTierAsync(Guid userId, string? managerTier, Guid actorUserId, CancellationToken token = default)
+    {
+        if (managerTier is not (null or "DeputyChiefCounsel" or "ChiefCounsel"))
+            throw new ArgumentException("managerTier must be null, \"DeputyChiefCounsel\", or \"ChiefCounsel\".");
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(token);
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        string? previousTier = null;
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT manager_tier FROM dbo.app_users WHERE id=@id";
+            read.Parameters.Add(new SqlParameter("@id", userId));
+            var value = await read.ExecuteScalarAsync(token);
+            previousTier = value is null or DBNull ? null : (string)value;
+        }
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE dbo.app_users SET manager_tier=@tier,updated_utc=SYSUTCDATETIME() WHERE id=@id";
+        command.Parameters.Add(new SqlParameter("@tier", (object?)managerTier ?? DBNull.Value));
+        command.Parameters.Add(new SqlParameter("@id", userId));
+        var changed = await command.ExecuteNonQueryAsync(token) > 0;
+        if (changed) await AuditAsync(connection, transaction, null, actorUserId, "UserManagerTierChanged", userId.ToString(), $"{{\"before\":{(previousTier is null ? "null" : $"\"{previousTier}\"")},\"after\":{(managerTier is null ? "null" : $"\"{managerTier}\"")}}}", token);
         await transaction.CommitAsync(token);
         return changed;
     }

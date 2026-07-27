@@ -49,6 +49,7 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
     {
         public Guid? UserId=>Id;
         public string AuditLabel=>Label;
+        public string Role=>Label;
     }
 
     [Fact]

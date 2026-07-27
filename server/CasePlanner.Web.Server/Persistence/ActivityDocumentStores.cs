@@ -20,7 +20,7 @@ public sealed class SqlServerActivityStore(IDatabaseConnectionFactory connection
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id,case_id,activity_type,is_meaningful,occurred_at,notes,created_at,
-                   actor_user_id,actor_display,row_version
+                   actor_user_id,actor_display,row_version,actor_role_at_action,field_changed,previous_value,new_value
             FROM dbo.activity_log
             WHERE @caseId IS NULL OR case_id=@caseId
             ORDER BY occurred_at DESC,id DESC
@@ -36,7 +36,9 @@ public sealed class SqlServerActivityStore(IDatabaseConnectionFactory connection
                     ActivityType = Text(reader, 2) ?? "Other", IsMeaningful = Bool(reader, 3),
                     OccurredAt = Text(reader, 4) ?? "", Notes = Text(reader, 5), CreatedAt = Text(reader, 6),
                     ActorUserId = Text(reader, 7), ActorDisplay = Text(reader, 8),
-                    RowVersion = Convert.ToBase64String((byte[])reader.GetValue(9))
+                    RowVersion = Convert.ToBase64String((byte[])reader.GetValue(9)),
+                    ActorRoleAtAction = Text(reader, 10), FieldChanged = Text(reader, 11),
+                    PreviousValue = Text(reader, 12), NewValue = Text(reader, 13)
                 });
             }
         }
@@ -77,16 +79,16 @@ public sealed class SqlServerActivityStore(IDatabaseConnectionFactory connection
         var value=await command.ExecuteScalarAsync(token);return value is null?null:Convert.ToInt64(value);
     }
 
-    public async Task<ActivityLogEntry> RecordAsync(long caseId,string activityType,string? notes,string? occurredAt,CancellationToken token=default)
+    public async Task<ActivityLogEntry> RecordAsync(long caseId,string activityType,string? notes,string? occurredAt,CancellationToken token=default,string? fieldChanged=null,string? previousValue=null,string? newValue=null)
     {
-        activityType=string.IsNullOrWhiteSpace(activityType)?"Other":activityType;var meaningful=MeaningfulTypes.Contains(activityType);var now=DateTime.UtcNow.ToString("O");var occurred=string.IsNullOrWhiteSpace(occurredAt)?now:occurredAt;
+        activityType=string.IsNullOrWhiteSpace(activityType)?"Other":activityType;var meaningful=MeaningfulTypes.Contains(activityType);var now=DateTime.UtcNow.ToString("O");var occurred=string.IsNullOrWhiteSpace(occurredAt)?now:occurredAt;var role=actor.Role;
         await using var connection=connections.CreateConnection();await connection.OpenAsync(token);await using var transaction=await connection.BeginTransactionAsync(token);
-        await using var command=connection.CreateCommand();command.Transaction=transaction;command.CommandText="INSERT INTO dbo.activity_log(case_id,activity_type,is_meaningful,occurred_at,notes,created_at,actor_user_id,actor_display) OUTPUT INSERTED.id,INSERTED.row_version VALUES(@caseId,@type,@meaningful,@occurred,@notes,@now,@actor,@display)";
-        command.Parameters.Add(new SqlParameter("@caseId",caseId));command.Parameters.Add(new SqlParameter("@type",activityType));command.Parameters.Add(new SqlParameter("@meaningful",meaningful));command.Parameters.Add(new SqlParameter("@occurred",occurred));command.Parameters.Add(new SqlParameter("@notes",Db(notes)));command.Parameters.Add(new SqlParameter("@now",now));command.Parameters.Add(new SqlParameter("@actor",(object?)actor.UserId??DBNull.Value));command.Parameters.Add(new SqlParameter("@display",actor.AuditLabel));
+        await using var command=connection.CreateCommand();command.Transaction=transaction;command.CommandText="INSERT INTO dbo.activity_log(case_id,activity_type,is_meaningful,occurred_at,notes,created_at,actor_user_id,actor_display,actor_role_at_action,field_changed,previous_value,new_value) OUTPUT INSERTED.id,INSERTED.row_version VALUES(@caseId,@type,@meaningful,@occurred,@notes,@now,@actor,@display,@role,@fieldChanged,@previousValue,@newValue)";
+        command.Parameters.Add(new SqlParameter("@caseId",caseId));command.Parameters.Add(new SqlParameter("@type",activityType));command.Parameters.Add(new SqlParameter("@meaningful",meaningful));command.Parameters.Add(new SqlParameter("@occurred",occurred));command.Parameters.Add(new SqlParameter("@notes",Db(notes)));command.Parameters.Add(new SqlParameter("@now",now));command.Parameters.Add(new SqlParameter("@actor",(object?)actor.UserId??DBNull.Value));command.Parameters.Add(new SqlParameter("@display",actor.AuditLabel));command.Parameters.Add(new SqlParameter("@role",Db(role)));command.Parameters.Add(new SqlParameter("@fieldChanged",Db(fieldChanged)));command.Parameters.Add(new SqlParameter("@previousValue",Db(previousValue)));command.Parameters.Add(new SqlParameter("@newValue",Db(newValue)));
         long id;string version;try{await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);id=reader.GetInt64(0);version=Convert.ToBase64String((byte[])reader.GetValue(1));}catch(SqlException ex)when(ex.Number==547){throw new InvalidOperationException($"SQL Server case {caseId} does not exist.");}
         if(meaningful){await using var update=connection.CreateCommand();update.Transaction=transaction;update.CommandText="UPDATE dbo.cases SET last_meaningful_activity_date=@occurred WHERE id=@caseId AND (last_meaningful_activity_date IS NULL OR last_meaningful_activity_date<@occurred)";update.Parameters.Add(new SqlParameter("@occurred",occurred));update.Parameters.Add(new SqlParameter("@caseId",caseId));await update.ExecuteNonQueryAsync(token);}
         await AuditAsync(connection,transaction,caseId,"ActivityCreated",id,token);await transaction.CommitAsync(token);
-        return new(){Id=id,CaseId=caseId,ActivityType=activityType,IsMeaningful=meaningful,OccurredAt=occurred,Notes=notes,CreatedAt=now,ActorUserId=actor.UserId?.ToString("D"),ActorDisplay=actor.AuditLabel,RowVersion=version};
+        return new(){Id=id,CaseId=caseId,ActivityType=activityType,IsMeaningful=meaningful,OccurredAt=occurred,Notes=notes,CreatedAt=now,ActorUserId=actor.UserId?.ToString("D"),ActorDisplay=actor.AuditLabel,RowVersion=version,ActorRoleAtAction=role,FieldChanged=fieldChanged,PreviousValue=previousValue,NewValue=newValue};
     }
 
     public async Task<ActivityLogEntry> UpdateAsync(long id,UpdateActivityRequest request,string? rowVersion,CancellationToken token=default)

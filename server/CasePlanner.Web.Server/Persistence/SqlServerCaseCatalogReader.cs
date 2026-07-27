@@ -70,15 +70,33 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
             command.Parameters.Add(new SqlParameter("@rowVersion", expected));
             command.CommandText = $"UPDATE dbo.cases SET {string.Join(",", assignments.Where(a => a.Key != "created_at").Select(a => $"[{a.Key}]={a.Parameter}"))} OUTPUT INSERTED.id, INSERTED.row_version WHERE id=@id AND row_version=@rowVersion";
 
-            await using var prior = connection.CreateCommand();
-            prior.Transaction = transaction;
-            prior.CommandText = "SELECT current_holder,pipeline_stage FROM dbo.cases WHERE id=@id";
-            prior.Parameters.Add(new SqlParameter("@id", model.Id));
-            await using var priorReader = await prior.ExecuteReaderAsync(cancellationToken);
-            if (await priorReader.ReadAsync(cancellationToken))
+            string? previousCaseStatus = null;
+            await using (var prior = connection.CreateCommand())
             {
-                previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
-                previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+                prior.Transaction = transaction;
+                prior.CommandText = "SELECT current_holder,pipeline_stage,COALESCE(case_status,'Pipeline') FROM dbo.cases WHERE id=@id";
+                prior.Parameters.Add(new SqlParameter("@id", model.Id));
+                await using var priorReader = await prior.ExecuteReaderAsync(cancellationToken);
+                if (await priorReader.ReadAsync(cancellationToken))
+                {
+                    previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
+                    previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+                    previousCaseStatus = priorReader.IsDBNull(2) ? null : priorReader.GetString(2);
+                }
+            }
+
+            // Milestone 2 gate: analogous to SqlServerCaseQuickActionService.SetHolderAsync's Task B
+            // holder-promotion gate, but on the case-status transition itself. model.CaseStatus is
+            // already finalized by NormalizeForSave (called at the top of this method) before this
+            // point, so no separate post-recompute concern here. Must run before the UPDATE below.
+            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
+            {
+                await using var statusCmd = connection.CreateCommand();
+                statusCmd.Transaction = transaction;
+                statusCmd.CommandText = "SELECT TOP (1) status FROM dbo.pipeline_holder_approvals WHERE case_id=@caseId AND holder_role='Chief Counsel' ORDER BY id DESC";
+                statusCmd.Parameters.Add(new SqlParameter("@caseId", model.Id));
+                var mostRecentChiefCounselStatus = (await statusCmd.ExecuteScalarAsync(cancellationToken)) as string;
+                PipelinePromotionGate.EnsureFilingApproved(mostRecentChiefCounselStatus);
             }
         }
 

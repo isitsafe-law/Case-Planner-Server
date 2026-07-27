@@ -44,6 +44,22 @@ internal static class PipelinePromotionGate
         if (mostRecentApprovalStatus != "Approved")
             throw new InvalidOperationException($"{previousHolder} must mark this reviewed as Approved before it can advance to {newHolder}.");
     }
+
+    // Milestone 2's analogous gate on the case-status transition itself (rather than the holder
+    // handoff): a case/tract cannot leave Pipeline status - i.e. be saved with CaseStatus changing
+    // to anything else - until Chief Counsel has recorded an "Approved" decision for it. True only
+    // for a genuine forward move out of Pipeline; staying in Pipeline (or a blank/no-op newCaseStatus)
+    // is never gated here.
+    public static bool RequiresFilingApproval(string? previousCaseStatus, string? newCaseStatus) =>
+        string.Equals(previousCaseStatus, "Pipeline", StringComparison.Ordinal)
+        && !string.IsNullOrWhiteSpace(newCaseStatus)
+        && !string.Equals(newCaseStatus, "Pipeline", StringComparison.Ordinal);
+
+    public static void EnsureFilingApproved(string? mostRecentChiefCounselApprovalStatus)
+    {
+        if (mostRecentChiefCounselApprovalStatus != "Approved")
+            throw new InvalidOperationException("Chief Counsel must approve the Complaint in Condemnation before this case can leave Pipeline status.");
+    }
 }
 
 // pipeline_holder_approvals - append-only log backing PipelinePromotionGate above. Every

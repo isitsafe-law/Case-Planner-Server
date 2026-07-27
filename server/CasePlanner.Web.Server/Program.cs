@@ -830,7 +830,9 @@ app.MapPost("/api/cases/{id:long}/open-folder", async (long id,IOperationalWorks
 app.MapPost("/api/cases",async(CaseRecord model,ICaseCatalogStore cases,CaseAccessService access,CancellationToken token)=>
 {
     var allowed=model.Id==0?access.CanCreateCases:await access.CanWriteAsync(model.Id,token);
-    return allowed?Results.Ok(await cases.SaveCaseAsync(model,token)):Results.Forbid();
+    if(!allowed) return Results.Forbid();
+    try{return Results.Ok(await cases.SaveCaseAsync(model,token));}
+    catch(InvalidOperationException ex){return Results.BadRequest(new{error=ex.Message});}
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapDelete("/api/cases/{id:long}", async (long id, ICaseCatalogStore cases, HttpContext context, CancellationToken token) =>
 {

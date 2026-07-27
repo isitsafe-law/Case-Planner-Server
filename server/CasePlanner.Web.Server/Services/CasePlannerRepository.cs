@@ -8092,13 +8092,31 @@ public sealed partial class CasePlannerRepository
         {
             var priorCmd = connection.CreateCommand();
             priorCmd.Transaction = tx;
-            priorCmd.CommandText = "SELECT current_holder, pipeline_stage FROM cases WHERE id=@id";
+            priorCmd.CommandText = "SELECT current_holder, pipeline_stage, COALESCE(case_status, 'Pipeline') FROM cases WHERE id=@id";
             priorCmd.Parameters.AddWithValue("@id", model.Id);
-            await using var priorReader = await priorCmd.ExecuteReaderAsync();
-            if (await priorReader.ReadAsync())
+            string? previousCaseStatus = null;
+            await using (var priorReader = await priorCmd.ExecuteReaderAsync())
             {
-                previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
-                previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+                if (await priorReader.ReadAsync())
+                {
+                    previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
+                    previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
+                    previousCaseStatus = priorReader.IsDBNull(2) ? null : priorReader.GetString(2);
+                }
+            }
+
+            // Milestone 2 gate: analogous to the Task B holder-promotion gate above, but on the
+            // case-status transition itself. Must run using model.CaseStatus's finalized,
+            // post-auto-recompute value (see the block at the top of this method) and must run
+            // before the actual INSERT/UPDATE below.
+            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
+            {
+                var statusCmd = connection.CreateCommand();
+                statusCmd.Transaction = tx;
+                statusCmd.CommandText = "SELECT status FROM pipeline_holder_approvals WHERE case_id=@case_id AND holder_role='Chief Counsel' ORDER BY id DESC LIMIT 1";
+                statusCmd.Parameters.AddWithValue("@case_id", model.Id);
+                var mostRecentChiefCounselStatus = (await statusCmd.ExecuteScalarAsync()) as string;
+                PipelinePromotionGate.EnsureFilingApproved(mostRecentChiefCounselStatus);
             }
         }
 

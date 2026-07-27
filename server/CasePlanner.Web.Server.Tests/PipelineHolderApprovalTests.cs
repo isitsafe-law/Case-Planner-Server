@@ -235,4 +235,127 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.RecordAsync(c.Id, new RecordPipelineHolderApprovalRequest { HolderRole = "Filing Staff", Status = "Approved" }));
     }
+
+    // --- Milestone 2: the Filing Approval gate on the case-status transition itself
+    // (PipelinePromotionGate.RequiresFilingApproval/EnsureFilingApproved), exercised through
+    // CasePlannerRepository.SaveCaseAsync -> SaveCaseInternalAsync. A case/tract cannot leave
+    // CaseStatus="Pipeline" until Chief Counsel has recorded an "Approved" decision for it -
+    // analogous to Task B's holder-promotion gate above, but on the case-status column itself
+    // rather than current_holder. ---
+
+    [Fact]
+    public async Task SaveCaseAsync_LeavingPipeline_BlockedWithoutAnyChiefCounselApprovalRow()
+    {
+        var c = await CreatePipelineCaseAsync();
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.CaseStatus = "Filed / Service Pending";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
+        Assert.Contains("Chief Counsel", ex.Message);
+        Assert.Contains("Complaint in Condemnation", ex.Message);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Pipeline", reloaded.CaseStatus);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_LeavingPipeline_SucceedsOnceChiefCounselHasApproved()
+    {
+        var c = await CreatePipelineCaseAsync();
+        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
+        {
+            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Approved",
+        });
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.CaseStatus = "Filed / Service Pending";
+
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_LeavingPipeline_BlockedWhenMostRecentChiefCounselRowWasReturned()
+    {
+        var c = await CreatePipelineCaseAsync();
+        // An older Approved row exists, but the most recent Chief Counsel row is Returned - the
+        // gate must key off the latest row, not "any Approved row ever" (mirrors Task B's
+        // equivalent test for the holder-promotion gate).
+        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
+        {
+            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Approved",
+        });
+        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
+        {
+            CaseId = c.Id, HolderRole = "Chief Counsel", Status = "Returned",
+        });
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.CaseStatus = "Filed / Service Pending";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Pipeline", reloaded.CaseStatus);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_StayingInPipeline_UnrelatedFieldEditsNeverTriggerTheGate()
+    {
+        var c = await CreatePipelineCaseAsync();
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.NextAction = "Draft the Complaint in Condemnation";
+        loaded.ValuationNotes = "Unrelated field edit";
+        // Explicitly re-saved as "Pipeline" (unchanged) alongside the unrelated edits.
+        loaded.CaseStatus = "Pipeline";
+
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Pipeline", reloaded.CaseStatus);
+        Assert.Equal("Draft the Complaint in Condemnation", reloaded.NextAction);
+        Assert.Equal("Unrelated field edit", reloaded.ValuationNotes);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_BrandNewCase_IsNeverGatedRegardlessOfApprovalState()
+    {
+        // Id == 0 - simulates an imported/backfilled case with no prior "Pipeline" state to leave,
+        // so creation must always succeed here even with zero pipeline_holder_approvals rows.
+        var c = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Imported Case",
+            County = "Pulaski",
+            Status = "Active",
+            Track = "Contested",
+            Stage = "Service",
+            CaseNumber = "1CV-24-500",
+            CaseStatus = "Filed / Service Pending",
+        });
+
+        Assert.Equal("Filed / Service Pending", c.CaseStatus);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_AutoRecomputedCaseStatus_IsStillGatedEvenWhenIncomingCaseStatusIsBlank()
+    {
+        // The trickiest case: the incoming model's CaseStatus is left blank, which triggers
+        // SaveCaseInternalAsync's existing auto-recompute block (MapConsolidatedCaseStatus) BEFORE
+        // the gate check runs. Status="Active" (non-Pipeline), Stage="Service", and a non-blank
+        // CaseNumber together make MapConsolidatedCaseStatus compute "Filed / Service Pending" -
+        // the gate must observe THAT recomputed value, not the blank incoming one, otherwise a
+        // save could dodge the gate simply by omitting CaseStatus from the request.
+        var c = await CreatePipelineCaseAsync();
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.CaseStatus = "";
+        loaded.Status = "Active";
+        loaded.Stage = "Service";
+        loaded.CaseNumber = "1CV-24-777";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
+        Assert.Contains("Chief Counsel", ex.Message);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Pipeline", reloaded.CaseStatus);
+    }
 }

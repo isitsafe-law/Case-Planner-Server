@@ -788,6 +788,24 @@ app.MapPut("/api/activity/{id:long}", async (long id,UpdateActivityRequest reque
         return Results.BadRequest(new { error = ex.Message });
     }
 });
+// Manager/Administrator Dashboard sign-off consolidation, item 5: a thin, read-only filter over
+// the existing activity_log (already the shared audit substrate every sign-off-shaped feature in
+// this app writes through - pre-filing milestones, settlement authority, and holder-change history
+// once item 1 lands) so an auditor can pull one chronological "who signed off on what" register per
+// case, without wading through routine activity (deadlines completed, notes added, etc.). No new
+// table - this is a query, not a schema change. Extend this set if a future feature adds another
+// kind of sign-off record; nothing else needs to change.
+var signOffActivityTypes = new HashSet<string>(StringComparer.Ordinal)
+{
+    "HolderAssigned", "PipelineHolderApprovalRecorded",
+    "PreFilingMilestoneMarked", "PreFilingMilestoneUnmarked", "FilingGateOverridden",
+    "SettlementAuthorityRequested", "SettlementAuthorityReceived", "SettlementAuthorityDenied", "SettlementAuthorityInfoRequested",
+};
+app.MapGet("/api/cases/{id:long}/sign-off-register", async (long id, IActivityStore activity, CancellationToken token) =>
+{
+    var all = await activity.GetAsync(id, token);
+    return Results.Ok(all.Where(entry => signOffActivityTypes.Contains(entry.ActivityType)).OrderBy(entry => entry.OccurredAt).ToList());
+});
 app.MapPost("/api/cases/{id:long}/next-action", async (long id, SetNextActionRequest request,ICaseQuickActionService actions,CancellationToken token) =>
 {
     try{return Results.Ok(new{rowVersion=await actions.SetNextActionAsync(id,request,token)});}

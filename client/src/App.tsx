@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
@@ -774,7 +774,7 @@ type IssueTagUsage = { tagName: string; templateTitles: string[] }
 // Dormant multi-user foundation (Entra-provisioned identities, per-case assignments) surfaced
 // here for the first time. See server/CasePlanner.Web.Server/Security/EntraOptions.cs and
 // SqlServerCaseAssignmentRepository.cs for the backing records these mirror.
-type AuthenticatedUserProfile = {
+export type AuthenticatedUserProfile = {
   id: string
   tenantId: string
   objectId: string
@@ -783,6 +783,12 @@ type AuthenticatedUserProfile = {
   roles: string[]
   isAdmin: boolean
   isManager: boolean
+  // Added for the Manager/Administrator Dashboard's Approvals tab (Milestone 5) - the server's
+  // GET /api/auth/me handler (Program.cs) has returned authenticated.ManagerTier since Milestone 1,
+  // this client type just never picked it up (same one-line gap as CaseRecord.dateSentToCurrentHolder
+  // was in Milestone 4). "ChiefCounsel" | "DeputyChiefCounsel" | null - only ChiefCounsel gets the
+  // Settlement Authority decide action; Deputy Chief Counsel gets read-only visibility like anyone else.
+  managerTier?: string | null
 }
 type AppUserSummary = {
   id: string
@@ -1578,7 +1584,12 @@ export function districtForCountyChange(currentDistrict: string | null | undefin
 
 const takingTypes = ['Partial', 'Full', 'TCE'] as const
 
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
+// Exported starting with the Manager/Administrator Dashboard Milestone 5 Approvals tab - the first
+// dashboard sub-component (SettlementAuthoritySection.tsx) to call this directly rather than going
+// through an App.tsx-level onSubmit callback the way RecordDecisionDialog/PipelineHandoffDialog do,
+// since the Settlement Authority decide action is opened and owned entirely within the Approvals
+// tab's own component tree (dialog state included), not threaded up to App.tsx.
+export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {})
   const accessToken = await getApiAccessToken()
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
@@ -2241,6 +2252,12 @@ function App() {
   // way circuitClerksData/assessorsData are fetched - see loadInitial below.
   const [settlementAuthorityRequests, setSettlementAuthorityRequests] = useState<SettlementAuthorityRequestRecord[]>([])
   const [preFilingMilestones, setPreFilingMilestones] = useState<PreFilingMilestoneRecord[]>([])
+  // Manager/Administrator Dashboard Milestone 5: the Approvals tab's Filing Status section uses the
+  // server's already-aggregated aging view (GET /api/prefiling-milestones/aging) rather than
+  // re-deriving furthest-milestone-per-case client-side the way IncomingPipelinePanel.tsx does for
+  // its own (different) Calendar-tab purpose. Fetched once in loadInitial alongside the Milestone 4
+  // additions above, not on-demand, so the tab renders instantly on first click like every sibling tab.
+  const [preFilingMilestonesAging, setPreFilingMilestonesAging] = useState<PreFilingMilestoneAgingSummary | null>(null)
   // Bulk cross-case pipeline-handoff fetch (GET /api/work-queues/pipeline-handoffs) - used only by
   // Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections, not wired into the work queues,
   // the per-case Handoff-history dialog, or anything else.
@@ -2784,7 +2801,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, settlementAuthorityRequestsData, preFilingMilestonesData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, settlementAuthorityRequestsData, preFilingMilestonesData, preFilingMilestonesAgingData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2809,6 +2826,7 @@ function App() {
         api<CollectorRecord[]>('/api/collectors'),
         api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'),
         api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
+        api<PreFilingMilestoneAgingSummary>('/api/prefiling-milestones/aging'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2834,6 +2852,7 @@ function App() {
       setCollectors(collectorsData)
       setSettlementAuthorityRequests(settlementAuthorityRequestsData)
       setPreFilingMilestones(preFilingMilestonesData)
+      setPreFilingMilestonesAging(preFilingMilestonesAgingData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -2855,6 +2874,20 @@ function App() {
       setCases(caseList)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load cases.')
+    }
+  }
+
+  // Manager/Administrator Dashboard Milestone 5: the Approvals tab's onDecided callback. The
+  // POST /api/settlement-authority-requests/{id}/decide call itself lives in
+  // SettlementAuthorityDecisionDialog/ApprovalsTab (a division-wide queue, not a single-case edit,
+  // so it doesn't fit loadCurrentCase's per-case refresh shape) - this is only the refresh half,
+  // re-fetching the one division-wide list rather than invalidating all of loadInitial, mirroring
+  // saveCircuitClerk's own re-fetch-after-save pattern above.
+  async function refreshSettlementAuthorityRequests() {
+    try {
+      setSettlementAuthorityRequests(await api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to refresh Settlement Authority requests.')
     }
   }
 
@@ -10267,7 +10300,10 @@ function App() {
           hearings={queueHearings}
           settlementAuthorityRequests={settlementAuthorityRequests}
           preFilingMilestones={preFilingMilestones}
+          preFilingMilestonesAging={preFilingMilestonesAging}
+          currentUser={currentUser}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
+          onDecided={refreshSettlementAuthorityRequests}
         />
       )}
 

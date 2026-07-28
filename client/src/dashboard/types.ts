@@ -326,3 +326,30 @@ const PRE_FILING_MILESTONE_LABELS: Record<PreFilingMilestone, string> = {
 export function preFilingMilestoneLabel(milestone: string): string {
   return PRE_FILING_MILESTONE_LABELS[milestone as PreFilingMilestone] ?? milestone
 }
+
+// Manager/Administrator Dashboard Milestone 5. Mirrors server/CasePlanner.Web.Server/Models/
+// DomainModels.cs's PreFilingMilestoneAgingSummary/-Bucket/-Case field-for-field - the already
+// server-aggregated view behind GET /api/prefiling-milestones/aging, consumed by the Approvals
+// tab's read-only Filing Status section (never re-derived client-side).
+
+export type PreFilingMilestoneAgingBucket = {
+  // One of PRE_FILING_MILESTONE_ORDER, or "None" for a Pipeline case with nothing marked yet.
+  milestone: string
+  count: number
+}
+
+export type PreFilingMilestoneAgingCase = {
+  caseId: number
+  jobNumber?: string | null
+  tract?: string | null
+  caseName?: string | null
+  // "None" when no milestone has been marked yet for this case.
+  furthestMilestone: string
+  // Null when furthestMilestone is "None" - there is no markedAt timestamp to measure from.
+  daysSinceMarked?: number | null
+}
+
+export type PreFilingMilestoneAgingSummary = {
+  buckets: PreFilingMilestoneAgingBucket[]
+  cases: PreFilingMilestoneAgingCase[]
+}

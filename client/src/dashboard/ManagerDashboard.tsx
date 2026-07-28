@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
-import type { CaseRecord, Hearing } from '../App'
+import type { AuthenticatedUserProfile, CaseRecord, Hearing } from '../App'
 import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
-import type { PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './types'
+import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './types'
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
 import { IncomingPipelinePanel } from './IncomingPipelinePanel'
+import { ApprovalsTab } from './ApprovalsTab'
 
 type ManagerDashboardTab = 'calendar' | 'approvals' | 'byAttorney' | 'byJob' | 'needsAttention'
 
@@ -38,13 +39,21 @@ export function ManagerDashboard({
   hearings,
   settlementAuthorityRequests,
   preFilingMilestones,
+  preFilingMilestonesAging,
+  currentUser,
   onOpenCase,
+  onDecided,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
+  preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
+  currentUser: AuthenticatedUserProfile | null
   onOpenCase: (caseId: number) => void
+  // Manager/Administrator Dashboard Milestone 5: re-fetches settlementAuthorityRequests after a
+  // successful Settlement Authority decide action - see App.tsx's refreshSettlementAuthorityRequests.
+  onDecided: () => Promise<void>
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
   const [horizon, setHorizon] = useState<CalendarHorizon>(30)
@@ -128,7 +137,16 @@ export function ManagerDashboard({
           </div>
         )}
 
-        {activeTab === 'approvals' && <Panel title="Approvals">This view is coming in a later milestone.</Panel>}
+        {activeTab === 'approvals' && (
+          <ApprovalsTab
+            allCases={allCases}
+            settlementAuthorityRequests={settlementAuthorityRequests}
+            preFilingMilestonesAging={preFilingMilestonesAging}
+            currentUser={currentUser}
+            onOpenCase={onOpenCase}
+            onDecided={onDecided}
+          />
+        )}
         {activeTab === 'byAttorney' && <Panel title="By Attorney">This view is coming in a later milestone.</Panel>}
         {activeTab === 'byJob' && <Panel title="By Job">This view is coming in a later milestone.</Panel>}
         {activeTab === 'needsAttention' && <Panel title="Needs Attention">This view is coming in a later milestone.</Panel>}

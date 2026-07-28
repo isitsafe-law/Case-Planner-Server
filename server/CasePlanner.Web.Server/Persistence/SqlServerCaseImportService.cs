@@ -20,6 +20,10 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                 if(string.IsNullOrWhiteSpace(caseNumber)&&string.IsNullOrWhiteSpace(job)&&string.IsNullOrWhiteSpace(tract)){result.Skipped++;result.Errors.Add($"Row {result.RowsRead}: missing identifier.");continue;}
                 var current=Match(existing,caseNumber,job,tract);var status=Field(row,map,"Status");
                 var model=current??new CaseRecord();
+                // Pre-filing sign-off/Settlement Authority final implementation, item 4 - only a
+                // brand-new row is ever flagged as not originated in system; SaveCaseAsync's UPDATE
+                // branch ignores this field on every later save regardless.
+                if(current is null)model.OriginatedInSystem=false;
                 model.CaseNumber=caseNumber;model.CaseName=Field(row,map,"Case Name");model.JobNumber=job;model.Tract=tract;model.County=Field(row,map,"County");
                 model.Status=current is null?(status is "Closed" or "Complete"?status:"Triage"):(current.Status=="Triage"?"Triage":status);
                 model.FilingDate=Date(Field(row,map,"Filing Date"));model.DateOfTaking=Date(Field(row,map,"Date of Taking"));model.TrialDate=Date(Field(row,map,"Trial Date"));
@@ -54,6 +58,7 @@ public sealed class SqlServerCaseImportService(SqlServerCaseCatalogReader cases)
                 try
                 {
                     var current=Match(existing,caseNumber,job,tract);var model=current??new CaseRecord();var closed=sheetName=="Closed";
+                    if(current is null)model.OriginatedInSystem=false;
                     model.CaseNumber=caseNumber;model.CaseName=string.IsNullOrWhiteSpace(name)?caseNumber:name;model.JobNumber=job;model.Tract=tract;model.County=Cell(row,map,"COUNTY");
                     model.Status=closed?"Closed":current is null||current.Status=="Triage"?"Triage":"Active";model.FilingDate=CellDate(row,map,"DATE FILED");
                     model.DateOfTaking=CellDate(row,map,"DATE OF TAKING");model.TrialDate=CellDate(row,map,"TRIAL DATE");model.DateOpened=CellDate(row,map,"DATE OPENED");model.DepositAmount=CellMoney(row,map,"DEPOSIT");

@@ -1022,7 +1022,8 @@ public sealed partial class CasePlannerRepository
                    answer_filed, answer_filed_date,
                    attorney_fees_awarded, attorney_fees_amount, judge, division,
                    fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
-                   settlement_authorized_ceiling
+                   settlement_authorized_ceiling,
+                   COALESCE(originated_in_system, 1)
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -2356,6 +2357,9 @@ public sealed partial class CasePlannerRepository
         // (case_prefiling_milestones) and the manager-override path on the filing gate itself
         // (PipelinePromotionGate.EnsureFilingReady) are meaningful case events too.
         "PreFilingMilestoneMarked", "PreFilingMilestoneUnmarked", "FilingGateOverridden",
+        // Pre-filing sign-off/Settlement Authority final implementation, item 2: an unstructured
+        // review note is a real case event too, even though it enforces nothing on its own.
+        "ReviewNoteAdded",
     };
 
     // The one place last_meaningful_activity_date gets written - everything else that touches a
@@ -4032,7 +4036,7 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                   marked_by_user_id, marked_by_display, marked_by_role, note
+                   marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
             FROM case_prefiling_milestones
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY case_id, id
@@ -4059,6 +4063,7 @@ public sealed partial class CasePlannerRepository
         MarkedByDisplay = reader.IsDBNull(7) ? null : reader.GetString(7),
         MarkedByRole = reader.IsDBNull(8) ? null : reader.GetString(8),
         Note = reader.IsDBNull(9) ? null : reader.GetString(9),
+        BatchId = reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null,
     };
 
     private static async Task<Dictionary<string, bool>> LoadPreFilingMilestoneMarksAsync(SqliteConnection connection, SqliteTransaction tx, long caseId)
@@ -4097,9 +4102,9 @@ public sealed partial class CasePlannerRepository
                 insert.Transaction = tx;
                 insert.CommandText = """
                     INSERT INTO case_prefiling_milestones
-                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note)
+                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note, batch_id)
                     VALUES
-                        (@case_id, @milestone, 1, @occurred_date, @marked_at, @marked_by_user_id, @marked_by_display, @marked_by_role, @note);
+                        (@case_id, @milestone, 1, @occurred_date, @marked_at, @marked_by_user_id, @marked_by_display, @marked_by_role, @note, @batch_id);
                     SELECT last_insert_rowid();
                     """;
                 insert.Parameters.AddWithValue("@case_id", caseId);
@@ -4110,6 +4115,7 @@ public sealed partial class CasePlannerRepository
                 insert.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
                 insert.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
                 insert.Parameters.AddWithValue("@note", DbValue(request.Note));
+                insert.Parameters.AddWithValue("@batch_id", DbValue(request.BatchId));
                 id = Convert.ToInt64(await insert.ExecuteScalarAsync());
             }
             else
@@ -4121,7 +4127,7 @@ public sealed partial class CasePlannerRepository
                     UPDATE case_prefiling_milestones SET
                         is_marked=1, occurred_date=@occurred_date, marked_at=@marked_at,
                         marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
-                        marked_by_role=@marked_by_role, note=@note
+                        marked_by_role=@marked_by_role, note=@note, batch_id=@batch_id
                     WHERE id=@id
                     """;
                 update.Parameters.AddWithValue("@occurred_date", DbValue(request.OccurredDate));
@@ -4130,6 +4136,7 @@ public sealed partial class CasePlannerRepository
                 update.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
                 update.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
                 update.Parameters.AddWithValue("@note", DbValue(request.Note));
+                update.Parameters.AddWithValue("@batch_id", DbValue(request.BatchId));
                 update.Parameters.AddWithValue("@id", id);
                 await update.ExecuteNonQueryAsync();
             }
@@ -4138,7 +4145,7 @@ public sealed partial class CasePlannerRepository
             readBackCmd.Transaction = tx;
             readBackCmd.CommandText = """
                 SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                       marked_by_user_id, marked_by_display, marked_by_role, note
+                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
                 FROM case_prefiling_milestones WHERE id=@id
                 """;
             readBackCmd.Parameters.AddWithValue("@id", id);
@@ -4188,7 +4195,7 @@ public sealed partial class CasePlannerRepository
                 UPDATE case_prefiling_milestones SET
                     is_marked=0, occurred_date=NULL, marked_at=@marked_at,
                     marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
-                    marked_by_role=@marked_by_role, note=@note
+                    marked_by_role=@marked_by_role, note=@note, batch_id=NULL
                 WHERE id=@id
                 """;
             update.Parameters.AddWithValue("@marked_at", now);
@@ -4203,7 +4210,7 @@ public sealed partial class CasePlannerRepository
             readBackCmd.Transaction = tx;
             readBackCmd.CommandText = """
                 SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                       marked_by_user_id, marked_by_display, marked_by_role, note
+                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
                 FROM case_prefiling_milestones WHERE id=@id
                 """;
             readBackCmd.Parameters.AddWithValue("@id", id);
@@ -4253,6 +4260,100 @@ public sealed partial class CasePlannerRepository
         }
 
         return PreFilingMilestoneGate.BuildAgingSummary(cases, marks);
+    }
+
+    // Pre-filing sign-off/Settlement Authority final implementation, item 2: an unstructured,
+    // append-only review-note log - no upsert, no unmark, unlike case_prefiling_milestones above.
+    // Mirrors PipelineHolderApprovalRecord's append-only shape more than PreFilingMilestoneRecord's
+    // upsert-per-milestone one, since there is no fixed slot a note occupies.
+    public async Task<List<ReviewNoteRecord>> GetReviewNotesAsync(long? caseId)
+    {
+        var list = new List<ReviewNoteRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, reviewer_name, reviewer_role, decision, comment, occurred_date,
+                   created_at, created_by_user_id, created_by_display, created_by_role
+            FROM case_review_notes
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY occurred_date, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(ReadReviewNote(reader));
+        }
+        return list;
+    }
+
+    private static ReviewNoteRecord ReadReviewNote(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt64(0),
+        CaseId = reader.GetInt64(1),
+        ReviewerName = reader.IsDBNull(2) ? null : reader.GetString(2),
+        ReviewerRole = reader.IsDBNull(3) ? null : reader.GetString(3),
+        Decision = reader.IsDBNull(4) ? "" : reader.GetString(4),
+        Comment = reader.IsDBNull(5) ? null : reader.GetString(5),
+        OccurredDate = reader.IsDBNull(6) ? "" : reader.GetString(6),
+        CreatedAt = reader.IsDBNull(7) ? null : reader.GetString(7),
+        CreatedByUserId = reader.IsDBNull(8) ? null : reader.GetString(8),
+        CreatedByDisplay = reader.IsDBNull(9) ? null : reader.GetString(9),
+        CreatedByRole = reader.IsDBNull(10) ? null : reader.GetString(10),
+    };
+
+    public async Task<ReviewNoteRecord> CreateReviewNoteAsync(long caseId, CreateReviewNoteRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Decision))
+            throw new ArgumentException("A decision (e.g. \"Looks good\" or \"Sent back for revision\") is required.");
+
+        var created = await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var occurredDate = string.IsNullOrWhiteSpace(request.OccurredDate) ? now[..10] : request.OccurredDate;
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO case_review_notes
+                    (case_id, reviewer_name, reviewer_role, decision, comment, occurred_date,
+                     created_at, created_by_user_id, created_by_display, created_by_role)
+                VALUES
+                    (@case_id, @reviewer_name, @reviewer_role, @decision, @comment, @occurred_date,
+                     @created_at, @created_by_user_id, @created_by_display, @created_by_role);
+                SELECT last_insert_rowid();
+                """;
+            cmd.Parameters.AddWithValue("@case_id", caseId);
+            cmd.Parameters.AddWithValue("@reviewer_name", DbValue(request.ReviewerName));
+            cmd.Parameters.AddWithValue("@reviewer_role", DbValue(request.ReviewerRole));
+            cmd.Parameters.AddWithValue("@decision", request.Decision.Trim());
+            cmd.Parameters.AddWithValue("@comment", DbValue(request.Comment));
+            cmd.Parameters.AddWithValue("@occurred_date", occurredDate);
+            cmd.Parameters.AddWithValue("@created_at", now);
+            cmd.Parameters.AddWithValue("@created_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@created_by_display", _actor.AuditLabel);
+            cmd.Parameters.AddWithValue("@created_by_role", DbValue(_actor.Role));
+            var id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+            return new ReviewNoteRecord
+            {
+                Id = id,
+                CaseId = caseId,
+                ReviewerName = string.IsNullOrWhiteSpace(request.ReviewerName) ? null : request.ReviewerName.Trim(),
+                ReviewerRole = string.IsNullOrWhiteSpace(request.ReviewerRole) ? null : request.ReviewerRole.Trim(),
+                Decision = request.Decision.Trim(),
+                Comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim(),
+                OccurredDate = occurredDate,
+                CreatedAt = now,
+                CreatedByUserId = _actor.UserId?.ToString("D"),
+                CreatedByDisplay = _actor.AuditLabel,
+                CreatedByRole = _actor.Role,
+            };
+        });
+
+        await RecordActivityAsync(caseId, "ReviewNoteAdded",
+            string.IsNullOrWhiteSpace(request.Comment) ? request.Decision.Trim() : $"{request.Decision.Trim()} — {request.Comment.Trim()}", null);
+        return created;
     }
 
     public async Task<List<IssueTagRecord>> GetIssueTagsAsync()
@@ -5602,7 +5703,12 @@ public sealed partial class CasePlannerRepository
                         ServiceDeadline120 = NormalizeDate(GetField(row, map, "Service Deadline 120")),
                         ServiceMethod = BlankToNull(GetField(row, map, "Service Method")),
                         ServiceStatus = BlankToNull(GetField(row, map, "Service Status")),
-                        ServiceNotes = BlankToNull(GetField(row, map, "Service Notes"))
+                        ServiceNotes = BlankToNull(GetField(row, map, "Service Notes")),
+                        // Pre-filing sign-off/Settlement Authority final implementation, item 4 -
+                        // only meaningful for a brand-new row (existingId is null); ignored on
+                        // re-import of an existing case since SaveCaseInternalAsync's UPDATE branch
+                        // never writes this column.
+                        OriginatedInSystem = existingId is not null
                     };
 
                     await SaveCaseInternalAsync(connection, tx, model);
@@ -5705,7 +5811,10 @@ public sealed partial class CasePlannerRepository
                             DiscoveryCompleted = BlankToNull(CellText(row, map, "DISCOVERY COMPLETED?")),
                             UpdatedAppraisal = BlankToNull(CellText(row, map, "UPDATED APPRAISAL?")),
                             ClosedDate = isClosedSheet ? CellDate(row, map, "CLOSED DATE") : null,
-                            ServiceRequired = true
+                            ServiceRequired = true,
+                            // Pre-filing sign-off/Settlement Authority final implementation, item 4 -
+                            // see the CSV import path's identical comment above.
+                            OriginatedInSystem = existingId is not null
                         };
 
                         await SaveCaseInternalAsync(connection, tx, model);
@@ -6150,12 +6259,20 @@ public sealed partial class CasePlannerRepository
         // SQLite's dynamic typing means this is a documentation nicety rather than an enforced
         // rule, but it matches every sibling nullable-decimal case column instead of standing out).
         await AddColumnIfMissingAsync(connection, "cases", "settlement_authorized_ceiling", "REAL");
+        // Pre-filing sign-off/Settlement Authority final implementation, item 4: true (the SQLite
+        // DEFAULT backfills every existing row) unless a case was created by the CSV/Excel import
+        // path - see CaseRecord.OriginatedInSystem's doc comment.
+        await AddColumnIfMissingAsync(connection, "cases", "originated_in_system", "INTEGER NOT NULL DEFAULT 1");
         // Manager Dashboard sign-off consolidation, item 4: Settlement Authority becomes pure
         // record-keeping - a "grant" is a distinct real-world fact from "decided_at" (when the
         // system entry was made) and "decided_by_display" (who operated the UI to record it).
         // granted_by/granted_by_role name whoever actually granted the authority (often outside
         // the system, e.g. by email) and granted_date is that real-world, backdatable date -
         // document_reference is an optional pointer to supporting correspondence/paperwork.
+        // Pre-filing sign-off/Settlement Authority final implementation, item 1: shared by every
+        // row a single bulk-mark action touches, so the activity trail shows they came from one
+        // action - null for a single-case mark.
+        await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "batch_id", "TEXT");
         await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by", "TEXT");
         await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by_role", "TEXT");
         await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_date", "TEXT");
@@ -6858,6 +6975,78 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@address", DbValue(model.Address));
         cmd.Parameters.AddWithValue("@phone", DbValue(model.Phone));
         cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+        model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+        return model;
+    });
+
+    private const string NewspaperColumns = "id,county,name,is_general_circulation,publication_days_frequency,submission_deadline,contact_name,phone,email,address,billing_affidavit_contact,typical_cost,notes,is_active";
+
+    private static NewspaperRecord ReadNewspaper(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt64(0),
+        County = reader.GetString(1),
+        Name = reader.GetString(2),
+        IsGeneralCirculation = reader.GetInt64(3) != 0,
+        PublicationDaysFrequency = reader.IsDBNull(4) ? null : reader.GetString(4),
+        SubmissionDeadline = reader.IsDBNull(5) ? null : reader.GetString(5),
+        ContactName = reader.IsDBNull(6) ? null : reader.GetString(6),
+        Phone = reader.IsDBNull(7) ? null : reader.GetString(7),
+        Email = reader.IsDBNull(8) ? null : reader.GetString(8),
+        Address = reader.IsDBNull(9) ? null : reader.GetString(9),
+        BillingAffidavitContact = reader.IsDBNull(10) ? null : reader.GetString(10),
+        TypicalCost = reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+        Notes = reader.IsDBNull(12) ? null : reader.GetString(12),
+        IsActive = reader.GetInt64(13) != 0,
+    };
+
+    // Unlike circuit_clerks/assessors/collectors (exactly one row per county, resolved by county on
+    // save), newspapers has many rows per county with no natural upsert key - this is true per-row
+    // CRUD keyed by Id, matching the many-rows-per-county shape described on NewspaperRecord.
+    public async Task<List<NewspaperRecord>> GetNewspapersAsync()
+    {
+        var list = new List<NewspaperRecord>();
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = $"SELECT {NewspaperColumns} FROM newspapers ORDER BY county,name";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) list.Add(ReadNewspaper(reader));
+        return list;
+    }
+
+    public async Task<NewspaperRecord> SaveNewspaperAsync(NewspaperRecord model) => await WithWriteAsync(async (connection, tx) =>
+    {
+        var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+        if (model.Id == 0)
+        {
+            cmd.CommandText = """
+                INSERT INTO newspapers(county,name,is_general_circulation,publication_days_frequency,submission_deadline,contact_name,phone,email,address,billing_affidavit_contact,typical_cost,notes,is_active)
+                VALUES(@county,@name,@general,@frequency,@deadline,@contactName,@phone,@email,@address,@billingContact,@cost,@notes,@active);
+                SELECT last_insert_rowid();
+                """;
+        }
+        else
+        {
+            cmd.CommandText = """
+                UPDATE newspapers SET county=@county,name=@name,is_general_circulation=@general,publication_days_frequency=@frequency,
+                    submission_deadline=@deadline,contact_name=@contactName,phone=@phone,email=@email,address=@address,
+                    billing_affidavit_contact=@billingContact,typical_cost=@cost,notes=@notes,is_active=@active
+                WHERE id=@id; SELECT @id;
+                """;
+            cmd.Parameters.AddWithValue("@id", model.Id);
+        }
+        cmd.Parameters.AddWithValue("@county", model.County);
+        cmd.Parameters.AddWithValue("@name", model.Name);
+        cmd.Parameters.AddWithValue("@general", model.IsGeneralCirculation ? 1 : 0);
+        cmd.Parameters.AddWithValue("@frequency", DbValue(model.PublicationDaysFrequency));
+        cmd.Parameters.AddWithValue("@deadline", DbValue(model.SubmissionDeadline));
+        cmd.Parameters.AddWithValue("@contactName", DbValue(model.ContactName));
+        cmd.Parameters.AddWithValue("@phone", DbValue(model.Phone));
+        cmd.Parameters.AddWithValue("@email", DbValue(model.Email));
+        cmd.Parameters.AddWithValue("@address", DbValue(model.Address));
+        cmd.Parameters.AddWithValue("@billingContact", DbValue(model.BillingAffidavitContact));
+        cmd.Parameters.AddWithValue("@cost", model.TypicalCost.HasValue ? model.TypicalCost.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@notes", DbValue(model.Notes));
+        cmd.Parameters.AddWithValue("@active", model.IsActive ? 1 : 0);
         model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
         return model;
     });
@@ -8600,9 +8789,10 @@ public sealed partial class CasePlannerRepository
         {
             var priorCmd = connection.CreateCommand();
             priorCmd.Transaction = tx;
-            priorCmd.CommandText = "SELECT current_holder, pipeline_stage, COALESCE(case_status, 'Pipeline') FROM cases WHERE id=@id";
+            priorCmd.CommandText = "SELECT current_holder, pipeline_stage, COALESCE(case_status, 'Pipeline'), COALESCE(originated_in_system, 1) FROM cases WHERE id=@id";
             priorCmd.Parameters.AddWithValue("@id", model.Id);
             string? previousCaseStatus = null;
+            var originatedInSystem = true;
             await using (var priorReader = await priorCmd.ExecuteReaderAsync())
             {
                 if (await priorReader.ReadAsync())
@@ -8610,6 +8800,7 @@ public sealed partial class CasePlannerRepository
                     previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
                     previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
                     previousCaseStatus = priorReader.IsDBNull(2) ? null : priorReader.GetString(2);
+                    originatedInSystem = Convert.ToInt64(priorReader.GetValue(3)) != 0;
                 }
             }
 
@@ -8619,8 +8810,10 @@ public sealed partial class CasePlannerRepository
             // run before the actual INSERT/UPDATE below. The check basis is now
             // case_prefiling_milestones (milestone="DirectorSignatureReceived") rather than
             // pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc comment
-            // for why.
-            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
+            // for why. originatedInSystem read from the row's own persisted value, not
+            // model.OriginatedInSystem, to close off a client-side bypass (pre-filing sign-off/
+            // Settlement Authority final implementation, item 4).
+            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus, originatedInSystem))
             {
                 var milestoneCmd = connection.CreateCommand();
                 milestoneCmd.Transaction = tx;
@@ -8660,6 +8853,7 @@ public sealed partial class CasePlannerRepository
                     attorney_fees_awarded, attorney_fees_amount, judge, division,
                     fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
                     settlement_authorized_ceiling,
+                    originated_in_system,
                     created_at, updated_at
                 ) VALUES (
                     @case_number, @case_name, @job_number, @tract, @county, @status, @stage, @track, @filing_date,
@@ -8683,6 +8877,7 @@ public sealed partial class CasePlannerRepository
                     @attorney_fees_awarded, @attorney_fees_amount, @judge, @division,
                     @fap_number, @parcel_number, @case_style, @opposing_counsel_contact, @case_folder_path,
                     @settlement_authorized_ceiling,
+                    @originated_in_system,
                     @created_at, @updated_at
                 );
                 SELECT last_insert_rowid();
@@ -8891,6 +9086,11 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@opposing_counsel_contact", DbValue(model.OpposingCounselContact));
         cmd.Parameters.AddWithValue("@case_folder_path", DbValue(model.CaseFolderPath));
         cmd.Parameters.AddWithValue("@settlement_authorized_ceiling", model.SettlementAuthorizedCeiling.HasValue ? model.SettlementAuthorizedCeiling.Value : DBNull.Value);
+        // Only referenced by the INSERT branch's SQL text above (like created_at/updated_at below,
+        // but unlike those two, also excluded from the UPDATE branch's SET clause) - immutable after
+        // a case is first created (pre-filing sign-off/Settlement Authority final implementation,
+        // item 4).
+        cmd.Parameters.AddWithValue("@originated_in_system", model.OriginatedInSystem ? 1 : 0);
         cmd.Parameters.AddWithValue("@created_at", now);
         cmd.Parameters.AddWithValue("@updated_at", now);
     }
@@ -9663,6 +9863,22 @@ public sealed partial class CasePlannerRepository
             phone TEXT,
             notes TEXT
         );
+        CREATE TABLE IF NOT EXISTS newspapers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            county TEXT NOT NULL,
+            name TEXT NOT NULL,
+            is_general_circulation INTEGER NOT NULL DEFAULT 0,
+            publication_days_frequency TEXT,
+            submission_deadline TEXT,
+            contact_name TEXT,
+            phone TEXT,
+            email TEXT,
+            address TEXT,
+            billing_affidavit_contact TEXT,
+            typical_cost REAL,
+            notes TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1
+        );
         CREATE TABLE IF NOT EXISTS settlement_authority_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
@@ -9695,7 +9911,21 @@ public sealed partial class CasePlannerRepository
             marked_by_display TEXT,
             marked_by_role TEXT,
             note TEXT,
+            batch_id TEXT,
             UNIQUE(case_id, milestone)
+        );
+        CREATE TABLE IF NOT EXISTS case_review_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            reviewer_name TEXT,
+            reviewer_role TEXT,
+            decision TEXT NOT NULL,
+            comment TEXT,
+            occurred_date TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by_user_id TEXT,
+            created_by_display TEXT,
+            created_by_role TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_discovery_postures_case_id ON discovery_postures(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);
@@ -9703,6 +9933,8 @@ public sealed partial class CasePlannerRepository
         CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read_created ON notifications(recipient_user_id, is_read, created_at);
         CREATE INDEX IF NOT EXISTS idx_settlement_authority_requests_case_id ON settlement_authority_requests(case_id);
         CREATE INDEX IF NOT EXISTS idx_case_prefiling_milestones_case_id ON case_prefiling_milestones(case_id);
+        CREATE INDEX IF NOT EXISTS idx_case_review_notes_case_id ON case_review_notes(case_id);
+        CREATE INDEX IF NOT EXISTS idx_newspapers_county ON newspapers(county);
         """;
 
     // These indexes touch cases columns added via AddColumnIfMissingAsync below, so they must run

@@ -71,6 +71,49 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MarkAsync_NoBatchId_LeavesBatchIdNull()
+    {
+        var c = await CreatePipelineCaseAsync();
+        var marked = await _fixture.Repository.MarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest { OccurredDate = "2026-01-15" });
+        Assert.Null(marked.BatchId);
+    }
+
+    [Fact]
+    public async Task MarkAsync_WithBatchId_RoundTripsIt_AndUnmarkClearsItBackToNull()
+    {
+        var c = await CreatePipelineCaseAsync();
+        var marked = await _fixture.Repository.MarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest
+        {
+            OccurredDate = "2026-01-15",
+            BatchId = "batch-123",
+        });
+        Assert.Equal("batch-123", marked.BatchId);
+
+        var reloaded = (await _fixture.Repository.GetPreFilingMilestonesAsync(c.Id)).Single();
+        Assert.Equal("batch-123", reloaded.BatchId);
+
+        var unmarked = await _fixture.Repository.UnmarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new UnmarkPreFilingMilestoneRequest { Reason = "Entered against the wrong tract." });
+        Assert.Null(unmarked.BatchId);
+    }
+
+    [Fact]
+    public async Task MarkAsync_SameBatchId_AcrossMultipleCases_LinksThemForTheAuditTrail()
+    {
+        var a = await CreatePipelineCaseAsync();
+        var b = await CreatePipelineCaseAsync();
+        const string batchId = "batch-shared";
+
+        await _fixture.Repository.MarkPreFilingMilestoneAsync(a.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest { OccurredDate = "2026-01-15", BatchId = batchId });
+        await _fixture.Repository.MarkPreFilingMilestoneAsync(b.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest { OccurredDate = "2026-01-15", BatchId = batchId });
+
+        var all = await _fixture.Repository.GetPreFilingMilestonesAsync(null);
+        var batchRows = all.Where(r => r.BatchId == batchId).ToList();
+        Assert.Equal(2, batchRows.Count);
+        Assert.Contains(batchRows, r => r.CaseId == a.Id);
+        Assert.Contains(batchRows, r => r.CaseId == b.Id);
+    }
+
+    [Fact]
     public async Task MarkAsync_ChiefCounselSignaturesReceived_BeforePleadingsPackageSent_ThrowsInvalidOperationException()
     {
         var c = await CreatePipelineCaseAsync();
@@ -203,6 +246,65 @@ public class PreFilingMilestoneTests : IAsyncLifetime
 
         var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
         Assert.Equal("Pipeline", reloaded.CaseStatus);
+    }
+
+    // --- Pre-filing sign-off/Settlement Authority final implementation, item 4:
+    // OriginatedInSystem skips the forcing-prompt entirely for a historically-imported case ---
+
+    [Fact]
+    public async Task SaveCaseAsync_NewCase_DefaultsOriginatedInSystemToTrue()
+    {
+        var c = await CreatePipelineCaseAsync();
+        Assert.True(c.OriginatedInSystem);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.True(reloaded.OriginatedInSystem);
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_LeavingPipeline_NotOriginatedInSystem_SkipsThePromptEntirely_EvenWithNoOverrideReason()
+    {
+        var c = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Historically Imported Fixture Case",
+            County = "Pulaski",
+            Status = "Pipeline",
+            Track = "Contested",
+            CurrentHolder = "Legal Assistant",
+            OriginatedInSystem = false,
+        });
+        Assert.False(c.OriginatedInSystem);
+        var milestones = await _fixture.Repository.GetPreFilingMilestonesAsync(c.Id);
+        Assert.Empty(milestones);
+
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.CaseStatus = "Filed / Service Pending";
+
+        // No exception, and no FilingGateOverrideReason supplied - the gate never fires at all for
+        // an imported case, unlike the soft forcing-prompt every in-system case still sees.
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
+
+        var log = await _fixture.Repository.GetActivityLogAsync(c.Id);
+        Assert.DoesNotContain(log, e => e.ActivityType == "FilingGateOverridden");
+    }
+
+    [Fact]
+    public async Task SaveCaseAsync_OriginatedInSystem_IsImmutableAfterCreation_EvenIfClientTriesToFlipIt()
+    {
+        var c = await CreatePipelineCaseAsync();
+        Assert.True(c.OriginatedInSystem);
+
+        var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        loaded.OriginatedInSystem = false;
+        loaded.ShortPostureSummary = "Unrelated edit alongside the tampered field.";
+        await _fixture.Repository.SaveCaseAsync(loaded);
+
+        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
+        Assert.True(reloaded.OriginatedInSystem);
+        Assert.Equal("Unrelated edit alongside the tampered field.", reloaded.ShortPostureSummary);
     }
 
     [Fact]

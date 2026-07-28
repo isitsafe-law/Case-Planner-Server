@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
@@ -34,6 +34,7 @@ import { CloseCaseDialog, dispositionTypeOptions, type CloseCaseDetails } from '
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPanel'
+import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 
 type PageKey = 'dashboard' | 'managerDashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -44,7 +45,7 @@ type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'notifications' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'developer'
 
 export type CaseRecord = {
   id: number
@@ -873,6 +874,27 @@ type CollectorRecord = {
   phone?: string | null
   notes?: string | null
 }
+
+// Newspaper of general circulation reference lookup (final implementation, item 7). Unlike
+// CircuitClerkRecord/AssessorRecord/CollectorRecord, a county can have MULTIPLE newspapers - this
+// is not one-row-per-county, so rows are never pre-seeded and are addressed by their own id for
+// every create/update (see NewspaperRecord on the server).
+type NewspaperRecord = {
+  id: number
+  county: string
+  name: string
+  isGeneralCirculation: boolean
+  publicationDaysFrequency?: string | null
+  submissionDeadline?: string | null
+  contactName?: string | null
+  phone?: string | null
+  email?: string | null
+  address?: string | null
+  billingAffidavitContact?: string | null
+  typicalCost?: number | null
+  notes?: string | null
+  isActive: boolean
+}
 type CaseRoleValue = 'Attorney' | 'LegalAssistant' | 'Other'
 type AssignmentRoleValue = 'Owner' | 'Collaborator' | 'ReadOnly'
 type CaseAssignmentRecord = {
@@ -1498,6 +1520,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
   { key: 'staff', label: 'Attorneys & Staff' },
+  { key: 'countyReference', label: 'County & Publication Reference' },
   { key: 'notifications', label: 'Notifications' },
   { key: 'about', label: 'About / IT Notes' },
   // Dev-only - strip this section (and the Developer settings category below) before a real release.
@@ -1511,6 +1534,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
   { label: 'Staff', sections: ['staff', 'notifications'] },
+  { label: 'County & Publication Reference', sections: ['countyReference'] },
   { label: 'Diagnostics and Help', sections: ['diagnostics', 'about'] },
   // Dev-only category - strip before a real release.
   { label: 'Developer', sections: ['developer'] },
@@ -2253,10 +2277,13 @@ function App() {
   const [circuitClerks, setCircuitClerks] = useState<CircuitClerkRecord[]>([])
   const [assessors, setAssessors] = useState<AssessorRecord[]>([])
   const [collectors, setCollectors] = useState<CollectorRecord[]>([])
+  const [newspapers, setNewspapers] = useState<NewspaperRecord[]>([])
   const [newAttorneyName, setNewAttorneyName] = useState('')
   const [newAttorneyTitle, setNewAttorneyTitle] = useState('')
   const [newLegalAssistantName, setNewLegalAssistantName] = useState('')
   const [newLegalAssistantAttorneyIds, setNewLegalAssistantAttorneyIds] = useState<number[]>([])
+  const [newNewspaperCounty, setNewNewspaperCounty] = useState('')
+  const [newNewspaperName, setNewNewspaperName] = useState('')
   const [caseAssignments, setCaseAssignments] = useState<CaseAssignmentRecord[]>([])
   const [newAssignmentDraft, setNewAssignmentDraft] = useState({ userId: '', caseRole: 'Attorney' as CaseRoleValue, assignmentRole: 'Collaborator' as AssignmentRoleValue })
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null)
@@ -2276,6 +2303,11 @@ function App() {
   // its own (different) Calendar-tab purpose. Fetched once in loadInitial alongside the Milestone 4
   // additions above, not on-demand, so the tab renders instantly on first click like every sibling tab.
   const [preFilingMilestonesAging, setPreFilingMilestonesAging] = useState<PreFilingMilestoneAgingSummary | null>(null)
+  // Final implementation, item 3 (stall detection): division-wide (no caseId query param), same
+  // fetch shape as preFilingMilestones above - the shared client-side stall detector
+  // (preFilingStallDetection.ts) needs every Pipeline case's review notes in one call, the same way
+  // it needs every case's milestones.
+  const [reviewNotes, setReviewNotes] = useState<ReviewNoteRecord[]>([])
   // Bulk cross-case pipeline-handoff fetch (GET /api/work-queues/pipeline-handoffs) - used only by
   // Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections, not wired into the work queues,
   // the per-case Handoff-history dialog, or anything else.
@@ -2823,7 +2855,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, settlementAuthorityRequestsData, preFilingMilestonesData, preFilingMilestonesAgingData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, settlementAuthorityRequestsData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2846,9 +2878,11 @@ function App() {
         api<CircuitClerkRecord[]>('/api/circuit-clerks'),
         api<AssessorRecord[]>('/api/assessors'),
         api<CollectorRecord[]>('/api/collectors'),
+        api<NewspaperRecord[]>('/api/newspapers'),
         api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'),
         api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
         api<PreFilingMilestoneAgingSummary>('/api/prefiling-milestones/aging'),
+        api<ReviewNoteRecord[]>('/api/review-notes'),
       ])
       setDashboard(dashboardData)
       setCases(caseList)
@@ -2872,9 +2906,11 @@ function App() {
       setCircuitClerks(circuitClerksData)
       setAssessors(assessorsData)
       setCollectors(collectorsData)
+      setNewspapers(newspapersData)
       setSettlementAuthorityRequests(settlementAuthorityRequestsData)
       setPreFilingMilestones(preFilingMilestonesData)
       setPreFilingMilestonesAging(preFilingMilestonesAgingData)
+      setReviewNotes(reviewNotesData)
       setMessage('Local workspace ready.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load the local app.')
@@ -2910,6 +2946,24 @@ function App() {
       setSettlementAuthorityRequests(await api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'))
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to refresh Settlement Authority requests.')
+    }
+  }
+
+  // Final implementation, item 1: re-fetches after a bulk-mark action (BulkMilestoneGrid.tsx) - both
+  // the raw per-case milestone list (drives the grid itself and IncomingPipelinePanel/
+  // NeedsAttentionTab's shared stall detector) and the server's pre-aggregated aging view (Filing
+  // Status section), same "refetch exactly what changed" convention as
+  // refreshSettlementAuthorityRequests above.
+  async function refreshPreFilingMilestones() {
+    try {
+      const [milestonesData, agingData] = await Promise.all([
+        api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
+        api<PreFilingMilestoneAgingSummary>('/api/prefiling-milestones/aging'),
+      ])
+      setPreFilingMilestones(milestonesData)
+      setPreFilingMilestonesAging(agingData)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to refresh pre-filing milestones.')
     }
   }
 
@@ -3157,6 +3211,43 @@ function App() {
     const row = collectors[index]
     if (!row) return
     await saveCollector(row)
+  }
+
+  // Newspaper of general circulation reference lookup (final implementation, item 7). Unlike
+  // Circuit Clerk/Assessor/Collector, rows are never pre-seeded - a county can have multiple
+  // newspapers, so this is true create-or-update-by-Id via a single POST endpoint rather than an
+  // edit-by-county PUT.
+  async function saveNewspaper(model: NewspaperRecord) {
+    try {
+      setErrorMessage('')
+      await api('/api/newspapers', { method: 'POST', body: JSON.stringify(model) })
+      setNewspapers(await api<NewspaperRecord[]>('/api/newspapers'))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save the newspaper.')
+    }
+  }
+
+  function updateNewspaperField(index: number, patch: Partial<NewspaperRecord>) {
+    setNewspapers((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  async function commitNewspaperRow(index: number) {
+    const row = newspapers[index]
+    if (!row) return
+    await saveNewspaper(row)
+  }
+
+  async function addNewspaper() {
+    if (!newNewspaperCounty.trim() || !newNewspaperName.trim()) return
+    await saveNewspaper({
+      id: 0,
+      county: newNewspaperCounty.trim(),
+      name: newNewspaperName.trim(),
+      isGeneralCirculation: false,
+      isActive: true,
+    })
+    setNewNewspaperCounty('')
+    setNewNewspaperName('')
   }
 
   async function loadCaseAssignments(caseId: number) {
@@ -7613,10 +7704,12 @@ function App() {
                 const clerk = circuitClerks.find((row) => row.county === selectedCase.county)
                 const assessor = assessors.find((row) => row.county === selectedCase.county)
                 const collector = collectors.find((row) => row.county === selectedCase.county)
+                const countyNewspapers = newspapers.filter((row) => row.county === selectedCase.county && row.isActive)
                 const clerkText = clerk ? [`${clerk.county} County Circuit Clerk`, clerk.clerkName, clerk.address, clerk.phone].filter(Boolean).join('\n') : ''
                 const assessorText = assessor ? [`${assessor.county} County Assessor`, assessor.name, assessor.address, assessor.phone].filter(Boolean).join('\n') : ''
                 const collectorText = collector ? [`${collector.county} County Tax Collector`, collector.name, collector.address, collector.phone].filter(Boolean).join('\n') : ''
-                const allText = [clerkText, assessorText, collectorText].filter(Boolean).join('\n\n')
+                const newspapersText = countyNewspapers.map((paper) => [paper.name, paper.publicationDaysFrequency, paper.contactName, paper.phone, paper.email].filter(Boolean).join(' · ')).join('\n')
+                const allText = [clerkText, assessorText, collectorText, newspapersText].filter(Boolean).join('\n\n')
                 return (
                   <>
                     <div className="record-section">
@@ -7676,7 +7769,25 @@ function App() {
                       )}
                     </div>
 
-                    {(clerk || assessor || collector) && (
+                    <div className="record-section">
+                      <div className="record-section-header">
+                        <h4>Newspapers</h4>
+                      </div>
+                      {countyNewspapers.length === 0 ? (
+                        <p className="helper-text">No newspapers on file for {selectedCase.county} County.</p>
+                      ) : (
+                        countyNewspapers.map((paper) => (
+                          <p key={paper.id}>
+                            <strong>{paper.name}</strong>{paper.isGeneralCirculation && ' (general circulation)'}
+                            {paper.publicationDaysFrequency && <> &middot; {paper.publicationDaysFrequency}</>}
+                            {paper.submissionDeadline && <> &middot; Deadline: {paper.submissionDeadline}</>}
+                            {(paper.contactName || paper.phone || paper.email) && <><br />{[paper.contactName, paper.phone, paper.email].filter(Boolean).join(' · ')}</>}
+                          </p>
+                        ))
+                      )}
+                    </div>
+
+                    {(clerk || assessor || collector || countyNewspapers.length > 0) && (
                       <div className="button-row compact-actions top-gap-small">
                         <Btn size="sm" onClick={() => void navigator.clipboard.writeText(allText)}>Copy All County Officials</Btn>
                       </div>
@@ -9544,6 +9655,18 @@ function App() {
                     await refreshCaseActivityLog(selectedCase.id)
                   }}
                 />
+                {/* Alongside the milestone grid, not interleaved into it (final implementation, item
+                    2) - the two have different shapes (ordered checklist vs. unstructured log) and
+                    merging them visually would misrepresent the milestones as depending on review,
+                    which they don't. */}
+                <h5 className="form-section-heading top-gap">Review Notes</h5>
+                <ReviewNotesLog
+                  caseId={selectedCase.id}
+                  onAdded={async () => {
+                    await loadInitial()
+                    await refreshCaseActivityLog(selectedCase.id)
+                  }}
+                />
               </section>
             )}
 
@@ -10407,8 +10530,10 @@ function App() {
           settlementAuthorityRequests={settlementAuthorityRequests}
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
+          reviewNotes={reviewNotes}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
           onDecided={refreshSettlementAuthorityRequests}
+          onMilestonesMutated={refreshPreFilingMilestones}
         />
       )}
 
@@ -11711,8 +11836,8 @@ function App() {
             </Panel>
           )}
 
-          {settingsSection === 'staff' && (
-            <Panel title="Circuit Clerks" className="top-gap">
+          {settingsSection === 'countyReference' && (
+            <Panel title="Circuit Clerks">
               <p className="helper-text">Reference lookup for each county's circuit clerk, shown read-only on a case's Service &amp; Publication tab. Correct here any time an election or office move changes the details.</p>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
@@ -11745,7 +11870,7 @@ function App() {
             </Panel>
           )}
 
-          {settingsSection === 'staff' && (
+          {settingsSection === 'countyReference' && (
             <Panel title="Assessors" className="top-gap">
               <p className="helper-text">Reference lookup for each county's assessor, shown read-only on a case's Service &amp; Publication tab alongside Circuit Clerk and Collector. Correct here any time an election or office move changes the details.</p>
               <div className="table-wrap top-gap-small">
@@ -11779,7 +11904,7 @@ function App() {
             </Panel>
           )}
 
-          {settingsSection === 'staff' && (
+          {settingsSection === 'countyReference' && (
             <Panel title="Collectors" className="top-gap">
               <p className="helper-text">Reference lookup for each county's tax collector, shown read-only on a case's Service &amp; Publication tab alongside Circuit Clerk and Assessor. Correct here any time an election or office move changes the details. Lafayette and Searcy have no name on file with the state source — leave blank until confirmed with the county.</p>
               <div className="table-wrap top-gap-small">
@@ -11810,6 +11935,78 @@ function App() {
                   </tbody>
                 </table>
               </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'countyReference' && (
+            <Panel title="Newspapers" className="top-gap">
+              <p className="helper-text">Newspapers of general circulation used for publication service, cross-linked from a case's Service &amp; Publication tab by county. Unlike Circuit Clerk/Assessor/Collector, a county can have more than one newspaper — add each one as its own row.</p>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>County</th><th>Name</th><th>General Circulation</th><th>Frequency</th><th>Submission Deadline</th><th>Contact</th><th>Billing / Affidavit Contact</th><th>Typical Cost</th><th>Notes</th><th>Active</th></tr></thead>
+                  <tbody>
+                    {newspapers.map((newspaper, index) => (
+                      <tr key={newspaper.id}>
+                        {(!currentUser || currentUser.isAdmin || currentUser.isManager) ? (
+                          <>
+                            <td><input value={newspaper.county} onChange={(event) => updateNewspaperField(index, { county: event.target.value })} onBlur={() => void commitNewspaperRow(index)} /></td>
+                            <td><input value={newspaper.name} onChange={(event) => updateNewspaperField(index, { name: event.target.value })} onBlur={() => void commitNewspaperRow(index)} /></td>
+                            <td>
+                              <label className="toggle-inline">
+                                <input
+                                  type="checkbox"
+                                  checked={newspaper.isGeneralCirculation}
+                                  onChange={(event) => { updateNewspaperField(index, { isGeneralCirculation: event.target.checked }); void saveNewspaper({ ...newspaper, isGeneralCirculation: event.target.checked }) }}
+                                />
+                              </label>
+                            </td>
+                            <td><input value={newspaper.publicationDaysFrequency || ''} onChange={(event) => updateNewspaperField(index, { publicationDaysFrequency: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="e.g. Weekly, Wednesdays" /></td>
+                            <td><input value={newspaper.submissionDeadline || ''} onChange={(event) => updateNewspaperField(index, { submissionDeadline: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="e.g. 3 business days before" /></td>
+                            <td>
+                              <input value={newspaper.contactName || ''} onChange={(event) => updateNewspaperField(index, { contactName: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="Contact name" />
+                              <input value={newspaper.phone || ''} onChange={(event) => updateNewspaperField(index, { phone: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="Phone" className="top-gap-small" />
+                              <input value={newspaper.email || ''} onChange={(event) => updateNewspaperField(index, { email: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="Email" className="top-gap-small" />
+                            </td>
+                            <td><input value={newspaper.billingAffidavitContact || ''} onChange={(event) => updateNewspaperField(index, { billingAffidavitContact: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="Optional" /></td>
+                            <td><input type="number" step="0.01" value={newspaper.typicalCost ?? ''} onChange={(event) => updateNewspaperField(index, { typicalCost: event.target.value === '' ? null : Number(event.target.value) })} onBlur={() => void commitNewspaperRow(index)} placeholder="Optional" /></td>
+                            <td><input value={newspaper.notes || ''} onChange={(event) => updateNewspaperField(index, { notes: event.target.value })} onBlur={() => void commitNewspaperRow(index)} placeholder="Optional" /></td>
+                            <td>
+                              <button onClick={() => void saveNewspaper({ ...newspaper, isActive: !newspaper.isActive })}>{newspaper.isActive ? 'Deactivate' : 'Activate'}</button>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td>{newspaper.county}</td>
+                            <td>{newspaper.name}</td>
+                            <td>{newspaper.isGeneralCirculation ? 'Yes' : 'No'}</td>
+                            <td>{newspaper.publicationDaysFrequency || '—'}</td>
+                            <td>{newspaper.submissionDeadline || '—'}</td>
+                            <td>{[newspaper.contactName, newspaper.phone, newspaper.email].filter(Boolean).join(' · ') || '—'}</td>
+                            <td>{newspaper.billingAffidavitContact || '—'}</td>
+                            <td>{newspaper.typicalCost != null ? `$${newspaper.typicalCost.toFixed(2)}` : '—'}</td>
+                            <td>{newspaper.notes || '—'}</td>
+                            <td><span className={`pill pill-${newspaper.isActive ? 'success' : 'neutral'}`}>{newspaper.isActive ? 'Active' : 'Inactive'}</span></td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                    {newspapers.length === 0 && <tr><td colSpan={10} className="helper-text">No newspapers yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {(!currentUser || currentUser.isAdmin || currentUser.isManager) && (
+                <div className="form-grid top-gap-small">
+                  <label>
+                    <span>County</span>
+                    <select value={newNewspaperCounty} onChange={(event) => setNewNewspaperCounty(event.target.value)}>
+                      <option value="">Select a county…</option>
+                      {arkansasCounties.map((county) => <option key={county} value={county}>{county}</option>)}
+                    </select>
+                  </label>
+                  <label><span>Newspaper Name</span><input value={newNewspaperName} onChange={(event) => setNewNewspaperName(event.target.value)} placeholder="Newspaper name" /></label>
+                  <div className="button-row full-span"><button className="primary" onClick={() => void addNewspaper()}>Add Newspaper</button></div>
+                </div>
+              )}
             </Panel>
           )}
 

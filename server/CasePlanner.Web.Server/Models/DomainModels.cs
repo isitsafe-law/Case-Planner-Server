@@ -121,6 +121,15 @@ public sealed class CaseRecord
     // here, that lives in activity_log's FieldChanged="SettlementAuthorizedCeiling" entries. Feeds
     // TrialWatchEntry.SettlementAuthority, previously a dead hardcoded-null placeholder.
     public decimal? SettlementAuthorizedCeiling { get; set; }
+    // Pre-filing sign-off/Settlement Authority final implementation, item 4: true for every
+    // in-system-originated case (the default); set false ONLY at the moment a brand-new row is
+    // created by the CSV/Excel import path (ImportCasesCsvAsync/ImportCasesXlsxAsync and their SQL
+    // Server equivalents), and never written to again by any later save - immutable after creation
+    // by construction, since SaveCaseInternalAsync/SqlServerCaseCatalogReader.SaveCaseAsync's UPDATE
+    // branches never include this column. Lets PipelinePromotionGate.RequiresFilingApproval skip the
+    // Director-signature forcing-prompt entirely for a historically-imported case that has no real
+    // in-system milestone to record.
+    public bool OriginatedInSystem { get; set; } = true;
     public string? CreatedAt { get; set; }
     public string? UpdatedAt { get; set; }
     public int ChecklistTotal { get; set; }
@@ -582,6 +591,10 @@ public sealed class PreFilingMilestoneRecord
     // checklist-style text list since package contents vary by case - a client-side UX choice only;
     // there is deliberately no separate structured document-checklist table here.
     public string? Note { get; set; }
+    // Final implementation, item 1: shared by every row a single bulk-mark action touches (the
+    // Chief Counsel signs one package covering many tracts on the same job at once), so the audit
+    // trail shows they came from one action - null for a single-case mark.
+    public string? BatchId { get; set; }
     // SQL Server optimistic-concurrency token. Null while the active runtime remains SQLite.
     public string? RowVersion { get; set; }
 }
@@ -593,6 +606,37 @@ public sealed class MarkPreFilingMilestoneRequest
 {
     public string OccurredDate { get; set; } = "";
     public string? Note { get; set; }
+    // Final implementation, item 1 - see PreFilingMilestoneRecord.BatchId's doc comment. Null for a
+    // single-case mark from the case workspace; set by the bulk-mark orchestration below.
+    public string? BatchId { get; set; }
+}
+
+// Client-facing shape for POST /api/prefiling-milestones/bulk-mark (final implementation, item 1):
+// marks the SAME milestone, with the SAME occurred-on date, across every case in CaseIds in one
+// action - the Chief Counsel signs one pleadings package covering many tracts on the same job at
+// once, so entering this data should be at least as fast as the spreadsheet it replaces. Each case
+// still gets its own PreFilingMilestoneRecord row (respecting PreFilingMilestoneGate's existing
+// sequential-order validation per case); a case that can't legally take the mark yet is reported as
+// a failure, not a reason to fail the whole batch.
+public sealed class BulkMarkPreFilingMilestoneRequest
+{
+    public List<long> CaseIds { get; set; } = [];
+    public string Milestone { get; set; } = "";
+    public string OccurredDate { get; set; } = "";
+    public string? Note { get; set; }
+}
+
+public sealed class BulkMarkPreFilingMilestoneFailure
+{
+    public long CaseId { get; set; }
+    public string Error { get; set; } = "";
+}
+
+public sealed class BulkMarkPreFilingMilestoneResult
+{
+    public string BatchId { get; set; } = "";
+    public List<PreFilingMilestoneRecord> Marked { get; set; } = [];
+    public List<BulkMarkPreFilingMilestoneFailure> Failures { get; set; } = [];
 }
 
 // Client-facing shape for POST /api/cases/{caseId}/prefiling-milestones/{milestone}/unmark. Reason
@@ -631,6 +675,45 @@ public sealed class PreFilingMilestoneAgingCase
     public string FurthestMilestone { get; set; } = "None";
     // Null when FurthestMilestone is "None" - there is no MarkedAt timestamp to measure from.
     public int? DaysSinceMarked { get; set; }
+}
+
+// Pre-filing sign-off/Settlement Authority final implementation, item 2: an UNSTRUCTURED review-note
+// log, deliberately separate in shape from PreFilingMilestoneRecord above - no fixed order, no
+// required participant, no requirement that one exist before/after any milestone. ReviewerName/
+// ReviewerRole are free text (the reviewer is not necessarily a fixed role or even a system user -
+// per the norm that Deputy Chief Counsel's review is a strong practice, not a gated workflow step).
+// Decision is a short, lightly-constrained string, not an enum tied to a workflow state - the client
+// offers a few common values (e.g. "Looks good", "Sent back for revision") plus free text, but the
+// server stores and returns whatever string it's given. Feeds stall detection (see
+// ReviewNoteGate.IsReturnedForRevision) but enforces nothing on its own.
+public sealed class ReviewNoteRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public string? ReviewerName { get; set; }
+    public string? ReviewerRole { get; set; }
+    public string Decision { get; set; } = "";
+    public string? Comment { get; set; }
+    // The user-entered date of the review itself - defaults to today, editable/backdatable like
+    // PreFilingMilestoneRecord.OccurredDate.
+    public string OccurredDate { get; set; } = "";
+    // Automatic - when this row was entered into the system, and by whom/what role, distinct from
+    // ReviewerName/ReviewerRole (the actual reviewer) the same way SettlementAuthorityRequestRecord
+    // separates "recorded" from "granted".
+    public string? CreatedAt { get; set; }
+    public string? CreatedByUserId { get; set; }
+    public string? CreatedByDisplay { get; set; }
+    public string? CreatedByRole { get; set; }
+}
+
+public sealed class CreateReviewNoteRequest
+{
+    public string? ReviewerName { get; set; }
+    public string? ReviewerRole { get; set; }
+    public string Decision { get; set; } = "";
+    public string? Comment { get; set; }
+    // Null defaults to today - see ReviewNoteRecord.OccurredDate.
+    public string? OccurredDate { get; set; }
 }
 
 // Client-facing shape for POST /api/cases/{id}/pipeline-approvals (Task C's Approve / Return for
@@ -1161,6 +1244,38 @@ public sealed class CollectorRecord
     public string? Address { get; set; }
     public string? Phone { get; set; }
     public string? Notes { get; set; }
+}
+
+// Pre-filing sign-off/Settlement Authority final implementation, item 7b: a publication database,
+// cross-linked from a case's Service & Publication tab the same way CircuitClerkRecord already is.
+// Unlike CircuitClerkRecord/AssessorRecord/CollectorRecord above, a county can have MULTIPLE
+// newspapers - this is modeled as many rows per county, each with its own Id, and is never
+// pre-seeded (there is no fixed statewide newspaper directory the way there is for circuit
+// clerks/assessors/collectors). SaveAsync is a genuine per-row create-or-update (Id==0 means a
+// brand-new row), not the "resolve existing row by county first" upsert those three tables use,
+// since County alone is never a unique key here.
+public sealed class NewspaperRecord
+{
+    public long Id { get; set; }
+    public string County { get; set; } = "";
+    public string Name { get; set; } = "";
+    // Whether this newspaper qualifies as a "newspaper of general circulation" in this county under
+    // Arkansas's publication-service statute - free-standing fact, not derived from anything else on
+    // this record.
+    public bool IsGeneralCirculation { get; set; }
+    public string? PublicationDaysFrequency { get; set; }
+    // Free text (e.g. "3 business days before publication") rather than a numeric offset - deadlines
+    // relative to publication vary by paper in ways a single integer can't capture cleanly.
+    public string? SubmissionDeadline { get; set; }
+    public string? ContactName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Address { get; set; }
+    public string? BillingAffidavitContact { get; set; }
+    public decimal? TypicalCost { get; set; }
+    public string? Notes { get; set; }
+    // Soft-disable, matching the Attorneys/Legal Assistants convention - no hard delete endpoint.
+    public bool IsActive { get; set; } = true;
 }
 
 // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - a request for

@@ -281,7 +281,36 @@ export type PreFilingMilestoneRecord = {
   markedByDisplay?: string | null
   markedByRole?: string | null
   note?: string | null
+  // Shared by every row a single bulk-mark action touches (final implementation, item 1) - null for
+  // a single-case mark.
+  batchId?: string | null
   rowVersion?: string | null
+}
+
+// Final implementation, item 2: an unstructured, append-only review-note log - see
+// server/CasePlanner.Web.Server/Models/DomainModels.cs's ReviewNoteRecord doc comment for the full
+// rationale. reviewerName/reviewerRole are free text; decision is a short, lightly-constrained
+// string, not a fixed enum.
+export type ReviewNoteRecord = {
+  id: number
+  caseId: number
+  reviewerName?: string | null
+  reviewerRole?: string | null
+  decision: string
+  comment?: string | null
+  occurredDate: string
+  createdAt?: string | null
+  createdByUserId?: string | null
+  createdByDisplay?: string | null
+  createdByRole?: string | null
+}
+
+export type CreateReviewNoteRequest = {
+  reviewerName?: string
+  reviewerRole?: string
+  decision: string
+  comment?: string
+  occurredDate?: string
 }
 
 export type SettlementAuthorityRequestStatus = 'Pending' | 'Approved' | 'Denied' | 'InfoRequested'

@@ -1,6 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { CaseRecord } from '../App'
-import { PRE_FILING_MILESTONE_ORDER, preFilingMilestoneLabel, type PreFilingMilestoneRecord } from './types'
+import { api } from '../App'
+import type { PreFilingMilestone, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
+import { preFilingMilestoneLabel } from './types'
+import { computePreFilingStallInfo } from './preFilingStallDetection'
 import { EmptyState } from './EmptyState'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
@@ -11,52 +14,53 @@ type PipelineTractRow = {
   tract: string
   currentHolder: string
   subState: string
+  isReturnedForRevision: boolean
+  nextMilestone: PreFilingMilestone | null
   dateSentToCurrentHolder: string | null
 }
 
-// The furthest (highest-order) marked milestone for a case, per the fixed 4-milestone order - or
-// "No milestones marked yet" when none are marked. Pipeline tracts having no court case
-// number/division yet is normal (pre-filing); this label never implies anything is missing/wrong.
-function furthestMilestoneLabel(caseId: number, milestonesByCase: Map<number, PreFilingMilestoneRecord[]>): string {
-  const rows = milestonesByCase.get(caseId) || []
-  let furthestIndex = -1
-  for (const row of rows) {
-    if (!row.isMarked) continue
-    const idx = PRE_FILING_MILESTONE_ORDER.indexOf(row.milestone as (typeof PRE_FILING_MILESTONE_ORDER)[number])
-    if (idx > furthestIndex) furthestIndex = idx
-  }
-  return furthestIndex === -1 ? 'No milestones marked yet' : preFilingMilestoneLabel(PRE_FILING_MILESTONE_ORDER[furthestIndex])
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export function IncomingPipelinePanel({
   allCases,
   preFilingMilestones,
+  reviewNotes,
   onOpenCase,
+  onMutated,
 }: {
   allCases: CaseRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
+  reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
+  // Final implementation, item 1c: lets a manager mark directly from an aging row without
+  // navigating to the case - refreshes preFilingMilestones (and everything the shared stall
+  // detector depends on) after a successful inline mark, same as BulkMilestoneGrid.tsx's onMutated.
+  onMutated?: () => Promise<void>
 }) {
-  const milestonesByCase = useMemo(() => {
-    const map = new Map<number, PreFilingMilestoneRecord[]>()
-    for (const milestone of preFilingMilestones) {
-      if (!map.has(milestone.caseId)) map.set(milestone.caseId, [])
-      map.get(milestone.caseId)!.push(milestone)
-    }
-    return map
-  }, [preFilingMilestones])
+  const [markingCaseId, setMarkingCaseId] = useState<number | null>(null)
+  const [occurredDate, setOccurredDate] = useState(todayIsoDate())
+  const [busy, setBusy] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
   const groups = useMemo(() => {
     const pipelineCases = allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline')
     const byAttorney = new Map<string, PipelineTractRow[]>()
     for (const record of pipelineCases) {
       const attorney = record.assignedAttorney || 'Unassigned'
+      // Shared with NeedsAttentionTab.tsx's preFilingStallRow - the SAME detector, so this panel's
+      // "what's this tract waiting on" always matches the reason it would show up in Needs
+      // Attention, never a separately-derived label (final implementation, item 3).
+      const stallInfo = computePreFilingStallInfo(record.id, preFilingMilestones, reviewNotes)
       const row: PipelineTractRow = {
         caseId: record.id,
         jobNumber: record.jobNumber || '',
         tract: record.tract || '',
         currentHolder: record.currentHolder || 'Unassigned',
-        subState: `${record.currentHolder || 'Unassigned'} · ${furthestMilestoneLabel(record.id, milestonesByCase)}`,
+        subState: `${record.currentHolder || 'Unassigned'} · ${stallInfo.label}`,
+        isReturnedForRevision: stallInfo.isReturnedForRevision,
+        nextMilestone: stallInfo.nextMilestone,
         dateSentToCurrentHolder: record.dateSentToCurrentHolder || null,
       }
       if (!byAttorney.has(attorney)) byAttorney.set(attorney, [])
@@ -80,7 +84,7 @@ export function IncomingPipelinePanel({
       if (b[0] === 'Unassigned') return -1
       return a[0].localeCompare(b[0])
     })
-  }, [allCases, milestonesByCase])
+  }, [allCases, preFilingMilestones, reviewNotes])
 
   const totalTracts = groups.reduce((sum, [, rows]) => sum + rows.length, 0)
 
@@ -95,6 +99,23 @@ export function IncomingPipelinePanel({
     downloadCsv(`Incoming_Pipeline_${new Date().toISOString().slice(0, 10)}.csv`, rows)
   }
 
+  async function markInline(caseId: number, milestone: PreFilingMilestone) {
+    setBusy(true)
+    try {
+      setErrorMessage('')
+      await api(`/api/cases/${caseId}/prefiling-milestones/${milestone}/mark`, {
+        method: 'POST',
+        body: JSON.stringify({ occurredDate }),
+      })
+      setMarkingCaseId(null)
+      await onMutated?.()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to mark the milestone.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (totalTracts === 0) {
     return <EmptyState title="No tracts currently in Pipeline." description="Tracts appear here before the Complaint in Condemnation is filed." />
   }
@@ -107,6 +128,7 @@ export function IncomingPipelinePanel({
       <p className="helper-text" style={{ marginBottom: '0.85rem' }}>
         Tracts without a recorded handoff date are sorted by job number.
       </p>
+      {errorMessage && <p className="helper-text" style={{ color: 'var(--danger, #b3261e)' }}>{errorMessage}</p>}
       {groups.map(([attorney, rows]) => (
         <div key={attorney} className="top-gap-small">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
@@ -116,14 +138,34 @@ export function IncomingPipelinePanel({
           <div className="table-wrap">
             <table className="ui-table compact-table">
               <thead>
-                <tr><th>Job + Tract</th><th>Holder · Furthest Milestone</th><th></th></tr>
+                <tr><th>Job + Tract</th><th>Holder · Pre-Filing Status</th><th></th></tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.caseId}>
                     <td>{[row.jobNumber, row.tract].filter(Boolean).join(' · ') || '—'}</td>
-                    <td>{row.subState}</td>
-                    <td><Btn size="sm" onClick={() => onOpenCase(row.caseId)}>Open Case</Btn></td>
+                    <td>
+                      {row.subState}
+                      {row.isReturnedForRevision && <span className="pill pill-warn" style={{ marginLeft: '0.4rem' }}>Returned</span>}
+                    </td>
+                    <td>
+                      <div className="button-row compact-actions">
+                        {row.nextMilestone && onMutated && (
+                          markingCaseId === row.caseId ? (
+                            <span className="button-row compact-actions">
+                              <input type="date" value={occurredDate} onChange={(event) => setOccurredDate(event.currentTarget.value)} />
+                              <Btn size="sm" disabled={busy} onClick={() => void markInline(row.caseId, row.nextMilestone!)}>Confirm</Btn>
+                              <Btn size="sm" variant="ghost" onClick={() => setMarkingCaseId(null)}>Cancel</Btn>
+                            </span>
+                          ) : (
+                            <Btn size="sm" variant="ghost" onClick={() => { setOccurredDate(todayIsoDate()); setMarkingCaseId(row.caseId) }}>
+                              Mark {preFilingMilestoneLabel(row.nextMilestone)}…
+                            </Btn>
+                          )
+                        )}
+                        <Btn size="sm" onClick={() => onOpenCase(row.caseId)}>Open Case</Btn>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

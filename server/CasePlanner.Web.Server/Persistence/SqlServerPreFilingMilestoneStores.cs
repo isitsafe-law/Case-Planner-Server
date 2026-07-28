@@ -26,7 +26,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
 
     private const string Columns = """
         id, case_id, milestone, is_marked, occurred_date, marked_at,
-        marked_by_user_id, marked_by_display, marked_by_role, note, row_version
+        marked_by_user_id, marked_by_display, marked_by_role, note, batch_id, row_version
         """;
 
     public async Task<List<PreFilingMilestoneRecord>> GetAsync(long? caseId, CancellationToken token = default)
@@ -72,9 +72,9 @@ public sealed class SqlServerPreFilingMilestoneStore(
                 insert.Transaction = transaction;
                 insert.CommandText = """
                     INSERT INTO dbo.case_prefiling_milestones
-                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note)
+                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note, batch_id)
                     OUTPUT INSERTED.id
-                    VALUES (@caseId, @milestone, 1, @occurredDate, @markedAt, @actorId, @actorDisplay, @actorRole, @note)
+                    VALUES (@caseId, @milestone, 1, @occurredDate, @markedAt, @actorId, @actorDisplay, @actorRole, @note, @batchId)
                     """;
                 insert.Parameters.Add(new SqlParameter("@caseId", caseId));
                 insert.Parameters.Add(new SqlParameter("@milestone", milestone));
@@ -84,6 +84,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
                 insert.Parameters.Add(new SqlParameter("@actorDisplay", actor.AuditLabel));
                 insert.Parameters.Add(new SqlParameter("@actorRole", Db(actor.Role)));
                 insert.Parameters.Add(new SqlParameter("@note", Db(request.Note)));
+                insert.Parameters.Add(new SqlParameter("@batchId", Db(request.BatchId)));
                 id = Convert.ToInt64(await insert.ExecuteScalarAsync(token));
             }
             else
@@ -95,7 +96,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
                     UPDATE dbo.case_prefiling_milestones SET
                         is_marked=1, occurred_date=@occurredDate, marked_at=@markedAt,
                         marked_by_user_id=@actorId, marked_by_display=@actorDisplay,
-                        marked_by_role=@actorRole, note=@note
+                        marked_by_role=@actorRole, note=@note, batch_id=@batchId
                     WHERE id=@id
                     """;
                 update.Parameters.Add(new SqlParameter("@occurredDate", Db(request.OccurredDate)));
@@ -104,6 +105,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
                 update.Parameters.Add(new SqlParameter("@actorDisplay", actor.AuditLabel));
                 update.Parameters.Add(new SqlParameter("@actorRole", Db(actor.Role)));
                 update.Parameters.Add(new SqlParameter("@note", Db(request.Note)));
+                update.Parameters.Add(new SqlParameter("@batchId", Db(request.BatchId)));
                 update.Parameters.Add(new SqlParameter("@id", id));
                 await update.ExecuteNonQueryAsync(token);
             }
@@ -157,7 +159,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
                     UPDATE dbo.case_prefiling_milestones SET
                         is_marked=0, occurred_date=NULL, marked_at=@markedAt,
                         marked_by_user_id=@actorId, marked_by_display=@actorDisplay,
-                        marked_by_role=@actorRole, note=@note
+                        marked_by_role=@actorRole, note=@note, batch_id=NULL
                     WHERE id=@id
                     """;
                 update.Parameters.Add(new SqlParameter("@markedAt", now));
@@ -233,6 +235,7 @@ public sealed class SqlServerPreFilingMilestoneStore(
         MarkedByDisplay = Text(reader, 7),
         MarkedByRole = Text(reader, 8),
         Note = Text(reader, 9),
-        RowVersion = Convert.ToBase64String((byte[])reader.GetValue(10)),
+        BatchId = Text(reader, 10),
+        RowVersion = Convert.ToBase64String((byte[])reader.GetValue(11)),
     };
 }

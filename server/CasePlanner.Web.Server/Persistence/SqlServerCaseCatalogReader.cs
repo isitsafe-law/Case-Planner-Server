@@ -69,13 +69,14 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
             catch (FormatException) { throw new ArgumentException("RowVersion is not a valid concurrency token."); }
             command.Parameters.Add(new SqlParameter("@id", model.Id));
             command.Parameters.Add(new SqlParameter("@rowVersion", expected));
-            command.CommandText = $"UPDATE dbo.cases SET {string.Join(",", assignments.Where(a => a.Key != "created_at").Select(a => $"[{a.Key}]={a.Parameter}"))} OUTPUT INSERTED.id, INSERTED.row_version WHERE id=@id AND row_version=@rowVersion";
+            command.CommandText = $"UPDATE dbo.cases SET {string.Join(",", assignments.Where(a => a.Key != "created_at" && a.Key != "originated_in_system").Select(a => $"[{a.Key}]={a.Parameter}"))} OUTPUT INSERTED.id, INSERTED.row_version WHERE id=@id AND row_version=@rowVersion";
 
             string? previousCaseStatus = null;
+            var originatedInSystem = true;
             await using (var prior = connection.CreateCommand())
             {
                 prior.Transaction = transaction;
-                prior.CommandText = "SELECT current_holder,pipeline_stage,COALESCE(case_status,'Pipeline') FROM dbo.cases WHERE id=@id";
+                prior.CommandText = "SELECT current_holder,pipeline_stage,COALESCE(case_status,'Pipeline'),COALESCE(originated_in_system,1) FROM dbo.cases WHERE id=@id";
                 prior.Parameters.Add(new SqlParameter("@id", model.Id));
                 await using var priorReader = await prior.ExecuteReaderAsync(cancellationToken);
                 if (await priorReader.ReadAsync(cancellationToken))
@@ -83,6 +84,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                     previousHolder = priorReader.IsDBNull(0) ? null : priorReader.GetString(0);
                     previousStage = priorReader.IsDBNull(1) ? null : priorReader.GetString(1);
                     previousCaseStatus = priorReader.IsDBNull(2) ? null : priorReader.GetString(2);
+                    originatedInSystem = Convert.ToBoolean(priorReader.GetValue(3));
                 }
             }
 
@@ -93,8 +95,11 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
             // post-recompute concern here. Must run before the UPDATE below. The check basis is now
             // dbo.case_prefiling_milestones (milestone='DirectorSignatureReceived') rather than
             // dbo.pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc
-            // comment for why.
-            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus))
+            // comment for why. originatedInSystem read from the row's own persisted value (not
+            // model.OriginatedInSystem, which the client could tamper with) - a historically-imported
+            // case skips this gate entirely (pre-filing sign-off/Settlement Authority final
+            // implementation, item 4).
+            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus, originatedInSystem))
             {
                 await using var milestoneCmd = connection.CreateCommand();
                 milestoneCmd.Transaction = transaction;
@@ -197,6 +202,10 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["case_style"] = Null(model.CaseStyle), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
         ["case_folder_path"] = Null(model.CaseFolderPath),
         ["settlement_authorized_ceiling"] = model.SettlementAuthorizedCeiling,
+        // Pre-filing sign-off/Settlement Authority final implementation, item 4: only ever written
+        // on INSERT (see the UPDATE-branch exclusion filter below, mirroring created_at's own
+        // exclusion) - immutable after a case is first created, by construction.
+        ["originated_in_system"] = model.Id == 0 ? (model.OriginatedInSystem ? 1L : 0L) : (object?)null,
         ["project_name"] = Null(model.ProjectName), ["tax_owed_amount"] = model.TaxOwedAmount, ["whole_property_acres"] = model.WholePropertyAcres,
         ["acquisition_acres"] = model.AcquisitionAcres, ["landowner_appraiser_name"] = Null(model.LandownerAppraiserName),
         ["additional_deposit_amount"] = model.AdditionalDepositAmount, ["additional_deposit_date"] = Null(model.AdditionalDepositDate),
@@ -274,6 +283,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                attorney_fees_awarded, attorney_fees_amount, judge, division,
                fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
                settlement_authorized_ceiling,
+               COALESCE(originated_in_system, 1),
                row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0

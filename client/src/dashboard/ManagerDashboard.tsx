@@ -2,15 +2,16 @@ import { useMemo, useState } from 'react'
 import type { CaseRecord, Hearing } from '../App'
 import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
-import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './types'
+import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord, SettlementAuthorityRequestRecord } from './types'
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
 import { IncomingPipelinePanel } from './IncomingPipelinePanel'
 import { ApprovalsTab } from './ApprovalsTab'
 import { ByAttorneyTab } from './ByAttorneyTab'
 import { ByJobTab } from './ByJobTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
+import { BulkMilestoneGrid } from './BulkMilestoneGrid'
 
-type ManagerDashboardTab = 'calendar' | 'approvals' | 'byAttorney' | 'byJob' | 'needsAttention'
+type ManagerDashboardTab = 'calendar' | 'approvals' | 'byAttorney' | 'byJob' | 'needsAttention' | 'bulkMark'
 
 const MANAGER_DASHBOARD_TABS: { key: ManagerDashboardTab; label: string }[] = [
   { key: 'calendar', label: 'Calendar' },
@@ -18,6 +19,7 @@ const MANAGER_DASHBOARD_TABS: { key: ManagerDashboardTab; label: string }[] = [
   { key: 'byAttorney', label: 'By Attorney' },
   { key: 'byJob', label: 'By Job' },
   { key: 'needsAttention', label: 'Needs Attention' },
+  { key: 'bulkMark', label: 'Bulk Mark Milestones' },
 ]
 
 // Dashboard-context "open" definition - excludes Triage as well as Resolved / Closed. Mirrors
@@ -47,18 +49,24 @@ export function ManagerDashboard({
   settlementAuthorityRequests,
   preFilingMilestones,
   preFilingMilestonesAging,
+  reviewNotes,
   onOpenCase,
   onDecided,
+  onMilestonesMutated,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
+  reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
   // Manager/Administrator Dashboard Milestone 5: re-fetches settlementAuthorityRequests after a
   // successful Settlement Authority decide action - see App.tsx's refreshSettlementAuthorityRequests.
   onDecided: () => Promise<void>
+  // Final implementation, item 1: re-fetches preFilingMilestones/preFilingMilestonesAging after a
+  // bulk-mark action - see App.tsx's refreshPreFilingMilestones.
+  onMilestonesMutated: () => Promise<void>
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
   const [horizon, setHorizon] = useState<CalendarHorizon>(30)
@@ -137,7 +145,7 @@ export function ManagerDashboard({
               />
             </Panel>
             <Panel title="Incoming Pipeline">
-              <IncomingPipelinePanel allCases={allCases} preFilingMilestones={preFilingMilestones} onOpenCase={onOpenCase} />
+              <IncomingPipelinePanel allCases={allCases} preFilingMilestones={preFilingMilestones} reviewNotes={reviewNotes} onOpenCase={onOpenCase} onMutated={onMilestonesMutated} />
             </Panel>
           </div>
         )}
@@ -163,7 +171,18 @@ export function ManagerDashboard({
         )}
         {activeTab === 'needsAttention' && (
           <Panel title="Needs Attention">
-            <NeedsAttentionTab allCases={allCases} settlementAuthorityRequests={settlementAuthorityRequests} onOpenCase={onOpenCase} />
+            <NeedsAttentionTab
+              allCases={allCases}
+              settlementAuthorityRequests={settlementAuthorityRequests}
+              preFilingMilestones={preFilingMilestones}
+              reviewNotes={reviewNotes}
+              onOpenCase={onOpenCase}
+            />
+          </Panel>
+        )}
+        {activeTab === 'bulkMark' && (
+          <Panel title="Bulk Mark Milestones">
+            <BulkMilestoneGrid allCases={allCases} preFilingMilestones={preFilingMilestones} onMutated={onMilestonesMutated} />
           </Panel>
         )}
       </div>

@@ -37,8 +37,15 @@ internal static class PipelinePromotionGate
     // is no in-system "Chief Counsel approves the filing" action. RequiresFilingApproval's trigger
     // condition (previousCaseStatus=="Pipeline", newCaseStatus a genuine change away from
     // "Pipeline") is unchanged from Milestone 2 - only what EnsureFilingReady checks has changed.
-    public static bool RequiresFilingApproval(string? previousCaseStatus, string? newCaseStatus) =>
-        string.Equals(previousCaseStatus, "Pipeline", StringComparison.Ordinal)
+    //
+    // Pre-filing sign-off/Settlement Authority final implementation, item 4: a historically-imported
+    // case (originatedInSystem false - see CaseRecord.OriginatedInSystem's doc comment) has no real
+    // in-system Director-signature event to ever mark, so the entire forcing-prompt is skipped for
+    // it, not just softened - callers must read this from the row's own persisted value, never from
+    // a client-supplied model, since it is otherwise a trivial bypass.
+    public static bool RequiresFilingApproval(string? previousCaseStatus, string? newCaseStatus, bool originatedInSystem = true) =>
+        originatedInSystem
+        && string.Equals(previousCaseStatus, "Pipeline", StringComparison.Ordinal)
         && !string.IsNullOrWhiteSpace(newCaseStatus)
         && !string.Equals(newCaseStatus, "Pipeline", StringComparison.Ordinal);
 

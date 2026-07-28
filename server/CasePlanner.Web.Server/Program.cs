@@ -253,6 +253,12 @@ builder.Services.AddSingleton<ICollectorStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCollectorStore>()
         : services.GetRequiredService<SqliteCollectorStore>());
+builder.Services.AddSingleton<SqliteNewspaperStore>();
+builder.Services.AddSingleton<SqlServerNewspaperStore>();
+builder.Services.AddSingleton<INewspaperStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerNewspaperStore>()
+        : services.GetRequiredService<SqliteNewspaperStore>());
 builder.Services.AddSingleton<SqliteSettlementAuthorityRequestStore>();
 builder.Services.AddSingleton<SqlServerSettlementAuthorityRequestStore>();
 builder.Services.AddSingleton<ISettlementAuthorityRequestStore>(services =>
@@ -265,6 +271,12 @@ builder.Services.AddSingleton<IPreFilingMilestoneStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerPreFilingMilestoneStore>()
         : services.GetRequiredService<SqlitePreFilingMilestoneStore>());
+builder.Services.AddSingleton<SqliteReviewNoteStore>();
+builder.Services.AddSingleton<SqlServerReviewNoteStore>();
+builder.Services.AddSingleton<IReviewNoteStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerReviewNoteStore>()
+        : services.GetRequiredService<SqliteReviewNoteStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -644,6 +656,17 @@ app.MapPut("/api/collectors/{county}", async (string county, CollectorRecord mod
     return Results.Ok(await collectors.SaveAsync(model, token));
 });
 
+// Newspaper of general circulation reference lookup (final implementation, item 7). Unlike Circuit
+// Clerk/Assessor/Collector, a county can have multiple newspapers and rows are never pre-seeded, so
+// this is a true create-or-update-by-Id endpoint rather than an edit-by-county PUT: Id == 0 (or
+// absent) creates a new row, a nonzero Id updates that row in place.
+app.MapGet("/api/newspapers", async (INewspaperStore newspapers, CancellationToken token) => Results.Ok(await newspapers.GetAsync(token)));
+app.MapPost("/api/newspapers", async (NewspaperRecord model, INewspaperStore newspapers, HttpContext context, CancellationToken token) =>
+{
+    if (entraOptions.Enabled && !IsAdministratorOrManager(context)) return Results.Forbid();
+    return Results.Ok(await newspapers.SaveAsync(model, token));
+});
+
 // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. Manager Dashboard
 // sign-off consolidation, item 4: pure record-keeping now - GET is open to any authenticated user
 // (or unrestricted when Entra is disabled), matching circuit-clerks/pipeline-approvals above; both
@@ -692,6 +715,42 @@ app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/unmark", 
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+// Final implementation, item 1: the primary bulk-entry surface, scoped to a job number's tracts -
+// marks the SAME milestone with the SAME occurred-on date across every listed case in one action,
+// so entering this data can be at least as fast as the spreadsheet it replaces. Each case is marked
+// through the exact same IPreFilingMilestoneStore.MarkAsync path a single-case mark uses (so
+// PreFilingMilestoneGate's sequential-order validation and CanActOnPreFilingMilestone's access rule
+// both still apply per case) - a case that can't legally take the mark yet, or the caller can't act
+// on, is reported as a failure rather than aborting the whole batch. All rows share one generated
+// BatchId so the audit trail shows they came from one action.
+app.MapPost("/api/prefiling-milestones/bulk-mark", async (BulkMarkPreFilingMilestoneRequest request, IPreFilingMilestoneStore milestones, HttpContext context, CaseAccessService access, CancellationToken token) =>
+{
+    var batchId = Guid.NewGuid().ToString("N");
+    var result = new BulkMarkPreFilingMilestoneResult { BatchId = batchId };
+    foreach (var caseId in request.CaseIds)
+    {
+        try
+        {
+            if (!await CanActOnPreFilingMilestone(caseId, context, access, token))
+            {
+                result.Failures.Add(new BulkMarkPreFilingMilestoneFailure { CaseId = caseId, Error = "You do not have access to act on this case." });
+                continue;
+            }
+            var marked = await milestones.MarkAsync(caseId, request.Milestone, new MarkPreFilingMilestoneRequest
+            {
+                OccurredDate = request.OccurredDate,
+                Note = request.Note,
+                BatchId = batchId,
+            }, token);
+            result.Marked.Add(marked);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            result.Failures.Add(new BulkMarkPreFilingMilestoneFailure { CaseId = caseId, Error = ex.Message });
+        }
+    }
+    return Results.Ok(result);
+});
 app.MapGet("/api/prefiling-milestones/aging", async (IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAgingAsync(token)));
 // Manager/Administrator Dashboard Milestone 4: a global (no case-scoped path segment) read, so the
@@ -700,6 +759,27 @@ app.MapGet("/api/prefiling-milestones/aging", async (IPreFilingMilestoneStore mi
 // GET /api/cases/{caseId}/prefiling-milestones route above stays for case-workspace use.
 app.MapGet("/api/prefiling-milestones", async (long? caseId, IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAsync(caseId, token)));
+
+// Pre-filing sign-off/Settlement Authority final implementation, item 2: an unstructured review-note
+// log - GET is open to any authenticated user (matching prefiling-milestones/pipeline-approvals
+// above); POST requires only ordinary case-write access, broader than CanActOnPreFilingMilestone's
+// assigned-attorney/assistant/manager/Chief-Counsel restriction, since a review note has no required
+// participant by design (see ReviewNoteRecord's doc comment).
+app.MapGet("/api/cases/{caseId:long}/review-notes", async (long caseId, IReviewNoteStore notes, CancellationToken token) =>
+    Results.Ok(await notes.GetAsync(caseId, token)));
+app.MapPost("/api/cases/{caseId:long}/review-notes", async (long caseId, CreateReviewNoteRequest request, IReviewNoteStore notes, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
+    try { return Results.Ok(await notes.CreateAsync(caseId, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+// Item 3 (stall detection): a global (no case-scoped path segment) read, mirroring
+// GET /api/prefiling-milestones's optional-caseId shape exactly, so the shared client-side stall
+// detector (buildNeedsAttentionRows/IncomingPipelinePanel) can fetch every case's review notes in
+// one call. The per-case GET /api/cases/{caseId}/review-notes route above stays for case-workspace
+// use.
+app.MapGet("/api/review-notes", async (long? caseId, IReviewNoteStore notes, CancellationToken token) =>
+    Results.Ok(await notes.GetAsync(caseId, token)));
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());
@@ -800,6 +880,7 @@ var signOffActivityTypes = new HashSet<string>(StringComparer.Ordinal)
     "HolderAssigned", "PipelineHolderApprovalRecorded",
     "PreFilingMilestoneMarked", "PreFilingMilestoneUnmarked", "FilingGateOverridden",
     "SettlementAuthorityRequested", "SettlementAuthorityReceived", "SettlementAuthorityDenied", "SettlementAuthorityInfoRequested",
+    "ReviewNoteAdded",
 };
 app.MapGet("/api/cases/{id:long}/sign-off-register", async (long id, IActivityStore activity, CancellationToken token) =>
 {

@@ -5,18 +5,20 @@ import { downloadCsv } from '../ui/csvExport'
 import { EmptyState } from './EmptyState'
 import { daysPending } from './SettlementAuthoritySection'
 import { formatCurrencyOrDash } from './dashboardAggregation'
-import type { SettlementAuthorityRequestRecord } from './types'
+import { computePreFilingStallInfo } from './preFilingStallDetection'
+import type { PreFilingMilestoneRecord, ReviewNoteRecord, SettlementAuthorityRequestRecord } from './types'
 
 export const DEFAULT_ACTIVITY_THRESHOLD_DAYS = 14
 export const DEFAULT_APPROVAL_THRESHOLD_DAYS = 5
+export const DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS = 7
 
-// The four rule "types", in the fixed group order the combined list is sorted by (see
+// The five rule "types", in the fixed group order the combined list is sorted by (see
 // buildNeedsAttentionRows's own sort-order comment below). Three other candidate rules from the
 // original spec - no settlement evaluation recorded, settlements approaching/exceeding granted
 // authority, status hasn't changed longer than typical dwell time - were investigated and confirmed
 // with the user to have no backing data model field, so they are deliberately not built here and
 // are never referenced in this UI.
-type RuleType = 'service' | 'activity' | 'feeShift' | 'approval'
+type RuleType = 'preFilingStall' | 'service' | 'activity' | 'feeShift' | 'approval'
 
 export type NeedsAttentionRow = {
   key: string
@@ -40,6 +42,36 @@ export type NeedsAttentionRow = {
 function daysSince(dateStr: string, now: Date = new Date()): number {
   const diffMs = now.getTime() - new Date(dateStr).getTime()
   return Math.max(0, Math.floor(diffMs / 86_400_000))
+}
+
+// Rule (0, final implementation item 3): a Pipeline tract stalled on pre-filing sign-off beyond a
+// configurable threshold (default 7 days) - reads the SAME shared detector IncomingPipelinePanel.tsx
+// uses (computePreFilingStallInfo), so a case appears here for exactly the reason its Pipeline Health
+// row shows, never a separately-derived one. Only applies to a case actually in Pipeline status
+// (milestones/review notes are meaningless once filed) and only when there's an age to measure
+// (daysStalled null - nothing marked, no review notes - never fires here, since there's nothing yet
+// to call a "stall").
+export function preFilingStallRow(
+  record: CaseRecord,
+  milestones: PreFilingMilestoneRecord[],
+  reviewNotes: ReviewNoteRecord[],
+  thresholdDays: number,
+  now: Date = new Date(),
+): NeedsAttentionRow | null {
+  if ((record.caseStatus || 'Pipeline') !== 'Pipeline') return null
+  const info = computePreFilingStallInfo(record.id, milestones, reviewNotes, now)
+  if (info.daysStalled == null || info.daysStalled <= thresholdDays) return null
+  return {
+    key: `prefiling-stall-${record.id}`,
+    ruleType: 'preFilingStall',
+    reason: info.label,
+    age: info.daysStalled,
+    attorney: record.assignedAttorney || 'Unassigned',
+    caseId: record.id,
+    jobNumber: record.jobNumber || '',
+    tract: record.tract || '',
+    caseName: record.caseName,
+  }
 }
 
 // Rule (a): past the 60-day service soft flag. Soft-flag language only - never "overdue", "missed",
@@ -139,29 +171,36 @@ export function pendingApprovalRow(
   }
 }
 
-const RULE_ORDER: RuleType[] = ['service', 'activity', 'feeShift', 'approval']
+const RULE_ORDER: RuleType[] = ['preFilingStall', 'service', 'activity', 'feeShift', 'approval']
 
-// Builds the combined, single ranked exception list (not four separate tables) - a case can appear
+// Builds the combined, single ranked exception list (not five separate tables) - a case can appear
 // more than once if it triggers more than one rule, which is expected, not a bug to deduplicate.
 //
-// Sort order: grouped by rule type in RULE_ORDER (service soft-flag, then stale-activity, then
-// fee-shift reference, then pending-approval) so a manager scanning top to bottom sees like
-// exceptions together, rather than four rule types interleaved by a single shared "severity" number
-// this app has no real basis for computing (see design-system's "no unexplained scores" precedent,
-// matching the Attorney Dashboard's own documented approach). Within each group, oldest/most-
-// concerning first (age descending) - except the fee-shift group, which has no age concept at all
-// and instead sorts by deposit amount descending (larger exposure first), matching
+// Sort order: grouped by rule type in RULE_ORDER (pre-filing stall, then service soft-flag, then
+// stale-activity, then fee-shift reference, then pending-approval) so a manager scanning top to
+// bottom sees like exceptions together, rather than five rule types interleaved by a single shared
+// "severity" number this app has no real basis for computing (see design-system's "no unexplained
+// scores" precedent, matching the Attorney Dashboard's own documented approach). Within each group,
+// oldest/most-concerning first (age descending) - except the fee-shift group, which has no age
+// concept at all and instead sorts by deposit amount descending (larger exposure first), matching
 // SettlementAuthoritySection.tsx's own documented sort-order comment style.
 export function buildNeedsAttentionRows(
   allCases: CaseRecord[],
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[],
+  preFilingMilestones: PreFilingMilestoneRecord[],
+  reviewNotes: ReviewNoteRecord[],
   activityThresholdDays: number,
   approvalThresholdDays: number,
+  preFilingStallThresholdDays: number,
   now: Date = new Date(),
 ): NeedsAttentionRow[] {
   const caseById = new Map(allCases.map((record) => [record.id, record]))
   const rows: NeedsAttentionRow[] = []
 
+  for (const record of allCases) {
+    const row = preFilingStallRow(record, preFilingMilestones, reviewNotes, preFilingStallThresholdDays, now)
+    if (row) rows.push(row)
+  }
   for (const record of allCases) {
     const row = serviceSoftFlagRow(record, now)
     if (row) rows.push(row)
@@ -202,6 +241,7 @@ function exportCsv(rows: NeedsAttentionRow[]) {
 // white-space: nowrap makes it unsuitable for a full sentence on its own (it would force a single
 // very wide, non-wrapping capsule), so only a short category label goes inside the pill itself.
 const RULE_PILL_CLASS: Record<RuleType, string> = {
+  preFilingStall: 'pill-warn',
   service: 'pill-warn',
   activity: 'pill-danger',
   feeShift: 'pill-neutral',
@@ -209,6 +249,7 @@ const RULE_PILL_CLASS: Record<RuleType, string> = {
 }
 
 const RULE_TYPE_LABEL: Record<RuleType, string> = {
+  preFilingStall: 'Pre-Filing Stall',
   service: 'Service',
   activity: 'Activity',
   feeShift: 'Fee-Shift Reference',
@@ -218,23 +259,40 @@ const RULE_TYPE_LABEL: Record<RuleType, string> = {
 export function NeedsAttentionTab({
   allCases,
   settlementAuthorityRequests,
+  preFilingMilestones,
+  reviewNotes,
   onOpenCase,
 }: {
   allCases: CaseRecord[]
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
+  preFilingMilestones: PreFilingMilestoneRecord[]
+  reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
 }) {
   const [activityThresholdDays, setActivityThresholdDays] = useState(DEFAULT_ACTIVITY_THRESHOLD_DAYS)
   const [approvalThresholdDays, setApprovalThresholdDays] = useState(DEFAULT_APPROVAL_THRESHOLD_DAYS)
+  const [preFilingStallThresholdDays, setPreFilingStallThresholdDays] = useState(DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS)
 
   const rows = useMemo(
-    () => buildNeedsAttentionRows(allCases, settlementAuthorityRequests, activityThresholdDays, approvalThresholdDays),
-    [allCases, settlementAuthorityRequests, activityThresholdDays, approvalThresholdDays],
+    () => buildNeedsAttentionRows(
+      allCases, settlementAuthorityRequests, preFilingMilestones, reviewNotes,
+      activityThresholdDays, approvalThresholdDays, preFilingStallThresholdDays,
+    ),
+    [allCases, settlementAuthorityRequests, preFilingMilestones, reviewNotes, activityThresholdDays, approvalThresholdDays, preFilingStallThresholdDays],
   )
 
   return (
     <div>
       <div className="inline-quick-form" style={{ marginBottom: '0.85rem' }}>
+        <label>
+          <span>Pre-filing stall threshold (days)</span>
+          <input
+            type="number"
+            min={1}
+            value={preFilingStallThresholdDays}
+            onChange={(event) => setPreFilingStallThresholdDays(Math.max(1, Number(event.target.value) || 1))}
+          />
+        </label>
         <label>
           <span>No-activity threshold (days)</span>
           <input
@@ -260,7 +318,7 @@ export function NeedsAttentionTab({
       </p>
 
       {rows.length === 0 ? (
-        <EmptyState title="Nothing needs attention right now." description="No case currently trips the service, activity, fee-shift, or approval-aging checks below the thresholds above." />
+        <EmptyState title="Nothing needs attention right now." description="No case currently trips the pre-filing stall, service, activity, fee-shift, or approval-aging checks below the thresholds above." />
       ) : (
         <div className="table-wrap">
           <table className="ui-table compact-table">

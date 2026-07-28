@@ -65,6 +65,23 @@ still required. See [SQL Server migration foundation](docs/sql-server-migration.
   Publication, seeded for all 75 Arkansas counties and editable from Settings
 - high-contrast (dark and light) theme options alongside light/dark/system, documented in
   `design-system/MASTER.md`
+- pre-filing sign-off tracker on Pipeline tracts: four sequential milestones (Pleadings Package
+  Sent, Chief Counsel Signatures Received, Declaration of Taking Sent to Director, Director
+  Signature Received) that record ARDOT's real, out-of-band email sign-off process rather than
+  routing an approval inside the app — the Director is not a system user and never logs in. Each
+  milestone captures who marked it, their role, the date the signature actually occurred (editable,
+  often backdated), and when it was marked in the system; un-marking requires a reason and is fully
+  audited. A tract cannot leave Pipeline status until Director Signature Received is marked, unless
+  a manager overrides with a required, audited reason
+- Settlement Authority workflow: an attorney can request authority to settle up to an amount; Chief
+  Counsel exclusively decides (Approve/Grant, Deny, Request More Information), each decision
+  requiring a comment and recording the granted ceiling on the case
+- Manager/Administrator Dashboard ("Division Overview"): a division-wide view for managers, Chief
+  Counsel, and Deputy Chief Counsel — a chronological Calendar of upcoming hearings and trial dates
+  with an Incoming Pipeline panel, an Approvals tab (Settlement Authority decisions plus a read-only
+  Filing Status view), and By Attorney / By Job / Needs Attention aggregation views. Every table
+  exports to CSV. Any Manager, Chief Counsel, or Deputy Chief Counsel now sees every case
+  division-wide, not just cases they are personally assigned to — see "Database status" below
 
 ## Development
 
@@ -255,6 +272,17 @@ case's Attorney/Legal Assistant name to a real account without auto-matching by 
 Checklist/deadline template catalogs now seed on the SQL Server side as well (previously only
 SQLite reseeded on startup, so a real SQL Server deployment would only ever get template content from
 the one-time cutover migration and go stale on every later content update).
+
+`CaseAccessService.IsUnrestricted` now also covers any user flagged `is_manager` or holding a
+`manager_tier` of Chief Counsel or Deputy Chief Counsel (`app_users`, SQL Server/Entra-enabled mode
+only — same as `is_manager` before it), not just Administrator — the Manager/Administrator
+Dashboard's whole premise is division-wide visibility, so a manager drilling into a case must see it
+fully, not hit an assignment check a second time. This is a broad change: every existing
+assignment-aware endpoint (case list, case workspace, exports, attorney dashboard) is affected, not
+just the new dashboard. The Settlement Authority decide action is a deliberate exception to this
+same-as-Administrator pattern — it is gated to Chief Counsel exclusively, with no Administrator
+override, since that decision was made explicitly for this feature and is stricter than every other
+admin-gated action in the app.
 
 Organization-wide document defaults now also have a SQL Server singleton record. Attorney/contact/address
 and leadership values retain the same document-token behavior while adding `rowversion` conflict detection,

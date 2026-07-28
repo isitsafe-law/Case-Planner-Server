@@ -46,6 +46,27 @@ IT must provide:
    confirmation that `GroupMember.Read.All` (or equivalent) is requested and admin-consented on the app
    registration, and whether Graph group membership fully replaces the existing App-Role-claims checks or
    coexists as a fallback.
+9. Which real people should be flagged `is_manager` and/or given a `manager_tier` of `ChiefCounsel` /
+   `DeputyChiefCounsel` on `app_users` once the Manager/Administrator Dashboard goes live (see "Manager
+   Dashboard access model" below). There is no UI for assigning `manager_tier` yet — an admin sets `is_manager`
+   via the existing `PUT /api/admin/users/{id}/manager` endpoint/Settings screen, but `manager_tier` currently
+   requires a direct database update (`PUT /api/admin/users/{id}/manager-tier` exists but has no Settings UI
+   in front of it yet). Get the initial Chief Counsel/Deputy Chief Counsel assignment right before go-live.
+
+### Manager Dashboard access model
+
+Any user flagged `is_manager`, or holding `manager_tier` of `ChiefCounsel` or `DeputyChiefCounsel`, now gets
+the same unrestricted case visibility Administrator already had (`CaseAccessService.IsUnrestricted`) —
+every case division-wide, not just their own assignments. This is a broad change affecting every
+assignment-aware endpoint in the app, not something scoped narrowly to the new dashboard. Confirm this is
+the intended blast radius before enabling Entra broadly; in local/Entra-disabled mode this was already
+unrestricted for everyone, so the difference only becomes visible once Entra is turned on.
+
+The Settlement Authority decide action (Approve/Grant, Deny, Request More Information) is a deliberate
+exception to the "Administrator can do anything" pattern used everywhere else in this app: it is gated to
+`manager_tier = ChiefCounsel` exclusively, with no Administrator override. If IT or an administrator account
+gets a 403 attempting that action, that is expected behavior, not a bug — only the specific person(s) tagged
+Chief Counsel can decide a Settlement Authority request.
 
 ### Pending Microsoft Graph decision
 

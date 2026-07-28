@@ -327,6 +327,18 @@ export function preFilingMilestoneLabel(milestone: string): string {
   return PRE_FILING_MILESTONE_LABELS[milestone as PreFilingMilestone] ?? milestone
 }
 
+// Request bodies for the per-case mark/unmark endpoints (POST /api/cases/{caseId}/
+// prefiling-milestones/{milestone}/mark|unmark) - not needed by the Manager Dashboard's read-only
+// consumers above, only by the case workspace's PreFilingMilestonesPanel, which actually calls them.
+export type MarkPreFilingMilestoneRequest = {
+  occurredDate: string
+  note?: string
+}
+
+export type UnmarkPreFilingMilestoneRequest = {
+  reason: string
+}
+
 // Manager/Administrator Dashboard Milestone 5. Mirrors server/CasePlanner.Web.Server/Models/
 // DomainModels.cs's PreFilingMilestoneAgingSummary/-Bucket/-Case field-for-field - the already
 // server-aggregated view behind GET /api/prefiling-milestones/aging, consumed by the Approvals

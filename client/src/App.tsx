@@ -33,6 +33,7 @@ import { ConfirmDialog, type ConfirmOptions } from './ui/ConfirmDialog'
 import { CloseCaseDialog, dispositionTypeOptions, type CloseCaseDetails } from './ui/CloseCaseDialog'
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
+import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPanel'
 
 type PageKey = 'dashboard' | 'managerDashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
@@ -120,6 +121,12 @@ export type CaseRecord = {
   // Manager/Administrator Dashboard's Incoming Pipeline panel (Milestone 4), which sorts pipeline
   // tracts by this field.
   dateSentToCurrentHolder?: string | null
+  // Mirrors the server's transient CaseRecord.FilingGateOverrideReason (Models/DomainModels.cs) -
+  // never persisted, read once during the save's pre-filing gate check (EnsureFilingReady) and then
+  // discarded, exact precedent: DeadlineItem.ReasonForChange. Previously missing from this client
+  // type entirely (a genuine gap, not a design choice) since nothing wired up the override control
+  // client-side until the pre-filing sign-off UI (PreFilingMilestonesPanel).
+  filingGateOverrideReason?: string
   nextReviewDate?: string | null
   pipelineStage?: string | null
   shortPostureSummary?: string | null
@@ -1530,11 +1537,12 @@ const modalKindLabels: Record<ModalKind, string> = {
 }
 
 // Section nav for the sectioned case editor drawer - order matches the visual section order below.
-type CaseEditorSectionKey = 'identity' | 'people' | 'dates' | 'financial' | 'service' | 'notes'
+type CaseEditorSectionKey = 'identity' | 'people' | 'dates' | 'preFilingSignOff' | 'financial' | 'service' | 'notes'
 const caseEditorSections: { key: CaseEditorSectionKey; label: string }[] = [
   { key: 'identity', label: 'Identity' },
   { key: 'people', label: 'People' },
   { key: 'dates', label: 'Dates' },
+  { key: 'preFilingSignOff', label: 'Pre-Filing Sign-Off' },
   { key: 'financial', label: 'Financial & Property' },
   { key: 'service', label: 'Service' },
   { key: 'notes', label: 'Notes' },
@@ -2219,6 +2227,7 @@ function App() {
     identity: null,
     people: null,
     dates: null,
+    preFilingSignOff: null,
     financial: null,
     service: null,
     notes: null,
@@ -2967,6 +2976,24 @@ function App() {
     await loadInitial()
     if (caseId) {
       await loadWorkspace(caseId)
+    }
+  }
+
+  // refreshAll deliberately does NOT reload the Recent Activity feed - it's lazy-loaded once per
+  // case (see the activityLogLoadedForCase-guarded effect above) and stays cached across
+  // refreshAll calls, which is why even the pre-existing Holder stepper/pipeline-approval actions
+  // (setCurrentHolderFromStepper, recordPipelineHolderApproval - both just call refreshAll) don't
+  // actually make new activity entries show up immediately on an already-open Overview tab. Confirmed
+  // live: marking a pre-filing milestone with only refreshAll left the feed showing stale entries.
+  // PreFilingMilestonesPanel's mark/unmark explicitly needs the feed to update right away (see its
+  // spec), so it gets its own direct re-fetch, matching submitCaseRecordDecision's existing
+  // fetch-then-setActivityLog precedent, rather than silently inheriting that gap.
+  async function refreshCaseActivityLog(caseId: number) {
+    try {
+      setActivityLog(await api<ActivityLogEntry[]>(`/api/cases/${caseId}/activity`))
+      setActivityLogLoadedForCase(caseId)
+    } catch {
+      // best effort - the Overview tab's own lazy loader will retry on next visit if this fails
     }
   }
 
@@ -3976,6 +4003,10 @@ function App() {
       caseStyle: normalizeTextValue(draft.caseStyle),
       opposingCounselContact: normalizeTextValue(draft.opposingCounselContact),
       caseFolderPath: normalizeTextValue(draft.caseFolderPath),
+      // Transient - only ever meaningful on the request that's about to be sent; trimmed to undefined
+      // (not null, matching this field's string|undefined type) so a blank override textarea doesn't
+      // round-trip as an empty string the server would have to also treat as "no override".
+      filingGateOverrideReason: draft.filingGateOverrideReason?.trim() || undefined,
     }
   }
 
@@ -4706,12 +4737,25 @@ function App() {
       setCaseTab('overview')
       setActiveModal(null)
       setModalDirty(false)
+      // filingGateOverrideReason is transient (server never persists or returns it) - the next
+      // startEditCase/cancelModal would already rebuild caseDraft from the freshly-loaded case
+      // record without it, but clearing it here explicitly (rather than relying on that) means a
+      // stale reason can never silently reapply if this same caseDraft is ever reused before that
+      // happens.
+      setCaseDraft((current) => ({ ...current, filingGateOverrideReason: undefined }))
       await refreshAll(saved.id)
       setMessage(`Saved ${saved.caseNumber || saved.caseName}.`)
     } catch (error) {
       const text = error instanceof Error ? error.message : 'Unable to save case.'
       setErrorMessage(text)
       setModalFeedback(text)
+      // The pre-filing gate's error names the control that resolves it (Director Signature
+      // Received milestone) but a generic top-of-page banner doesn't show the user where that
+      // control lives - scroll them straight to it instead. Loose substring match (not the exact
+      // sentence) so this survives minor wording tweaks to the gate's message.
+      if (text.includes('Director signature milestone')) {
+        scrollToCaseEditorSection('preFilingSignOff')
+      }
     }
   }
 
@@ -9446,6 +9490,47 @@ function App() {
                 )}
               </div>
             </section>
+
+            {/* Placement decision: this is the ONLY instance of PreFilingMilestonesPanel in the
+                app (not duplicated on the read-only Overview tab). The Manager Override control
+                below rides on caseDraft/patchCaseDraft, which only exists inside this editor - a
+                second, Overview-tab copy would either need to duplicate that draft-and-save
+                machinery or leave the override stranded without a way to attach it to a save.
+                Keeping mark/unmark and override together in one component also avoids two
+                independently-fetched copies of the same per-case milestone list drifting out of
+                sync. The gate this panel exists to satisfy fires from this same Save action (Case
+                Status, just above), so a user is already here at the exact moment they'd hit it -
+                and the "Edit Case" button that opens this drawer is one click away from every tab,
+                not buried behind a separate view. Guarded on selectedCase.caseStatus (the actual
+                persisted status), not caseDraft.caseStatus (the pending edit) - the whole point is
+                to stay visible while the user is mid-edit trying to change Case Status away from
+                Pipeline, which is exactly when caseDraft.caseStatus stops being 'Pipeline'.
+                Uses modalMode !== 'create' rather than renderCaseWorkspace's own isNewCase (out of
+                scope here - this Drawer is rendered outside that function, alongside App's other
+                modals), matching the same "an existing, persisted case" meaning. */}
+            {modalMode !== 'create' && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+              <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.preFilingSignOff = node }}>
+                <h4 className="form-section-heading">Pre-Filing Sign-Off</h4>
+                <PreFilingMilestonesPanel
+                  caseId={selectedCase.id}
+                  currentUser={currentUser}
+                  filingGateOverrideReason={caseDraft.filingGateOverrideReason}
+                  onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
+                  // Deliberately loadInitial() + refreshCaseActivityLog(), NOT refreshAll(). This
+                  // panel lives inside the still-open case editor, and refreshAll's loadWorkspace
+                  // call does setCaseDraft(data.case) as a side effect - confirmed live that this
+                  // silently threw away whatever else the user had pending in this same draft (e.g.
+                  // a Case Status change they hadn't saved yet) the instant they marked a milestone.
+                  // loadInitial() alone still refreshes the cross-case data a marked milestone can
+                  // affect (the global pre-filing aging summary, dashboard counts, etc.) without
+                  // touching caseDraft; the milestone list itself is refetched inside the panel.
+                  onMutated={async () => {
+                    await loadInitial()
+                    await refreshCaseActivityLog(selectedCase.id)
+                  }}
+                />
+              </section>
+            )}
 
             <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.financial = node }}>
               <h4 className="form-section-heading">Financial & Property</h4>

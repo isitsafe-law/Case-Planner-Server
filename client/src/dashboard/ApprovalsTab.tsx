@@ -1,4 +1,4 @@
-import type { AuthenticatedUserProfile, CaseRecord } from '../App'
+import type { CaseRecord } from '../App'
 import { Panel } from '../App'
 import { FilingStatusSection } from './FilingStatusSection'
 import { SettlementAuthoritySection } from './SettlementAuthoritySection'
@@ -10,7 +10,9 @@ import type { PreFilingMilestoneAgingSummary, SettlementAuthorityRequestRecord }
 // pre-filing sign-off happens by email, outside this system (see PreFilingMilestoneRecord's doc
 // comment in server/CasePlanner.Web.Server/Models/DomainModels.cs for the full history). So this
 // tab is NOT the original spec's single two-workflow approval queue; it's two different sections:
-//   (a) Settlement Authority - the one real, actionable, Chief-Counsel-only decision queue.
+//   (a) Settlement Authority - a sortable log of requests and their recorded outcomes (Manager
+//       Dashboard sign-off consolidation, item 4 made this pure record-keeping, open to anyone with
+//       case-write access - no longer a Chief-Counsel-only decision queue).
 //   (b) Filing Status - a read-only informational list of which pre-filing milestone every Pipeline
 //       tract is waiting on. No approve/deny buttons - marking a milestone records a fact, not a
 //       decision, and is already reachable from the case workspace by anyone with the right access.
@@ -19,14 +21,12 @@ export function ApprovalsTab({
   allCases,
   settlementAuthorityRequests,
   preFilingMilestonesAging,
-  currentUser,
   onOpenCase,
   onDecided,
 }: {
   allCases: CaseRecord[]
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
-  currentUser: AuthenticatedUserProfile | null
   onOpenCase: (caseId: number) => void
   onDecided: () => Promise<void>
 }) {
@@ -36,7 +36,6 @@ export function ApprovalsTab({
         <SettlementAuthoritySection
           allCases={allCases}
           settlementAuthorityRequests={settlementAuthorityRequests}
-          currentUser={currentUser}
           onOpenCase={onOpenCase}
           onDecided={onDecided}
         />

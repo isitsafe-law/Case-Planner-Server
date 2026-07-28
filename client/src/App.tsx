@@ -281,9 +281,10 @@ type CaseDefendant = {
   notes?: string | null
 }
 
-// Pre-suit intake gate (see HolderPipelineStepper's HOLDER_STEPS chain) - append-only per-holder
-// review log. Every Approve/Return-for-Revision action is a NEW row, so "current status per role"
-// is computed client-side from this list (most recent row per role, or Pending if none).
+// Pre-suit intake review history (see HolderPipelineStepper's HOLDER_STEPS chain) - append-only
+// per-holder review log, pure fact/history rather than a gate (Manager Dashboard sign-off
+// consolidation, item 1). Every Approve/Return-for-Revision action is a NEW row, so "current status
+// per role" is computed client-side from this list (most recent row per role, or Pending if none).
 type PipelineHolderApproval = {
   id: number
   caseId: number
@@ -799,8 +800,10 @@ export type AuthenticatedUserProfile = {
   // Added for the Manager/Administrator Dashboard's Approvals tab (Milestone 5) - the server's
   // GET /api/auth/me handler (Program.cs) has returned authenticated.ManagerTier since Milestone 1,
   // this client type just never picked it up (same one-line gap as CaseRecord.dateSentToCurrentHolder
-  // was in Milestone 4). "ChiefCounsel" | "DeputyChiefCounsel" | null - only ChiefCounsel gets the
-  // Settlement Authority decide action; Deputy Chief Counsel gets read-only visibility like anyone else.
+  // was in Milestone 4). "ChiefCounsel" | "DeputyChiefCounsel" | null - used for unrestricted case
+  // visibility (CaseAccessService.IsUnrestricted). Neither the Director signature override (Manager
+  // Dashboard sign-off consolidation, item 3) nor the Settlement Authority action (item 4) checks
+  // this anymore - both are open to any actor now.
   managerTier?: string | null
 }
 type AppUserSummary = {
@@ -2510,6 +2513,10 @@ function App() {
   const [importExcelFileName, setImportExcelFileName] = useState('No file selected.')
   const [selectedTagId, setSelectedTagId] = useState(0)
   const [caseDraft, setCaseDraft] = useState<CaseRecord>(emptyCase())
+  // Set when saveCase is blocked on the Director signature milestone (Manager Dashboard sign-off
+  // consolidation, item 3) - pre-expands PreFilingMilestonesPanel's override control so "continue
+  // anyway" is immediately visible rather than a separate toggle the user has to find first.
+  const [filingGateBlocked, setFilingGateBlocked] = useState(false)
   const [deadlineDraft, setDeadlineDraft] = useState<DeadlineItem>(emptyDeadline())
   const [checklistDraft, setChecklistDraft] = useState<ChecklistItem>(emptyChecklist())
   const [discoveryDraft, setDiscoveryDraft] = useState<DiscoveryItem>(emptyDiscovery())
@@ -3327,6 +3334,7 @@ function App() {
     clearModalFeedback()
     if (kind === 'case') {
       setCaseDraft(workspace?.case ?? emptyCase())
+      setFilingGateBlocked(false)
     } else if (kind === 'deadline') {
       setDeadlineDraft(emptyDeadline(selectedCaseId ?? caseDraft.id))
     } else if (kind === 'checklist') {
@@ -3784,6 +3792,7 @@ function App() {
   function startEditCase() {
     if (!selectedCase.id) return
     setCaseDraft(selectedCase)
+    setFilingGateBlocked(false)
     openModal('case', 'edit')
   }
 
@@ -4713,6 +4722,7 @@ function App() {
     try {
       setErrorMessage('')
       clearModalFeedback()
+      setFilingGateBlocked(false)
       const saved = await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(payload) })
       if (previous && saved.caseStatus === 'Pipeline') {
         const changes: string[] = []
@@ -4751,10 +4761,13 @@ function App() {
       setModalFeedback(text)
       // The pre-filing gate's error names the control that resolves it (Director Signature
       // Received milestone) but a generic top-of-page banner doesn't show the user where that
-      // control lives - scroll them straight to it instead. Loose substring match (not the exact
-      // sentence) so this survives minor wording tweaks to the gate's message.
+      // control lives - scroll them straight to it and pre-expand the "continue anyway" reason
+      // field, turning this into a one-click-each-path soft forcing-prompt (Manager Dashboard
+      // sign-off consolidation, item 3) rather than a dead-end error. Loose substring match (not
+      // the exact sentence) so this survives minor wording tweaks to the gate's message.
       if (text.includes('Director signature milestone')) {
         scrollToCaseEditorSection('preFilingSignOff')
+        setFilingGateBlocked(true)
       }
     }
   }
@@ -4872,12 +4885,13 @@ function App() {
 
   // Approve / Return for Revision (POST /api/cases/{id}/pipeline-approvals). Approve is combined
   // with the stepper's own holder-advance action here - in practice a review being approved and
-  // the file moving to the next role happen together almost every time, and the server-side gate
-  // now requires the Approve to have already landed before that advance is even allowed to
-  // succeed. setCurrentHolderFromStepper only runs after the approval POST below resolves, so a
-  // failed approve never attempts the advance. Chief Counsel has no next stepper role - approving
-  // there instead auto-populates the case's Waiting On the Director of Highways and
-  // Transportation signature (handled entirely server-side), so no advance call is made.
+  // the file moving to the next role happen together almost every time, even though the holder
+  // chain is now pure history (Manager Dashboard sign-off consolidation, item 1) and nothing
+  // blocks the advance if Approve is skipped. setCurrentHolderFromStepper only runs after the
+  // approval POST below resolves, so a failed approve never attempts the advance. Chief Counsel
+  // has no next stepper role - approving there instead auto-populates the case's Waiting On the
+  // Director of Highways and Transportation signature (handled entirely server-side), so no
+  // advance call is made.
   async function recordPipelineHolderApproval(role: string, status: 'Approved' | 'Returned', note: string) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
@@ -7195,10 +7209,11 @@ function App() {
               <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
             </div>
           )}
-          {/* Pipeline gate (office pilot): each gated role's most recent review status, plus the
-              Approve / Return for Revision actions for whoever currently holds the file. Only
-              applies during the Pipeline phase - same scope as the stepper above - and stops
-              mattering once the case files. */}
+          {/* Pipeline review history (office pilot): each gated role's most recent review status, plus
+              the Approve / Return for Revision actions for whoever currently holds the file. Pure
+              record-keeping - advancing or returning the holder is never blocked on this (Manager
+              Dashboard sign-off consolidation, item 1). Only shown during the Pipeline phase - same
+              scope as the stepper above - and stops mattering once the case files. */}
           {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Review Status</span>
@@ -9492,8 +9507,8 @@ function App() {
             </section>
 
             {/* Placement decision: this is the ONLY instance of PreFilingMilestonesPanel in the
-                app (not duplicated on the read-only Overview tab). The Manager Override control
-                below rides on caseDraft/patchCaseDraft, which only exists inside this editor - a
+                app (not duplicated on the read-only Overview tab). The Continue Without Marking
+                override control below rides on caseDraft/patchCaseDraft, which only exists inside this editor - a
                 second, Overview-tab copy would either need to duplicate that draft-and-save
                 machinery or leave the override stranded without a way to attach it to a save.
                 Keeping mark/unmark and override together in one component also avoids two
@@ -9513,9 +9528,9 @@ function App() {
                 <h4 className="form-section-heading">Pre-Filing Sign-Off</h4>
                 <PreFilingMilestonesPanel
                   caseId={selectedCase.id}
-                  currentUser={currentUser}
                   filingGateOverrideReason={caseDraft.filingGateOverrideReason}
                   onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
+                  autoOpenOverride={filingGateBlocked}
                   // Deliberately loadInitial() + refreshCaseActivityLog(), NOT refreshAll(). This
                   // panel lives inside the still-open case editor, and refreshAll's loadWorkspace
                   // call does setCaseDraft(data.case) as a side effect - confirmed live that this
@@ -10392,7 +10407,6 @@ function App() {
           settlementAuthorityRequests={settlementAuthorityRequests}
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
-          currentUser={currentUser}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
           onDecided={refreshSettlementAuthorityRequests}
         />

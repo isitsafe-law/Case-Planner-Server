@@ -1,11 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { AuthenticatedUserProfile } from '../../App'
 import type { PreFilingMilestoneRecord } from '../../dashboard/types'
 import {
   PreFilingMilestonesPanel,
-  canOverrideFilingGate,
   missingPrerequisiteLabel,
   laterMarkedMilestoneLabel,
 } from '../PreFilingMilestonesPanel'
@@ -27,23 +25,6 @@ function makeRecord(overrides: Partial<PreFilingMilestoneRecord> = {}): PreFilin
 
 beforeEach(() => {
   apiMock.mockReset()
-})
-
-describe('canOverrideFilingGate', () => {
-  it('allows the override when there is no authenticated user (local/no-auth mode)', () => {
-    expect(canOverrideFilingGate(null)).toBe(true)
-  })
-
-  it('allows admins, managers, and either manager tier', () => {
-    expect(canOverrideFilingGate({ isAdmin: true, isManager: false } as any)).toBe(true)
-    expect(canOverrideFilingGate({ isAdmin: false, isManager: true } as any)).toBe(true)
-    expect(canOverrideFilingGate({ isAdmin: false, isManager: false, managerTier: 'ChiefCounsel' } as any)).toBe(true)
-    expect(canOverrideFilingGate({ isAdmin: false, isManager: false, managerTier: 'DeputyChiefCounsel' } as any)).toBe(true)
-  })
-
-  it('denies a plain Attorney (no admin/manager flag, no manager tier)', () => {
-    expect(canOverrideFilingGate({ isAdmin: false, isManager: false, managerTier: null } as any)).toBe(false)
-  })
 })
 
 describe('missingPrerequisiteLabel', () => {
@@ -92,7 +73,6 @@ describe('PreFilingMilestonesPanel', () => {
     render(
       <PreFilingMilestonesPanel
         caseId={1}
-        currentUser={null}
         onOverrideReasonChange={() => {}}
         onMutated={async () => {}}
       />,
@@ -107,7 +87,6 @@ describe('PreFilingMilestonesPanel', () => {
     render(
       <PreFilingMilestonesPanel
         caseId={1}
-        currentUser={null}
         onOverrideReasonChange={() => {}}
         onMutated={async () => {}}
       />,
@@ -136,7 +115,6 @@ describe('PreFilingMilestonesPanel', () => {
     render(
       <PreFilingMilestonesPanel
         caseId={7}
-        currentUser={null}
         onOverrideReasonChange={() => {}}
         onMutated={onMutated}
       />,
@@ -164,7 +142,6 @@ describe('PreFilingMilestonesPanel', () => {
     render(
       <PreFilingMilestonesPanel
         caseId={1}
-        currentUser={null}
         onOverrideReasonChange={() => {}}
         onMutated={async () => {}}
       />,
@@ -179,19 +156,33 @@ describe('PreFilingMilestonesPanel', () => {
     expect(confirmButton).not.toBeDisabled()
   })
 
-  it('disables the Manager Override toggle for a plain Attorney', async () => {
+  it('the Continue Without Marking control is available regardless of who is looking at it', async () => {
     apiMock.mockResolvedValueOnce(noMilestonesMarked)
-    const attorney = { isAdmin: false, isManager: false, managerTier: null } as unknown as AuthenticatedUserProfile
     render(
       <PreFilingMilestonesPanel
         caseId={1}
-        currentUser={attorney}
         onOverrideReasonChange={() => {}}
         onMutated={async () => {}}
       />,
     )
 
     await waitFor(() => expect(screen.getAllByText('Not marked')).toHaveLength(4))
-    expect(screen.getByRole('button', { name: 'Manager Override…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Continue Without Marking…' })).not.toBeDisabled()
+  })
+
+  it('autoOpenOverride pre-expands the override reason field', async () => {
+    apiMock.mockResolvedValueOnce(noMilestonesMarked)
+    render(
+      <PreFilingMilestonesPanel
+        caseId={1}
+        onOverrideReasonChange={() => {}}
+        onMutated={async () => {}}
+        autoOpenOverride
+      />,
+    )
+
+    await waitFor(() => expect(screen.getAllByText('Not marked')).toHaveLength(4))
+    expect(screen.queryByRole('button', { name: 'Continue Without Marking…' })).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Why is this case leaving Pipeline without the Director signature milestone?')).toBeInTheDocument()
   })
 })

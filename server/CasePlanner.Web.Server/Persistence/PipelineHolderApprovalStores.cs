@@ -6,44 +6,22 @@ using Microsoft.Data.SqlClient;
 
 namespace CasePlanner.Web.Server.Persistence;
 
-// The pre-suit intake chain gate (office pilot): Legal Assistant -> Attorney -> Deputy Chief
-// Counsel -> Chief Counsel, each stage requiring the person handing it off to have clicked
-// "Approved" (a PipelineHolderApprovalRecord row) before the file can move to the next stage.
-// This is deliberately isolated in ONE static class with ONE call site inside each provider's
-// SetHolderAsync (CasePlannerRepository.SetHolderAsync for SQLite,
-// SqlServerCaseQuickActionService.SetHolderAsync for SQL Server), immediately before the actual
-// holder-column UPDATE runs - if the office decides to scale this back to advisory-only, deleting
-// that one call site per provider fully disables the gate; nothing else in the holder-change path
-// depends on it.
-//
-// This enforces PROCESS (you can't advance without clicking Approve), not IDENTITY - there is no
-// live authentication yet (Entra ID is dormant), so nothing here cryptographically proves the
-// previous holder themselves clicked Approve rather than someone else at their workstation. That
-// gap is out of scope for this change.
+// Manager Dashboard sign-off consolidation, item 1: the pre-suit intake chain (Legal Assistant ->
+// Attorney -> Deputy Chief Counsel -> Chief Counsel) is now pure fact/history, not a gate. Moving
+// CurrentHolder to any value - forward, backward, or lateral, gated role or not - is never blocked
+// here; PipelineHolderApprovalRecord rows (Approved/Returned) and pipeline_handoffs entries remain
+// as a record of who held the file when, but nothing downstream requires an "Approved" row to
+// exist before the file can move on. This replaces the former RequiresApproval/EnsureApproved gate
+// that used to sit in CasePlannerRepository.SetHolderAsync/SqlServerCaseQuickActionService.SetHolderAsync -
+// removed entirely, not just relaxed, so Chief Counsel (or anyone else in the chain) never needs to
+// take any in-system action for a file to advance past them.
 internal static class PipelinePromotionGate
 {
-    // Matches HOLDER_STEPS in the client's HolderPipelineStepper.tsx exactly. Roles outside this
-    // list ("Filing Staff", "Other") are ungated and pass through unchanged.
+    // Matches HOLDER_STEPS in the client's HolderPipelineStepper.tsx exactly - still used to derive
+    // step-state (completed/current/upcoming) for the stepper's display and to compute "the role
+    // immediately before this one" for the Return for Revision convenience action below. No longer
+    // used for any gating decision.
     public static readonly string[] GatedChain = ["Legal Assistant", "Attorney", "Deputy Chief Counsel", "Chief Counsel"];
-
-    // True only for a forward move between two gated roles while the case is still in the
-    // Pipeline phase - the one situation the approval check applies to. Everything else
-    // (non-Pipeline case status, an ungated role on either side, or a backward/lateral move such
-    // as Return for Revision) is a deliberate no-op.
-    public static bool RequiresApproval(string? caseStatus, string? previousHolder, string? newHolder)
-    {
-        if (!string.Equals(caseStatus, "Pipeline", StringComparison.Ordinal)) return false;
-        var previousIndex = Array.IndexOf(GatedChain, previousHolder);
-        var newIndex = Array.IndexOf(GatedChain, newHolder);
-        if (previousIndex < 0 || newIndex < 0) return false;
-        return newIndex > previousIndex;
-    }
-
-    public static void EnsureApproved(string previousHolder, string newHolder, string? mostRecentApprovalStatus)
-    {
-        if (mostRecentApprovalStatus != "Approved")
-            throw new InvalidOperationException($"{previousHolder} must mark this reviewed as Approved before it can advance to {newHolder}.");
-    }
 
     // Milestone 2's analogous gate on the case-status transition itself (rather than the holder
     // handoff): a case/tract cannot leave Pipeline status - i.e. be saved with CaseStatus changing
@@ -66,21 +44,17 @@ internal static class PipelinePromotionGate
 
     // Replaces EnsureFilingApproved (Milestone 2). directorSignatureMarked comes from
     // case_prefiling_milestones (is_marked for milestone="DirectorSignatureReceived") rather than
-    // pipeline_holder_approvals. When the Director's signature isn't yet on record, a manager (or
-    // Chief Counsel/Administrator/local-dev - see below) may still push the case forward by
-    // supplying a non-blank override reason; "Attorney" is the only resolved
-    // IApplicationActorContext.Role excluded from the override, since only a manager should be able
-    // to force this through. Deliberately a pure function - no entraOptions/HTTP-layer concerns
-    // here, just the role string and the override reason.
-    public static void EnsureFilingReady(bool directorSignatureMarked, string? actorRole, string? overrideReason)
+    // pipeline_holder_approvals. Manager Dashboard sign-off consolidation, item 3: this is a soft
+    // forcing-prompt, not a hard block - when the Director's signature isn't yet on record, ANY
+    // actor may push the case forward anyway by supplying a non-blank reason (the former
+    // "Attorney" exclusion is gone; the client is what decides who sees this control, not the
+    // server). Deliberately a pure function - no entraOptions/HTTP-layer/role concerns here, just
+    // the milestone state and the override reason.
+    public static void EnsureFilingReady(bool directorSignatureMarked, string? overrideReason)
     {
         if (directorSignatureMarked) return;
-        if (!string.IsNullOrWhiteSpace(overrideReason))
-        {
-            if (actorRole == "Attorney") throw new InvalidOperationException("Only a manager can override the Director signature requirement.");
-            return; // manager/chief counsel/admin/local-dev override, with reason - allowed
-        }
-        throw new InvalidOperationException("The Director signature milestone must be marked before this case can leave Pipeline status (or a manager must override with a reason).");
+        if (!string.IsNullOrWhiteSpace(overrideReason)) return;
+        throw new InvalidOperationException("The Director signature milestone must be marked before this case can leave Pipeline status (or provide a reason to continue anyway).");
     }
 }
 

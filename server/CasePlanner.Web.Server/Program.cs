@@ -572,12 +572,11 @@ app.MapPut("/api/admin/users/{userId:guid}/manager-tier", async (Guid userId, Se
 bool IsAdministratorOrManager(HttpContext context) =>
     CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)
     || (context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile && profile.IsManager);
-// Manager/Administrator Dashboard Milestone 3: the Settlement Authority decide action is gated to
-// Chief Counsel ONLY - deliberately narrower than IsAdministratorOrManager above. No Administrator
-// fallback, no plain IsManager fallback - this was decided explicitly with the user (no threshold,
-// no override), unlike every other admin-gated endpoint in this file, which all let Administrator
-// through. Deputy Chief Counsel gets read-only visibility (the GET endpoint is open to any
-// authenticated user, matching circuit-clerks/pipeline-approvals) but never this action right.
+// Whether the current user's manager_tier is Chief Counsel specifically - used by
+// CanActOnPreFilingMilestone below as one of several roles granted mark/unmark rights on ANY case.
+// No longer used by the Settlement Authority decide action (Manager Dashboard sign-off
+// consolidation, item 4 removed that Chief-Counsel-exclusive gate entirely - recording an outcome
+// now requires only ordinary case-write access, same as creating a request).
 bool IsChiefCounsel(HttpContext context) =>
     context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile && profile.ManagerTier == "ChiefCounsel";
 // Manager/Administrator Dashboard Milestone 4 correction: mark/unmark rights on the pre-filing
@@ -645,14 +644,13 @@ app.MapPut("/api/collectors/{county}", async (string county, CollectorRecord mod
     return Results.Ok(await collectors.SaveAsync(model, token));
 });
 
-// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. Data model +
-// write-action endpoints only - no dashboard UI consumes these yet (Approvals tab is Milestone 5).
-// GET is open to any authenticated user (or unrestricted when Entra is disabled), matching
-// circuit-clerks/pipeline-approvals above - Deputy Chief Counsel needs read visibility even though
-// it never gets the decide action right. POST (create) requires normal case-write access, same as
-// any other case-scoped write - any user who can edit the case can ask for authority. POST decide
-// is gated to Chief Counsel ONLY via IsChiefCounsel (see its doc comment) - no Administrator
-// override, unlike every other admin-gated action in this file.
+// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. Manager Dashboard
+// sign-off consolidation, item 4: pure record-keeping now - GET is open to any authenticated user
+// (or unrestricted when Entra is disabled), matching circuit-clerks/pipeline-approvals above; both
+// POST (create) and POST decide require only ordinary case-write access, the same rule, since
+// recording an outcome is no different in kind from asking for one. The former Chief-Counsel-only
+// gate on decide is gone (see IsChiefCounsel's doc comment) - no routing, threshold, or escalation
+// logic anywhere in this workflow anymore.
 app.MapGet("/api/settlement-authority-requests", async (long? caseId, ISettlementAuthorityRequestStore requests, CancellationToken token) =>
     Results.Ok(await requests.GetAsync(caseId, token)));
 app.MapPost("/api/cases/{caseId:long}/settlement-authority-requests", async (long caseId, CreateSettlementAuthorityRequest request, ISettlementAuthorityRequestStore requests, CaseAccessService access, CancellationToken token) =>
@@ -661,9 +659,11 @@ app.MapPost("/api/cases/{caseId:long}/settlement-authority-requests", async (lon
     try { return Results.Ok(await requests.CreateAsync(caseId, request, token)); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
-app.MapPost("/api/settlement-authority-requests/{id:long}/decide", async (long id, DecideSettlementAuthorityRequest decision, ISettlementAuthorityRequestStore requests, HttpContext context, CancellationToken token) =>
+app.MapPost("/api/settlement-authority-requests/{id:long}/decide", async (long id, DecideSettlementAuthorityRequest decision, ISettlementAuthorityRequestStore requests, CaseAccessService access, CancellationToken token) =>
 {
-    if (entraOptions.Enabled && !IsChiefCounsel(context)) return Results.Forbid();
+    var existing = (await requests.GetAsync(null, token)).FirstOrDefault(r => r.Id == id);
+    if (existing is null) return Results.NotFound();
+    if (!await access.CanWriteAsync(existing.CaseId, token)) return Results.Forbid();
     try { return Results.Ok(await requests.DecideAsync(id, decision, token)); }
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }

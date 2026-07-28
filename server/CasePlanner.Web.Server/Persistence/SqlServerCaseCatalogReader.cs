@@ -102,7 +102,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                 milestoneCmd.Parameters.Add(new SqlParameter("@caseId", model.Id));
                 var isMarkedValue = await milestoneCmd.ExecuteScalarAsync(cancellationToken);
                 var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToBoolean(isMarkedValue);
-                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, actor.Role, model.FilingGateOverrideReason);
+                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, model.FilingGateOverrideReason);
                 overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
             }
         }

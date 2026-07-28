@@ -137,31 +137,17 @@ public sealed class SqlServerCaseQuickActionService(
         await connection.OpenAsync(token);
         await using var transaction = await connection.BeginTransactionAsync(token);
 
-        string? previousHolder; string? previousStage; string? caseStatus;
+        string? previousHolder; string? previousStage;
         await using (var read = connection.CreateCommand())
         {
             read.Transaction = transaction;
-            read.CommandText = "SELECT current_holder,pipeline_stage,COALESCE(case_status,'Pipeline') FROM dbo.cases WHERE id=@id AND row_version=@version AND is_deleted=0";
+            read.CommandText = "SELECT current_holder,pipeline_stage FROM dbo.cases WHERE id=@id AND row_version=@version AND is_deleted=0";
             read.Parameters.Add(new SqlParameter("@id", caseId));
             read.Parameters.Add(new SqlParameter("@version", expected));
             await using var reader = await read.ExecuteReaderAsync(token);
             if (!await reader.ReadAsync(token)) throw new CaseConcurrencyException(caseId);
             previousHolder = reader.IsDBNull(0) ? null : reader.GetString(0);
             previousStage = reader.IsDBNull(1) ? null : reader.GetString(1);
-            caseStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
-        }
-
-        // Task B gate: one isolated call site (see PipelinePromotionGate's doc comment for the
-        // full "delete this block to disable" rationale). Must run before the UPDATE below.
-        if (PipelinePromotionGate.RequiresApproval(caseStatus, previousHolder, request.CurrentHolder))
-        {
-            await using var statusCmd = connection.CreateCommand();
-            statusCmd.Transaction = transaction;
-            statusCmd.CommandText = "SELECT TOP (1) status FROM dbo.pipeline_holder_approvals WHERE case_id=@caseId AND holder_role=@role ORDER BY id DESC";
-            statusCmd.Parameters.Add(new SqlParameter("@caseId", caseId));
-            statusCmd.Parameters.Add(new SqlParameter("@role", previousHolder!));
-            var mostRecentStatus = (await statusCmd.ExecuteScalarAsync(token)) as string;
-            PipelinePromotionGate.EnsureApproved(previousHolder!, request.CurrentHolder, mostRecentStatus);
         }
 
         string version;
@@ -179,9 +165,10 @@ public sealed class SqlServerCaseQuickActionService(
             version = Convert.ToBase64String((byte[])value);
         }
 
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
         await PipelineHandoffTransitionLogger.RecordIfChangedAsync(
             connection, transaction, caseId, previousHolder, request.CurrentHolder, previousStage, previousStage,
-            actor.UserId, actor.AuditLabel, token);
+            actor.UserId, actor.AuditLabel, token, reason);
 
         await using (var audit = connection.CreateCommand())
         {
@@ -194,7 +181,8 @@ public sealed class SqlServerCaseQuickActionService(
         }
 
         await transaction.CommitAsync(token);
-        await activity.RecordAsync(caseId, "HolderAssigned", $"Assigned to {request.CurrentHolder}", null, token);
+        var note = reason is null ? $"Assigned to {request.CurrentHolder}" : $"Assigned to {request.CurrentHolder} — {reason}";
+        await activity.RecordAsync(caseId, "HolderAssigned", note, null, token);
         return version;
     }
 

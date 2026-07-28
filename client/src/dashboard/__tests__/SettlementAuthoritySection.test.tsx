@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { canDecideSettlementAuthority, daysPending, settlementAuthorityDelta, settlementAuthorityDeltaPercent } from '../SettlementAuthoritySection'
+import { daysPending, settlementAuthorityDelta, settlementAuthorityDeltaPercent, sortSettlementAuthorityRows } from '../SettlementAuthoritySection'
+import type { SettlementAuthorityRequestRecord } from '../types'
+import type { CaseRecord } from '../../App'
+
+function makeRequest(overrides: Partial<SettlementAuthorityRequestRecord> = {}): SettlementAuthorityRequestRecord {
+  return {
+    id: 1,
+    caseId: 1,
+    requestedAmount: 50_000,
+    status: 'Pending',
+    requestedAt: '2026-07-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function makeCase(overrides: Partial<CaseRecord> = {}): CaseRecord {
+  return { id: 1, caseName: 'Fixture Case', jobNumber: '', tract: '', ...overrides } as CaseRecord
+}
 
 describe('settlementAuthorityDelta', () => {
   it('computes requested minus the Estimate of Just Compensation deposit', () => {
@@ -45,14 +62,42 @@ describe('daysPending', () => {
   })
 })
 
-describe('canDecideSettlementAuthority', () => {
-  it('allows the decide action when there is no authenticated user (local/no-auth mode)', () => {
-    expect(canDecideSettlementAuthority(null)).toBe(true)
+// Manager Dashboard sign-off consolidation, item 4: the Approvals tab's Settlement Authority
+// section is a sortable log now, not a decision inbox gated to one role - covers the sort function
+// directly, mirroring ByAttorneyTab.test.tsx's coverage of sortAttorneyRows.
+describe('sortSettlementAuthorityRows', () => {
+  it('sorts by requestedAmount ascending/descending', () => {
+    const rows = [
+      { request: makeRequest({ id: 1, requestedAmount: 60_000 }), matchedCase: makeCase() },
+      { request: makeRequest({ id: 2, requestedAmount: 30_000 }), matchedCase: makeCase() },
+    ]
+    expect(sortSettlementAuthorityRows(rows, 'requestedAmount', 'asc').map((r) => r.request.id)).toEqual([2, 1])
+    expect(sortSettlementAuthorityRows(rows, 'requestedAmount', 'desc').map((r) => r.request.id)).toEqual([1, 2])
   })
 
-  it('allows the decide action only for Chief Counsel', () => {
-    expect(canDecideSettlementAuthority({ managerTier: 'ChiefCounsel' } as any)).toBe(true)
-    expect(canDecideSettlementAuthority({ managerTier: 'DeputyChiefCounsel' } as any)).toBe(false)
-    expect(canDecideSettlementAuthority({ managerTier: null } as any)).toBe(false)
+  it('sorts by status alphabetically', () => {
+    const rows = [
+      { request: makeRequest({ id: 1, status: 'Pending' }), matchedCase: makeCase() },
+      { request: makeRequest({ id: 2, status: 'Denied' }), matchedCase: makeCase() },
+    ]
+    expect(sortSettlementAuthorityRows(rows, 'status', 'asc').map((r) => r.request.id)).toEqual([2, 1])
+  })
+
+  it('sorts by decidedAt with undated (never-decided) rows always last regardless of direction', () => {
+    const rows = [
+      { request: makeRequest({ id: 1, decidedAt: '2026-07-10T00:00:00Z' }), matchedCase: makeCase() },
+      { request: makeRequest({ id: 2, decidedAt: undefined }), matchedCase: makeCase() },
+      { request: makeRequest({ id: 3, decidedAt: '2026-07-01T00:00:00Z' }), matchedCase: makeCase() },
+    ]
+    expect(sortSettlementAuthorityRows(rows, 'decidedAt', 'asc').map((r) => r.request.id)).toEqual([3, 1, 2])
+    expect(sortSettlementAuthorityRows(rows, 'decidedAt', 'desc').map((r) => r.request.id)).toEqual([1, 3, 2])
+  })
+
+  it('sorts by jobTract using the joined case', () => {
+    const rows = [
+      { request: makeRequest({ id: 1 }), matchedCase: makeCase({ jobNumber: 'B', tract: '2' }) },
+      { request: makeRequest({ id: 2 }), matchedCase: makeCase({ jobNumber: 'A', tract: '1' }) },
+    ]
+    expect(sortSettlementAuthorityRows(rows, 'jobTract', 'asc').map((r) => r.request.id)).toEqual([2, 1])
   })
 })

@@ -193,6 +193,70 @@ public class SettlementAuthorityRequestTests : IAsyncLifetime
         Assert.Equal(75_000m, reloadedCase.SettlementAuthorizedCeiling);
     }
 
+    // --- Manager Dashboard sign-off consolidation, item 4: granter/date-granted/doc-reference ---
+
+    [Fact]
+    public async Task DecideAsync_Approved_RecordsGranterDetailsSeparateFromWhoRecordedIt()
+    {
+        var c = await CreateCaseAsync();
+        var request = await _fixture.Repository.CreateSettlementAuthorityRequestAsync(c.Id, new CreateSettlementAuthorityRequest { RequestedAmount = 60_000m });
+
+        var decided = await _fixture.Repository.DecideSettlementAuthorityRequestAsync(request.Id, new DecideSettlementAuthorityRequest
+        {
+            Action = "Approved",
+            Comment = "Director confirmed verbally; recording after the fact.",
+            GrantedBy = "Michelle Davenport",
+            GrantedByRole = "Chief Counsel",
+            GrantedDate = "2026-07-01",
+            DocumentReference = "Email thread \"Tract 14 settlement authority\" dated 2026-06-30",
+        });
+
+        Assert.Equal("Michelle Davenport", decided.GrantedBy);
+        Assert.Equal("Chief Counsel", decided.GrantedByRole);
+        Assert.Equal("2026-07-01", decided.GrantedDate);
+        Assert.Equal("Email thread \"Tract 14 settlement authority\" dated 2026-06-30", decided.DocumentReference);
+        // DecidedByRole reflects who RECORDED the entry (the fixture's actor), independent of
+        // GrantedByRole (who actually granted it) - these can legitimately differ.
+        Assert.Equal("Chief Counsel", decided.DecidedByRole);
+    }
+
+    [Fact]
+    public async Task DecideAsync_Approved_WithoutExplicitGrantedDate_DefaultsToToday()
+    {
+        var c = await CreateCaseAsync();
+        var request = await _fixture.Repository.CreateSettlementAuthorityRequestAsync(c.Id, new CreateSettlementAuthorityRequest { RequestedAmount = 60_000m });
+
+        var decided = await _fixture.Repository.DecideSettlementAuthorityRequestAsync(request.Id, new DecideSettlementAuthorityRequest
+        {
+            Action = "Approved",
+            Comment = "Approved as requested.",
+        });
+
+        Assert.Equal(DateTime.UtcNow.ToString("yyyy-MM-dd"), decided.GrantedDate);
+        Assert.Null(decided.GrantedBy);
+        Assert.Null(decided.GrantedByRole);
+    }
+
+    [Fact]
+    public async Task DecideAsync_Denied_NeverPopulatesGranterFields_ButStillAcceptsADocumentReference()
+    {
+        var c = await CreateCaseAsync();
+        var request = await _fixture.Repository.CreateSettlementAuthorityRequestAsync(c.Id, new CreateSettlementAuthorityRequest { RequestedAmount = 60_000m });
+
+        var decided = await _fixture.Repository.DecideSettlementAuthorityRequestAsync(request.Id, new DecideSettlementAuthorityRequest
+        {
+            Action = "Denied",
+            Comment = "Not supportable given current valuation.",
+            GrantedBy = "Should be ignored - no grant on a Denied outcome.",
+            DocumentReference = "Valuation memo v2",
+        });
+
+        Assert.Null(decided.GrantedBy);
+        Assert.Null(decided.GrantedByRole);
+        Assert.Null(decided.GrantedDate);
+        Assert.Equal("Valuation memo v2", decided.DocumentReference);
+    }
+
     // --- DecideSettlementAuthorityRequestAsync: Denied / InfoRequested leave the ceiling alone ---
 
     [Fact]

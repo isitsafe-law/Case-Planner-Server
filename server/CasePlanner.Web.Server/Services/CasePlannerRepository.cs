@@ -2316,7 +2316,7 @@ public sealed partial class CasePlannerRepository
     // within a caller's existing write transaction.
     private async Task RecordHolderTransitionIfChangedAsync(
         SqliteConnection connection, SqliteTransaction tx, long caseId,
-        string? previousHolder, string? newHolder, string? previousStage, string? newStage)
+        string? previousHolder, string? newHolder, string? previousStage, string? newStage, string? note = null)
     {
         var holderChanged = (previousHolder ?? "") != (newHolder ?? "");
         var stageChanged = (previousStage ?? "") != (newStage ?? "");
@@ -2336,7 +2336,7 @@ public sealed partial class CasePlannerRepository
         insertCmd.Parameters.AddWithValue("@new_stage", newStage ?? "");
         insertCmd.Parameters.AddWithValue("@handoff_date", now[..10]);
         insertCmd.Parameters.AddWithValue("@next_review_date", DBNull.Value);
-        insertCmd.Parameters.AddWithValue("@note", DBNull.Value);
+        insertCmd.Parameters.AddWithValue("@note", DbValue(note));
         insertCmd.Parameters.AddWithValue("@now", now);
         await insertCmd.ExecuteNonQueryAsync();
     }
@@ -2685,32 +2685,17 @@ public sealed partial class CasePlannerRepository
         {
             var caseCmd = connection.CreateCommand();
             caseCmd.Transaction = tx;
-            caseCmd.CommandText = "SELECT current_holder, pipeline_stage, COALESCE(case_status, 'Pipeline') FROM cases WHERE id=@id";
+            caseCmd.CommandText = "SELECT current_holder, pipeline_stage FROM cases WHERE id=@id";
             caseCmd.Parameters.AddWithValue("@id", caseId);
             string? previousHolder = null;
             string? previousStage = null;
-            string? caseStatus = null;
             await using (var reader = await caseCmd.ExecuteReaderAsync())
             {
                 if (await reader.ReadAsync())
                 {
                     previousHolder = reader.IsDBNull(0) ? null : reader.GetString(0);
                     previousStage = reader.IsDBNull(1) ? null : reader.GetString(1);
-                    caseStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
                 }
-            }
-
-            // Task B gate: one isolated call site (see PipelinePromotionGate's doc comment for the
-            // full "delete this block to disable" rationale). Must run before the UPDATE below.
-            if (PipelinePromotionGate.RequiresApproval(caseStatus, previousHolder, request.CurrentHolder))
-            {
-                var statusCmd = connection.CreateCommand();
-                statusCmd.Transaction = tx;
-                statusCmd.CommandText = "SELECT status FROM pipeline_holder_approvals WHERE case_id=@case_id AND holder_role=@role ORDER BY id DESC LIMIT 1";
-                statusCmd.Parameters.AddWithValue("@case_id", caseId);
-                statusCmd.Parameters.AddWithValue("@role", previousHolder!);
-                var mostRecentStatus = (await statusCmd.ExecuteScalarAsync()) as string;
-                PipelinePromotionGate.EnsureApproved(previousHolder!, request.CurrentHolder, mostRecentStatus);
             }
 
             var updateCmd = connection.CreateCommand();
@@ -2722,10 +2707,12 @@ public sealed partial class CasePlannerRepository
             updateCmd.Parameters.AddWithValue("@id", caseId);
             await updateCmd.ExecuteNonQueryAsync();
 
-            await RecordHolderTransitionIfChangedAsync(connection, tx, caseId, previousHolder, request.CurrentHolder, previousStage, previousStage);
+            var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
+            await RecordHolderTransitionIfChangedAsync(connection, tx, caseId, previousHolder, request.CurrentHolder, previousStage, previousStage, reason);
             return 0;
         });
-        await RecordActivityAsync(caseId, "HolderAssigned", $"Assigned to {request.CurrentHolder}", null);
+        var note = string.IsNullOrWhiteSpace(request.Reason) ? $"Assigned to {request.CurrentHolder}" : $"Assigned to {request.CurrentHolder} — {request.Reason.Trim()}";
+        await RecordActivityAsync(caseId, "HolderAssigned", note, null);
     }
 
     public Task SetPriorityAsync(long caseId, SetPriorityRequest request) =>
@@ -3791,11 +3778,12 @@ public sealed partial class CasePlannerRepository
         });
     }
 
-    // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. Unlike
-    // pipeline_holder_approvals above (append-only), settlement_authority_requests updates in
-    // place - one row per request, mutated by DecideSettlementAuthorityRequestAsync when Chief
-    // Counsel decides it. The full decision history lives in activity_log
-    // (RecordActivityAsync below), not here.
+    // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - pure
+    // record-keeping since Manager Dashboard sign-off consolidation item 4 (see DecideAsync's doc
+    // comment). Unlike pipeline_holder_approvals above (append-only), settlement_authority_requests
+    // updates in place - one row per request, mutated by DecideSettlementAuthorityRequestAsync when
+    // an outcome is recorded. The full decision history lives in activity_log (RecordActivityAsync
+    // below), not here.
     public async Task<List<SettlementAuthorityRequestRecord>> GetSettlementAuthorityRequestsAsync(long? caseId)
     {
         var list = new List<SettlementAuthorityRequestRecord>();
@@ -3805,7 +3793,8 @@ public sealed partial class CasePlannerRepository
         cmd.CommandText = """
             SELECT id, case_id, requested_amount, requesting_attorney, request_notes, status,
                    granted_amount, requested_at, requested_by_user_id, requested_by_display,
-                   decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment
+                   decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment,
+                   granted_by, granted_by_role, granted_date, document_reference
             FROM settlement_authority_requests
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY id DESC
@@ -3837,6 +3826,10 @@ public sealed partial class CasePlannerRepository
         DecidedByDisplay = reader.IsDBNull(12) ? null : reader.GetString(12),
         DecidedByRole = reader.IsDBNull(13) ? null : reader.GetString(13),
         DecisionComment = reader.IsDBNull(14) ? null : reader.GetString(14),
+        GrantedBy = reader.IsDBNull(15) ? null : reader.GetString(15),
+        GrantedByRole = reader.IsDBNull(16) ? null : reader.GetString(16),
+        GrantedDate = reader.IsDBNull(17) ? null : reader.GetString(17),
+        DocumentReference = reader.IsDBNull(18) ? null : reader.GetString(18),
     };
 
     // Rejects (InvalidOperationException, caught as 400 at the endpoint) when the case already has
@@ -3899,9 +3892,14 @@ public sealed partial class CasePlannerRepository
     // Validates Action/Comment up front (ArgumentException) before ever touching the database, then
     // requires the request to currently be Pending/InfoRequested (InvalidOperationException - can't
     // re-decide an already-resolved request). On Approved, also updates the case's
-    // SettlementAuthorizedCeiling in the same transaction as the request row. The activity_log entry
-    // is written afterward, once the transaction has committed (see CreateSettlementAuthorityRequestAsync
-    // above for why).
+    // SettlementAuthorizedCeiling in the same transaction as the request row, and records the
+    // separate real-world GrantedBy/GrantedByRole/GrantedDate facts alongside the
+    // who-recorded-it/when-recorded DecidedBy*/DecidedAt fields (Manager Dashboard sign-off
+    // consolidation, item 4 - see SettlementAuthorityRequestRecord's doc comment). No routing,
+    // threshold, or escalation logic here or anywhere else in this method; recording any of the
+    // three outcomes is a plain write, gated only at the endpoint by ordinary case-write access. The
+    // activity_log entry is written afterward, once the transaction has committed (see
+    // CreateSettlementAuthorityRequestAsync above for why).
     public async Task<SettlementAuthorityRequestRecord> DecideSettlementAuthorityRequestAsync(long requestId, DecideSettlementAuthorityRequest decision)
     {
         if (decision.Action is not ("Approved" or "Denied" or "InfoRequested"))
@@ -3940,8 +3938,17 @@ public sealed partial class CasePlannerRepository
             var priorValue = await caseCmd.ExecuteScalarAsync();
             previousCeiling = priorValue is null or DBNull ? null : Convert.ToDecimal(priorValue);
 
+            string? grantedBy = null;
+            string? grantedByRole = null;
+            string? grantedDate = null;
             if (decision.Action == "Approved")
+            {
                 grantedAmount = decision.GrantedAmount ?? requestedAmount;
+                grantedBy = string.IsNullOrWhiteSpace(decision.GrantedBy) ? null : decision.GrantedBy.Trim();
+                grantedByRole = string.IsNullOrWhiteSpace(decision.GrantedByRole) ? null : decision.GrantedByRole.Trim();
+                grantedDate = string.IsNullOrWhiteSpace(decision.GrantedDate) ? DateTime.UtcNow.ToString("yyyy-MM-dd") : decision.GrantedDate;
+            }
+            var documentReference = string.IsNullOrWhiteSpace(decision.DocumentReference) ? null : decision.DocumentReference.Trim();
 
             var now = DateTime.UtcNow.ToString("O");
             var updateCmd = connection.CreateCommand();
@@ -3954,7 +3961,11 @@ public sealed partial class CasePlannerRepository
                     decided_by_user_id=@decided_by_user_id,
                     decided_by_display=@decided_by_display,
                     decided_by_role=@decided_by_role,
-                    decision_comment=@decision_comment
+                    decision_comment=@decision_comment,
+                    granted_by=@granted_by,
+                    granted_by_role=@granted_by_role,
+                    granted_date=@granted_date,
+                    document_reference=@document_reference
                 WHERE id=@id
                 """;
             updateCmd.Parameters.AddWithValue("@status", decision.Action);
@@ -3964,6 +3975,10 @@ public sealed partial class CasePlannerRepository
             updateCmd.Parameters.AddWithValue("@decided_by_display", _actor.AuditLabel);
             updateCmd.Parameters.AddWithValue("@decided_by_role", DbValue(_actor.Role));
             updateCmd.Parameters.AddWithValue("@decision_comment", decision.Comment);
+            updateCmd.Parameters.AddWithValue("@granted_by", DbValue(grantedBy));
+            updateCmd.Parameters.AddWithValue("@granted_by_role", DbValue(grantedByRole));
+            updateCmd.Parameters.AddWithValue("@granted_date", DbValue(grantedDate));
+            updateCmd.Parameters.AddWithValue("@document_reference", DbValue(documentReference));
             updateCmd.Parameters.AddWithValue("@id", requestId);
             await updateCmd.ExecuteNonQueryAsync();
 
@@ -3983,7 +3998,8 @@ public sealed partial class CasePlannerRepository
             readBackCmd.CommandText = """
                 SELECT id, case_id, requested_amount, requesting_attorney, request_notes, status,
                        granted_amount, requested_at, requested_by_user_id, requested_by_display,
-                       decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment
+                       decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment,
+                       granted_by, granted_by_role, granted_date, document_reference
                 FROM settlement_authority_requests WHERE id=@id
                 """;
             readBackCmd.Parameters.AddWithValue("@id", requestId);
@@ -6134,6 +6150,16 @@ public sealed partial class CasePlannerRepository
         // SQLite's dynamic typing means this is a documentation nicety rather than an enforced
         // rule, but it matches every sibling nullable-decimal case column instead of standing out).
         await AddColumnIfMissingAsync(connection, "cases", "settlement_authorized_ceiling", "REAL");
+        // Manager Dashboard sign-off consolidation, item 4: Settlement Authority becomes pure
+        // record-keeping - a "grant" is a distinct real-world fact from "decided_at" (when the
+        // system entry was made) and "decided_by_display" (who operated the UI to record it).
+        // granted_by/granted_by_role name whoever actually granted the authority (often outside
+        // the system, e.g. by email) and granted_date is that real-world, backdatable date -
+        // document_reference is an optional pointer to supporting correspondence/paperwork.
+        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by", "TEXT");
+        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by_role", "TEXT");
+        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_date", "TEXT");
+        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "document_reference", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -8602,7 +8628,7 @@ public sealed partial class CasePlannerRepository
                 milestoneCmd.Parameters.AddWithValue("@case_id", model.Id);
                 var isMarkedValue = await milestoneCmd.ExecuteScalarAsync();
                 var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToInt64(isMarkedValue) != 0;
-                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, _actor.Role, model.FilingGateOverrideReason);
+                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, model.FilingGateOverrideReason);
                 overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
             }
         }
@@ -9652,7 +9678,11 @@ public sealed partial class CasePlannerRepository
             decided_by_user_id TEXT,
             decided_by_display TEXT,
             decided_by_role TEXT,
-            decision_comment TEXT
+            decision_comment TEXT,
+            granted_by TEXT,
+            granted_by_role TEXT,
+            granted_date TEXT,
+            document_reference TEXT
         );
         CREATE TABLE IF NOT EXISTS case_prefiling_milestones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

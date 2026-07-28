@@ -297,11 +297,21 @@ export type SettlementAuthorityRequestRecord = {
   requestedAt: string
   requestedByUserId?: string | null
   requestedByDisplay?: string | null
+  // "Recorded" fields - when and by whom the system entry was made.
   decidedAt?: string | null
   decidedByUserId?: string | null
   decidedByDisplay?: string | null
   decidedByRole?: string | null
   decisionComment?: string | null
+  // "Granted" fields (Manager Dashboard sign-off consolidation, item 4) - only meaningful when
+  // status is 'Approved'. Distinct from the recorded fields above: the grant may have happened
+  // outside the system (e.g. verbally or by email) and be entered here after the fact by someone
+  // else, so who/when granted can legitimately differ from who/when recorded.
+  grantedBy?: string | null
+  grantedByRole?: string | null
+  grantedDate?: string | null
+  // Optional pointer to supporting correspondence/paperwork - free text, any outcome.
+  documentReference?: string | null
   rowVersion?: string | null
 }
 

@@ -4,12 +4,14 @@ using CasePlanner.Web.Server.Services;
 namespace CasePlanner.Web.Server.Persistence;
 
 // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - a request for
-// authority to settle up to a given amount, decided EXCLUSIVELY by Chief Counsel (no amount
-// threshold, no Deputy Chief Counsel action rights, no Administrator override - already decided
-// with the user, and stricter than every other admin-gated action in this app). Same
-// provider-switched shape as ICircuitClerkStore/IPipelineHolderApprovalStore: a plain interface,
-// implemented once per provider, selected in Program.cs's DI registration by active database
-// provider. Unlike PipelineHolderApprovalRecord (append-only), this updates in place - see
+// authority to settle up to a given amount. Manager Dashboard sign-off consolidation, item 4: this
+// is pure record-keeping now - recording any outcome (Approved/Denied/InfoRequested) requires only
+// ordinary case-write access (see Program.cs's endpoint mapping), not a specific role; the former
+// Chief-Counsel-exclusive gate and the "no amount threshold" framing are gone along with it, since
+// there is no routing/threshold/escalation logic left to describe. Same provider-switched shape as
+// ICircuitClerkStore/IPipelineHolderApprovalStore: a plain interface, implemented once per
+// provider, selected in Program.cs's DI registration by active database provider. Unlike
+// PipelineHolderApprovalRecord (append-only), this updates in place - see
 // SettlementAuthorityRequestRecord's doc comment.
 public interface ISettlementAuthorityRequestStore
 {

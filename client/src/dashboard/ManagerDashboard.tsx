@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { AuthenticatedUserProfile, CaseRecord, Hearing } from '../App'
+import type { CaseRecord, Hearing } from '../App'
 import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
 import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, SettlementAuthorityRequestRecord } from './types'
@@ -47,7 +47,6 @@ export function ManagerDashboard({
   settlementAuthorityRequests,
   preFilingMilestones,
   preFilingMilestonesAging,
-  currentUser,
   onOpenCase,
   onDecided,
 }: {
@@ -56,7 +55,6 @@ export function ManagerDashboard({
   settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
-  currentUser: AuthenticatedUserProfile | null
   onOpenCase: (caseId: number) => void
   // Manager/Administrator Dashboard Milestone 5: re-fetches settlementAuthorityRequests after a
   // successful Settlement Authority decide action - see App.tsx's refreshSettlementAuthorityRequests.
@@ -149,7 +147,6 @@ export function ManagerDashboard({
             allCases={allCases}
             settlementAuthorityRequests={settlementAuthorityRequests}
             preFilingMilestonesAging={preFilingMilestonesAging}
-            currentUser={currentUser}
             onOpenCase={onOpenCase}
             onDecided={onDecided}
           />

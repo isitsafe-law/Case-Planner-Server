@@ -62,11 +62,10 @@ assignment-aware endpoint in the app, not something scoped narrowly to the new d
 the intended blast radius before enabling Entra broadly; in local/Entra-disabled mode this was already
 unrestricted for everyone, so the difference only becomes visible once Entra is turned on.
 
-The Settlement Authority decide action (Approve/Grant, Deny, Request More Information) is a deliberate
-exception to the "Administrator can do anything" pattern used everywhere else in this app: it is gated to
-`manager_tier = ChiefCounsel` exclusively, with no Administrator override. If IT or an administrator account
-gets a 403 attempting that action, that is expected behavior, not a bug — only the specific person(s) tagged
-Chief Counsel can decide a Settlement Authority request.
+The Settlement Authority action (recording a request's Grant/Deny/Request More Information outcome) is pure
+record-keeping now, not a decision gated to a specific role: it requires only ordinary case-write access, the
+same rule as submitting the request in the first place. There is no remaining Chief-Counsel-exclusive gate,
+amount threshold, or escalation logic in this workflow to configure or grant exceptions for.
 
 ### Pending Microsoft Graph decision
 

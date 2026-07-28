@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import type { AuthenticatedUserProfile } from '../App'
 import { api } from '../App'
 import { Btn } from '../ui/Btn'
 import { formatDate } from '../ui/format'
@@ -11,25 +10,19 @@ import {
 } from '../dashboard/types'
 
 // The client UI for the server-enforced pre-filing sign-off gate (see PreFilingMilestoneGate /
-// EnsureFilingReady on the server) - the gate itself, the 4-milestone order, and the manager
-// override mechanism (CaseRecord.FilingGateOverrideReason) all already existed and were already
-// tested server-side; this panel is the previously-missing way to actually mark/unmark a milestone
-// or invoke the override from the case workspace. Lives in the case editor (see App.tsx's
+// EnsureFilingReady on the server) - the gate itself, the 4-milestone order, and the override
+// mechanism (CaseRecord.FilingGateOverrideReason) all already existed and were already tested
+// server-side; this panel is the previously-missing way to actually mark/unmark a milestone or
+// invoke the override from the case workspace. Lives in the case editor (see App.tsx's
 // placement-decision comment at its call site) rather than the read-only Manager Dashboard's
 // FilingStatusSection, which deliberately stays read-only.
-
-// Mirrors the server's actorRole != "Attorney" rule in EnsureFilingReady exactly (broader than
-// SettlementAuthoritySection's Chief-Counsel-only canDecideSettlementAuthority check) - any
-// Manager/Chief Counsel/Deputy Chief Counsel tier can override, not just Chief Counsel.
-export function canOverrideFilingGate(currentUser: AuthenticatedUserProfile | null): boolean {
-  return (
-    !currentUser ||
-    currentUser.isAdmin ||
-    currentUser.isManager ||
-    currentUser.managerTier === 'ChiefCounsel' ||
-    currentUser.managerTier === 'DeputyChiefCounsel'
-  )
-}
+//
+// Manager Dashboard sign-off consolidation, item 3: the Director signature gate is a soft
+// forcing-prompt now, not a hard block restricted to managers - EnsureFilingReady no longer checks
+// actorRole at all, so any actor can supply the override reason. autoOpenOverride lets App.tsx's
+// saveCase pre-expand this control the moment a save is blocked on it, so the "continue anyway"
+// path is one click (type a reason, save) rather than requiring the user to first discover and
+// click a separate toggle.
 
 // Client-side mirror of the server's "mark milestone N requires N-1 already marked" rule - purely
 // a clearer UX than letting the click round-trip and fail, the server enforces this regardless.
@@ -66,16 +59,16 @@ type MarkDraft = { occurredDate: string; note: string }
 
 export function PreFilingMilestonesPanel({
   caseId,
-  currentUser,
   filingGateOverrideReason,
   onOverrideReasonChange,
   onMutated,
+  autoOpenOverride,
 }: {
   caseId: number
-  currentUser: AuthenticatedUserProfile | null
   filingGateOverrideReason?: string
   onOverrideReasonChange: (value: string | undefined) => void
   onMutated: () => Promise<void>
+  autoOpenOverride?: boolean
 }) {
   const [milestones, setMilestones] = useState<PreFilingMilestoneRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -85,7 +78,13 @@ export function PreFilingMilestonesPanel({
   const [unmarkReason, setUnmarkReason] = useState('')
   const [busyMilestone, setBusyMilestone] = useState<string | null>(null)
   const [overrideOpen, setOverrideOpen] = useState(Boolean(filingGateOverrideReason))
-  const canOverride = canOverrideFilingGate(currentUser)
+
+  // A blocked save (App.tsx's saveCase) sets autoOpenOverride so the "continue anyway" path is
+  // immediately visible rather than requiring the user to first find and click a separate toggle -
+  // the soft-forcing-prompt behavior Manager Dashboard sign-off consolidation item 3 calls for.
+  useEffect(() => {
+    if (autoOpenOverride) setOverrideOpen(true)
+  }, [autoOpenOverride])
 
   useEffect(() => {
     let cancelled = false
@@ -280,34 +279,26 @@ export function PreFilingMilestonesPanel({
 
       <div className="prefiling-override top-gap-small">
         {!overrideOpen ? (
-          <button
-            type="button"
-            className="link-button"
-            disabled={!canOverride}
-            title={!canOverride ? 'Only a manager can override this requirement' : undefined}
-            onClick={() => setOverrideOpen(true)}
-          >
-            Manager Override…
+          <button type="button" className="link-button" onClick={() => setOverrideOpen(true)}>
+            Continue Without Marking…
           </button>
         ) : (
           <div>
             <label>
-              <span>Override reason (required to bypass the Director Signature Received requirement)</span>
+              <span>Reason for continuing without the Director Signature Received milestone (required)</span>
               <textarea
                 rows={2}
                 value={filingGateOverrideReason || ''}
-                disabled={!canOverride}
                 onChange={(event) => onOverrideReasonChange(event.currentTarget.value)}
                 placeholder="Why is this case leaving Pipeline without the Director signature milestone?"
               />
             </label>
-            {!canOverride && <p className="helper-text">Only a manager can override this requirement.</p>}
             <button
               type="button"
               className="link-button top-gap-small"
               onClick={() => { setOverrideOpen(false); onOverrideReasonChange(undefined) }}
             >
-              Cancel override
+              Cancel
             </button>
           </div>
         )}

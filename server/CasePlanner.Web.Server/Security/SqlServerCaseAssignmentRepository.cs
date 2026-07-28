@@ -187,11 +187,13 @@ public sealed class SqlServerCaseAssignmentRepository(IDatabaseConnectionFactory
         return changed;
     }
 
-    // manager_tier (056_manager_tier.sql) is orthogonal to is_manager above: it exists purely to gate
-    // UI/action buttons in a later Manager/Administrator Dashboard milestone (approval routing always
-    // goes to Chief Counsel only, with no Administrator override - already decided outside this
-    // change). Allowed values are enforced here in C#, not a DB constraint, matching is_manager's
-    // convention. Same no-self-service-guard note as SetUserManagerAsync above applies.
+    // manager_tier (056_manager_tier.sql) is orthogonal to is_manager above: it distinguishes Deputy
+    // Chief Counsel from Chief Counsel for unrestricted case visibility (CaseAccessService.
+    // IsUnrestricted) and audit/actor-role labeling. It no longer gates any decide/override action -
+    // the Filing gate override (Manager Dashboard sign-off consolidation item 3) and the Settlement
+    // Authority action (item 4) are both open to any actor with ordinary case-write access now.
+    // Allowed values are enforced here in C#, not a DB constraint, matching is_manager's convention.
+    // Same no-self-service-guard note as SetUserManagerAsync above applies.
     public async Task<bool> SetUserManagerTierAsync(Guid userId, string? managerTier, Guid actorUserId, CancellationToken token = default)
     {
         if (managerTier is not (null or "DeputyChiefCounsel" or "ChiefCounsel"))

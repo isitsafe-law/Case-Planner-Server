@@ -251,7 +251,7 @@ internal static class PipelineHandoffTransitionLogger
     public static async Task RecordIfChangedAsync(
         DbConnection connection, DbTransaction transaction, long caseId,
         string? previousHolder, string? newHolder, string? previousStage, string? newStage,
-        Guid? actorUserId, string? actorDisplay, CancellationToken token = default)
+        Guid? actorUserId, string? actorDisplay, CancellationToken token = default, string? note = null)
     {
         var holderChanged = (previousHolder ?? "") != (newHolder ?? "");
         var stageChanged = (previousStage ?? "") != (newStage ?? "");
@@ -272,7 +272,7 @@ internal static class PipelineHandoffTransitionLogger
         insert.Parameters.Add(new SqlParameter("@newStage", newStage ?? ""));
         insert.Parameters.Add(new SqlParameter("@handoff", now[..10]));
         insert.Parameters.Add(new SqlParameter("@review", DBNull.Value));
-        insert.Parameters.Add(new SqlParameter("@note", DBNull.Value));
+        insert.Parameters.Add(new SqlParameter("@note", (object?)note ?? DBNull.Value));
         insert.Parameters.Add(new SqlParameter("@now", now));
         insert.Parameters.Add(new SqlParameter("@actor", (object?)actorUserId ?? DBNull.Value));
         insert.Parameters.Add(new SqlParameter("@display", (object?)actorDisplay ?? DBNull.Value));

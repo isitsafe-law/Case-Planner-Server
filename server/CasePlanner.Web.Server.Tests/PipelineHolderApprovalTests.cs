@@ -5,10 +5,12 @@ using CasePlanner.Web.Server.Services;
 
 namespace CasePlanner.Web.Server.Tests;
 
-// Covers the pipeline-advancement gate (PipelinePromotionGate / CasePlannerRepository.SetHolderAsync)
-// and the Approve / Return for Revision action (ProviderNeutralPipelineHolderApprovalActionService).
-// Mirrors CaseDefendantTests's structure - a fresh RepositoryTestFixture per test, plain assertions
-// against the real SQLite repository (no mocking).
+// Covers pipeline holder history (CasePlannerRepository.SetHolderAsync - pure fact/history since
+// Manager Dashboard sign-off consolidation item 1, no approval requirement) and the Approve /
+// Return for Revision action (ProviderNeutralPipelineHolderApprovalActionService), which remains a
+// record-keeping action in its own right even though nothing downstream requires it. Mirrors
+// CaseDefendantTests's structure - a fresh RepositoryTestFixture per test, plain assertions against
+// the real SQLite repository (no mocking).
 public class PipelineHolderApprovalTests : IAsyncLifetime
 {
     private RepositoryTestFixture _fixture = null!;
@@ -17,8 +19,9 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     public async Task DisposeAsync() => await _fixture.DisposeAsync();
 
     // Status="Pipeline" is required so SaveCaseAsync's MapConsolidatedCaseStatus derives
-    // CaseStatus="Pipeline" (the phase PipelinePromotionGate actually gates) rather than the
-    // "Active Litigation" bucket CaseDefendantTests's plain "Active" helper case lands in.
+    // CaseStatus="Pipeline" (the phase PipelinePromotionGate.RequiresFilingApproval still gates on
+    // exit) rather than the "Active Litigation" bucket CaseDefendantTests's plain "Active" helper
+    // case lands in.
     private async Task<CaseRecord> CreatePipelineCaseAsync(string currentHolder = "Legal Assistant") =>
         await _fixture.Repository.SaveCaseAsync(new CaseRecord
         {
@@ -71,61 +74,37 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
         Assert.Equal("Ready for attorney review.", list[1].Note);
     }
 
-    // --- Task B: the gate itself, exercised directly through SetHolderAsync ---
+    // --- Task B / Manager Dashboard sign-off consolidation item 1: SetHolderAsync is pure history
+    // now - no approval requirement, forward or backward, gated role or not. ---
 
     [Fact]
-    public async Task SetHolderAsync_ForwardAdvance_BlockedWithoutPriorApprovedRow()
+    public async Task SetHolderAsync_ForwardAdvance_NeverBlockedRegardlessOfApprovalState()
     {
+        // Zero approval rows on file at all - a legitimate forward advance must still succeed.
         var c = await CreatePipelineCaseAsync("Legal Assistant");
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" }));
-        Assert.Contains("Legal Assistant", ex.Message);
-        Assert.Contains("Attorney", ex.Message);
-
-        var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Legal Assistant", reloaded.CurrentHolder);
-    }
-
-    [Fact]
-    public async Task SetHolderAsync_ForwardAdvance_SucceedsOnceThePriorHolderApproved()
-    {
-        var c = await CreatePipelineCaseAsync("Legal Assistant");
-        await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
-        {
-            CaseId = c.Id, HolderRole = "Legal Assistant", Status = "Approved",
-        });
-
         await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
-
         var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
         Assert.Equal("Attorney", reloaded.CurrentHolder);
-    }
 
-    [Fact]
-    public async Task SetHolderAsync_ForwardAdvance_BlockedWhenMostRecentRowForThatHolderWasReturned()
-    {
-        var c = await CreatePipelineCaseAsync("Legal Assistant");
-        // An older Approved row exists, but the most recent status for this holder is Returned -
-        // the gate must key off the latest row, not "any Approved row ever".
+        // Most recent row for the prior holder is "Returned", not "Approved" - still not blocked.
+        var d = await CreatePipelineCaseAsync("Legal Assistant");
         await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
         {
-            CaseId = c.Id, HolderRole = "Legal Assistant", Status = "Approved",
+            CaseId = d.Id, HolderRole = "Legal Assistant", Status = "Approved",
         });
         await _fixture.Repository.RecordPipelineHolderApprovalAsync(new PipelineHolderApprovalRecord
         {
-            CaseId = c.Id, HolderRole = "Legal Assistant", Status = "Returned",
+            CaseId = d.Id, HolderRole = "Legal Assistant", Status = "Returned",
         });
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" }));
+        await _fixture.Repository.SetHolderAsync(d.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
+        var reloadedD = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == d.Id);
+        Assert.Equal("Attorney", reloadedD.CurrentHolder);
     }
 
     [Fact]
-    public async Task SetHolderAsync_BackwardOrLateralMove_IsNeverBlockedByTheGate()
+    public async Task SetHolderAsync_BackwardOrLateralMove_IsNeverBlocked()
     {
-        // Starts at the far end of the chain with zero approval rows on file at all - a legitimate
-        // forward advance from here would be blocked, but Return for Revision (backward) must not be.
+        // Starts at the far end of the chain with zero approval rows on file at all.
         var c = await CreatePipelineCaseAsync("Chief Counsel");
 
         await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
@@ -135,7 +114,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetHolderAsync_LateralMoveToSameHolder_IsNeverBlockedByTheGate()
+    public async Task SetHolderAsync_LateralMoveToSameHolder_IsNeverBlocked()
     {
         var c = await CreatePipelineCaseAsync("Attorney");
 
@@ -146,7 +125,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetHolderAsync_OutsidePipelinePhase_GateIsANoOp()
+    public async Task SetHolderAsync_OutsidePipelinePhase_IsNeverBlocked()
     {
         var c = await _fixture.Repository.SaveCaseAsync(new CaseRecord
         {
@@ -161,7 +140,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetHolderAsync_UngatedRoleOnEitherSide_GateIsANoOp()
+    public async Task SetHolderAsync_UngatedRoleOnEitherSide_IsNeverBlocked()
     {
         // Moving from an ungated role ("Filing Staff") forward into a gated one.
         var fromUngated = await CreatePipelineCaseAsync("Filing Staff");
@@ -174,6 +153,24 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
         await _fixture.Repository.SetHolderAsync(toUngated.Id, new SetHolderRequest { CurrentHolder = "Other" });
         var reloadedToUngated = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == toUngated.Id);
         Assert.Equal("Other", reloadedToUngated.CurrentHolder);
+    }
+
+    [Fact]
+    public async Task SetHolderAsync_ReasonIsOptional_AndWhenSuppliedLandsOnThePipelineHandoffNote()
+    {
+        var c = await CreatePipelineCaseAsync("Legal Assistant");
+
+        // No reason supplied - succeeds, and the resulting handoff row's note is null.
+        await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Attorney" });
+        var handoffs = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        var noReason = Assert.Single(handoffs);
+        Assert.Null(noReason.Note);
+
+        // A reason supplied for a backward correction is recorded, but still never required.
+        await _fixture.Repository.SetHolderAsync(c.Id, new SetHolderRequest { CurrentHolder = "Legal Assistant", Reason = "Sent to the wrong person." });
+        var afterReturn = await _fixture.Repository.GetPipelineHandoffsAsync(c.Id);
+        var withReason = afterReturn.OrderByDescending(h => h.Id).First();
+        Assert.Equal("Sent to the wrong person.", withReason.Note);
     }
 
     // --- Task C: the Approve / Return for Revision action ---

@@ -28,7 +28,8 @@ public sealed class SqlServerSettlementAuthorityRequestStore(
     private const string Columns = """
         id, case_id, requested_amount, requesting_attorney, request_notes, status,
         granted_amount, requested_at, requested_by_user_id, requested_by_display,
-        decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment, row_version
+        decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment,
+        granted_by, granted_by_role, granted_date, document_reference, row_version
         """;
 
     public async Task<List<SettlementAuthorityRequestRecord>> GetAsync(long? caseId, CancellationToken token = default)
@@ -139,7 +140,17 @@ public sealed class SqlServerSettlementAuthorityRequestStore(
                 previousCeiling = priorValue is null or DBNull ? null : Convert.ToDecimal(priorValue);
             }
 
-            if (decision.Action == "Approved") grantedAmount = decision.GrantedAmount ?? requestedAmount;
+            string? grantedBy = null;
+            string? grantedByRole = null;
+            string? grantedDate = null;
+            if (decision.Action == "Approved")
+            {
+                grantedAmount = decision.GrantedAmount ?? requestedAmount;
+                grantedBy = string.IsNullOrWhiteSpace(decision.GrantedBy) ? null : decision.GrantedBy.Trim();
+                grantedByRole = string.IsNullOrWhiteSpace(decision.GrantedByRole) ? null : decision.GrantedByRole.Trim();
+                grantedDate = string.IsNullOrWhiteSpace(decision.GrantedDate) ? DateTime.UtcNow.ToString("yyyy-MM-dd") : decision.GrantedDate;
+            }
+            var documentReference = string.IsNullOrWhiteSpace(decision.DocumentReference) ? null : decision.DocumentReference.Trim();
             var now = DateTime.UtcNow.ToString("O");
 
             await using (var update = connection.CreateCommand())
@@ -149,7 +160,9 @@ public sealed class SqlServerSettlementAuthorityRequestStore(
                     UPDATE dbo.settlement_authority_requests SET
                         status=@status, granted_amount=@granted, decided_at=@decidedAt,
                         decided_by_user_id=@decidedBy, decided_by_display=@decidedByDisplay,
-                        decided_by_role=@decidedByRole, decision_comment=@comment
+                        decided_by_role=@decidedByRole, decision_comment=@comment,
+                        granted_by=@grantedBy, granted_by_role=@grantedByRole,
+                        granted_date=@grantedDate, document_reference=@documentReference
                     WHERE id=@id
                     """;
                 update.Parameters.Add(new SqlParameter("@status", decision.Action));
@@ -159,6 +172,10 @@ public sealed class SqlServerSettlementAuthorityRequestStore(
                 update.Parameters.Add(new SqlParameter("@decidedByDisplay", actor.AuditLabel));
                 update.Parameters.Add(new SqlParameter("@decidedByRole", Db(actor.Role)));
                 update.Parameters.Add(new SqlParameter("@comment", decision.Comment));
+                update.Parameters.Add(new SqlParameter("@grantedBy", Db(grantedBy)));
+                update.Parameters.Add(new SqlParameter("@grantedByRole", Db(grantedByRole)));
+                update.Parameters.Add(new SqlParameter("@grantedDate", Db(grantedDate)));
+                update.Parameters.Add(new SqlParameter("@documentReference", Db(documentReference)));
                 update.Parameters.Add(new SqlParameter("@id", requestId));
                 await update.ExecuteNonQueryAsync(token);
             }
@@ -208,6 +225,10 @@ public sealed class SqlServerSettlementAuthorityRequestStore(
         DecidedByDisplay = Text(reader, 12),
         DecidedByRole = Text(reader, 13),
         DecisionComment = Text(reader, 14),
-        RowVersion = Convert.ToBase64String((byte[])reader.GetValue(15)),
+        GrantedBy = Text(reader, 15),
+        GrantedByRole = Text(reader, 16),
+        GrantedDate = Text(reader, 17),
+        DocumentReference = Text(reader, 18),
+        RowVersion = Convert.ToBase64String((byte[])reader.GetValue(19)),
     };
 }

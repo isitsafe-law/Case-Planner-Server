@@ -7,10 +7,11 @@ namespace CasePlanner.Web.Server.Tests;
 // Manager/Administrator Dashboard Milestone 4 correction coverage: the pre-filing milestone
 // tracker (case_prefiling_milestones / PreFilingMilestoneGate) that replaces part of Milestone 2's
 // Filing Approval gate, plus PipelinePromotionGate.EnsureFilingReady - the corrected check basis
-// for a case leaving CaseStatus="Pipeline" - and its manager-override path. Mirrors
-// SettlementAuthorityRequestTests's structure - a fresh RepositoryTestFixture per test, plain
-// assertions against the real SQLite repository (no mocking). Exercises CasePlannerRepository's
-// methods directly (the same surface SqlitePreFilingMilestoneStore just delegates to).
+// for a case leaving CaseStatus="Pipeline" - and its override path (open to any actor since Manager
+// Dashboard sign-off consolidation item 3, not just managers). Mirrors SettlementAuthorityRequestTests's
+// structure - a fresh RepositoryTestFixture per test, plain assertions against the real SQLite
+// repository (no mocking). Exercises CasePlannerRepository's methods directly (the same surface
+// SqlitePreFilingMilestoneStore just delegates to).
 public class PreFilingMilestoneTests : IAsyncLifetime
 {
     private RepositoryTestFixture _fixture = null!;
@@ -248,23 +249,30 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_AttorneyOverrideAttempt_ThrowsInvalidOperationException_EvenWithReason()
+    public async Task SaveCaseAsync_LeavingPipeline_AttorneyOverride_SucceedsWithReason()
     {
+        // Manager Dashboard sign-off consolidation, item 3: the Director signature gate is a soft
+        // forcing-prompt, not a hard block restricted to managers - EnsureFilingReady no longer
+        // checks actorRole at all, so a plain Attorney's override reason is honored the same as a
+        // manager's (see SaveCaseAsync_LeavingPipeline_ManagerOverride_SucceedsWithoutDirectorSignature_AndWritesFilingGateOverriddenActivity above).
         await using var attorneyFixture = await RepositoryTestFixture.CreateAsync(new RoleTestActor(Guid.NewGuid(), "Attorney"));
         var c = await attorneyFixture.Repository.SaveCaseAsync(new CaseRecord
         {
-            CaseName = "Attorney Override Attempt Fixture Case", County = "Pulaski", Status = "Pipeline", Track = "Contested", CurrentHolder = "Legal Assistant",
+            CaseName = "Attorney Override Fixture Case", County = "Pulaski", Status = "Pipeline", Track = "Contested", CurrentHolder = "Legal Assistant",
         });
 
         var loaded = (await attorneyFixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
         loaded.CaseStatus = "Filed / Service Pending";
         loaded.FilingGateOverrideReason = "I really need this filed today.";
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => attorneyFixture.Repository.SaveCaseAsync(loaded));
-        Assert.Contains("Only a manager", ex.Message);
+        await attorneyFixture.Repository.SaveCaseAsync(loaded);
 
         var reloaded = (await attorneyFixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Pipeline", reloaded.CaseStatus);
+        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
+
+        var log = await attorneyFixture.Repository.GetActivityLogAsync(c.Id);
+        var entry = Assert.Single(log, e => e.ActivityType == "FilingGateOverridden");
+        Assert.Equal("Attorney", entry.ActorRoleAtAction);
     }
 
     // --- GetPreFilingMilestoneAgingAsync: data layer for the future "Needs Attention" tab ---

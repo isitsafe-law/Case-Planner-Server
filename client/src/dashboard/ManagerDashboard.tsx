@@ -6,6 +6,9 @@ import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, Settleme
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
 import { IncomingPipelinePanel } from './IncomingPipelinePanel'
 import { ApprovalsTab } from './ApprovalsTab'
+import { ByAttorneyTab } from './ByAttorneyTab'
+import { ByJobTab } from './ByJobTab'
+import { NeedsAttentionTab } from './NeedsAttentionTab'
 
 type ManagerDashboardTab = 'calendar' | 'approvals' | 'byAttorney' | 'byJob' | 'needsAttention'
 
@@ -22,15 +25,19 @@ const MANAGER_DASHBOARD_TABS: { key: ManagerDashboardTab; label: string }[] = [
 // search "Resolved / Closed" for this precedent), which is the dashboard-specific variant of
 // "open" elsewhere in this file - distinct from the exported isOpenCase, which is Report A's own
 // variant and deliberately does NOT exclude Triage (see its doc comment in App.tsx).
-function isOpenForDivision(record: CaseRecord): boolean {
+// Exported so ByAttorneyTab/ByJobTab/NeedsAttentionTab (Milestone 5, part 2) can reuse this exact
+// definition rather than each writing a third/fourth variant of "what counts as open" division-wide.
+export function isOpenForDivision(record: CaseRecord): boolean {
   const caseStatus = record.caseStatus || 'Pipeline'
   return caseStatus !== 'Resolved / Closed' && caseStatus !== 'Triage' && record.status !== 'Closed' && record.status !== 'Triage'
 }
 
 // Same "needs attention" fields the Attorney Dashboard already renders (StatusChip off
 // attentionStatus, the "No answer on file" warning off defaultPostureWarning) - an interim
-// division-wide count. Milestone 5's Needs Attention tab builds the richer exception logic.
-function needsAttention(record: CaseRecord): boolean {
+// division-wide count. Exported for ByAttorneyTab's "needs-attention count" column (Milestone 5,
+// part 2); the Needs Attention tab itself builds a separate, richer, rule-based exception list on
+// top of this rather than replacing it - see NeedsAttentionTab.tsx.
+export function needsAttention(record: CaseRecord): boolean {
   return (record.attentionStatus || 'onTrack') !== 'onTrack' || record.defaultPostureWarning === true
 }
 
@@ -147,9 +154,21 @@ export function ManagerDashboard({
             onDecided={onDecided}
           />
         )}
-        {activeTab === 'byAttorney' && <Panel title="By Attorney">This view is coming in a later milestone.</Panel>}
-        {activeTab === 'byJob' && <Panel title="By Job">This view is coming in a later milestone.</Panel>}
-        {activeTab === 'needsAttention' && <Panel title="Needs Attention">This view is coming in a later milestone.</Panel>}
+        {activeTab === 'byAttorney' && (
+          <Panel title="By Attorney">
+            <ByAttorneyTab allCases={allCases} hearings={hearings} settlementAuthorityRequests={settlementAuthorityRequests} onOpenCase={onOpenCase} />
+          </Panel>
+        )}
+        {activeTab === 'byJob' && (
+          <Panel title="By Job">
+            <ByJobTab allCases={allCases} hearings={hearings} onOpenCase={onOpenCase} />
+          </Panel>
+        )}
+        {activeTab === 'needsAttention' && (
+          <Panel title="Needs Attention">
+            <NeedsAttentionTab allCases={allCases} settlementAuthorityRequests={settlementAuthorityRequests} onOpenCase={onOpenCase} />
+          </Panel>
+        )}
       </div>
     </main>
   )

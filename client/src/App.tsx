@@ -104,6 +104,12 @@ export type CaseRecord = {
   defaultPostureWarning?: boolean
   nextDeadlineDate?: string | null
   nextDeadlineTitle?: string | null
+  // Mirrors the server's CaseRecord.LastMeaningfulActivityDate (DomainModels.cs) - recomputed from
+  // the activity_log table (RecordActivityAsync), distinct from the older MAX(updated_at) proxy
+  // CaseAttentionEngine still uses. Previously unused client-side; added for the Manager/
+  // Administrator Dashboard's Needs Attention tab (Milestone 5, part 2), which flags a case with no
+  // recorded activity in longer than a configurable threshold.
+  lastMeaningfulActivityDate?: string | null
   deferredUntil?: string | null
   deferredReason?: string | null
   deferredAt?: string | null

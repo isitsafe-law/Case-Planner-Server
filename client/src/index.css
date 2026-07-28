@@ -2358,6 +2358,74 @@ code {
   text-align: right;
 }
 
+/* Manager/Administrator Dashboard Milestone 5, part 2: single-row stacked-bar variant of .bars
+   above, for the By Attorney / By Job tabs' "tract counts by status" column (see
+   StatusDistributionBar.tsx). Two stacked flex rows sharing the same per-segment flex proportions -
+   a count-label row directly above a color-segment row - so each number sits over its own segment
+   without needing contrast-safe text-on-color (the label row's text uses the normal muted text
+   color, never a color painted onto the segment itself). */
+.status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+}
+
+.status-stack-counts {
+  display: flex;
+}
+
+.status-stack-counts span {
+  flex: 1 1 0;
+  text-align: center;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.status-stack-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-subtle);
+}
+
+.status-stack-bar span {
+  flex: 1 1 0;
+  height: 100%;
+}
+
+.seg-pipeline { background: var(--text-muted); }
+.seg-filed { background: var(--primary); }
+.seg-active { background: var(--primary-strong); }
+.seg-settlement { background: var(--warning-text); }
+.seg-trial { background: var(--danger-text); }
+.seg-resolved { background: var(--success-text); }
+
+.status-stack-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+.status-stack-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.status-stack-legend-item i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
 .action-queue-item-meta {
   display: flex;
   flex-wrap: wrap;

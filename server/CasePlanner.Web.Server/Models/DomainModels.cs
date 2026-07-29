@@ -591,9 +591,9 @@ public sealed class PreFilingMilestoneRecord
     // checklist-style text list since package contents vary by case - a client-side UX choice only;
     // there is deliberately no separate structured document-checklist table here.
     public string? Note { get; set; }
-    // Final implementation, item 1: shared by every row a single bulk-mark action touches (the
-    // Chief Counsel signs one package covering many tracts on the same job at once), so the audit
-    // trail shows they came from one action - null for a single-case mark.
+    // Historical: shared by every row a single bulk-mark action touched, back when the Bulk Mark
+    // Milestones feature existed (since removed as redundant with the manager dashboard's
+    // simplified surface). Null for every mark going forward; old rows may still carry a value.
     public string? BatchId { get; set; }
     // SQL Server optimistic-concurrency token. Null while the active runtime remains SQLite.
     public string? RowVersion { get; set; }
@@ -606,37 +606,10 @@ public sealed class MarkPreFilingMilestoneRequest
 {
     public string OccurredDate { get; set; } = "";
     public string? Note { get; set; }
-    // Final implementation, item 1 - see PreFilingMilestoneRecord.BatchId's doc comment. Null for a
-    // single-case mark from the case workspace; set by the bulk-mark orchestration below.
+    // See PreFilingMilestoneRecord.BatchId's doc comment. Null for a single-case mark from the case
+    // workspace - the Bulk Mark Milestones feature that used to set this was removed as redundant
+    // with the manager dashboard's simplified surface.
     public string? BatchId { get; set; }
-}
-
-// Client-facing shape for POST /api/prefiling-milestones/bulk-mark (final implementation, item 1):
-// marks the SAME milestone, with the SAME occurred-on date, across every case in CaseIds in one
-// action - the Chief Counsel signs one pleadings package covering many tracts on the same job at
-// once, so entering this data should be at least as fast as the spreadsheet it replaces. Each case
-// still gets its own PreFilingMilestoneRecord row (respecting PreFilingMilestoneGate's existing
-// sequential-order validation per case); a case that can't legally take the mark yet is reported as
-// a failure, not a reason to fail the whole batch.
-public sealed class BulkMarkPreFilingMilestoneRequest
-{
-    public List<long> CaseIds { get; set; } = [];
-    public string Milestone { get; set; } = "";
-    public string OccurredDate { get; set; } = "";
-    public string? Note { get; set; }
-}
-
-public sealed class BulkMarkPreFilingMilestoneFailure
-{
-    public long CaseId { get; set; }
-    public string Error { get; set; } = "";
-}
-
-public sealed class BulkMarkPreFilingMilestoneResult
-{
-    public string BatchId { get; set; } = "";
-    public List<PreFilingMilestoneRecord> Marked { get; set; } = [];
-    public List<BulkMarkPreFilingMilestoneFailure> Failures { get; set; } = [];
 }
 
 // Client-facing shape for POST /api/cases/{caseId}/prefiling-milestones/{milestone}/unmark. Reason

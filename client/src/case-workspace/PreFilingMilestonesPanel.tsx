@@ -49,8 +49,8 @@ export function laterMarkedMilestoneLabel(milestones: PreFilingMilestoneRecord[]
 }
 
 // Same UTC-slice convention used elsewhere in this app for a "today" default (see the CSV export
-// filenames in SettlementAuthoritySection.tsx/FilingStatusSection.tsx) - the occurred-date input is
-// explicitly editable/backdatable per spec, this is only the starting value.
+// filenames in FilingStatusSection.tsx) - the occurred-date input is explicitly editable/backdatable
+// per spec, this is only the starting value.
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10)
 }

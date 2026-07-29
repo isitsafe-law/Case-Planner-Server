@@ -3,12 +3,14 @@ import { downloadCsv } from '../ui/csvExport'
 import { EmptyState } from './EmptyState'
 import { preFilingMilestoneLabel, type PreFilingMilestoneAgingSummary } from './types'
 
-// Read-only, per the Approvals tab's scope decision (see ApprovalsTab.tsx's doc comment): marking
-// a pre-filing milestone records a fact, not a decision, and is already available to anyone with
-// the right access from the case workspace - no approve/deny affordance belongs here. Consumes the
-// server's already-aggregated GET /api/prefiling-milestones/aging response as-is; the furthest-
-// milestone-per-case computation lives server-side (PreFilingMilestoneAgingCase), unlike
-// IncomingPipelinePanel.tsx's own client-side scan, which serves a different (Calendar tab) purpose.
+// Read-only: marking a pre-filing milestone records a fact, not a decision, and is already
+// available to anyone with the right access from the case workspace - no approve/deny affordance
+// belongs here. Consumes the server's already-aggregated GET /api/prefiling-milestones/aging
+// response as-is; the furthest-milestone-per-case computation lives server-side
+// (PreFilingMilestoneAgingCase), unlike IncomingPipelinePanel.tsx's own client-side scan, which
+// serves a different (Calendar tab) purpose. Rendered directly on the manager dashboard's Filing
+// Status tab (see ManagerDashboard.tsx) - the Settlement Authority section this used to sit
+// alongside was removed as redundant with the Risk Analysis tab's negotiation tracking.
 export function FilingStatusSection({
   aging,
   onOpenCase,

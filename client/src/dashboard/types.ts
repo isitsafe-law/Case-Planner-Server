@@ -281,8 +281,8 @@ export type PreFilingMilestoneRecord = {
   markedByDisplay?: string | null
   markedByRole?: string | null
   note?: string | null
-  // Shared by every row a single bulk-mark action touches (final implementation, item 1) - null for
-  // a single-case mark.
+  // Historical: shared by every row a single bulk-mark action touched, back when the Bulk Mark
+  // Milestones feature existed (since removed). Null for every mark going forward.
   batchId?: string | null
   rowVersion?: string | null
 }

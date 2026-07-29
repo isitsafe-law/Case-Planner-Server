@@ -667,21 +667,13 @@ app.MapPost("/api/newspapers", async (NewspaperRecord model, INewspaperStore new
     return Results.Ok(await newspapers.SaveAsync(model, token));
 });
 
-// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. Manager Dashboard
-// sign-off consolidation, item 4: pure record-keeping now - GET is open to any authenticated user
-// (or unrestricted when Entra is disabled), matching circuit-clerks/pipeline-approvals above; both
-// POST (create) and POST decide require only ordinary case-write access, the same rule, since
-// recording an outcome is no different in kind from asking for one. The former Chief-Counsel-only
-// gate on decide is gone (see IsChiefCounsel's doc comment) - no routing, threshold, or escalation
-// logic anywhere in this workflow anymore.
-app.MapGet("/api/settlement-authority-requests", async (long? caseId, ISettlementAuthorityRequestStore requests, CancellationToken token) =>
-    Results.Ok(await requests.GetAsync(caseId, token)));
-app.MapPost("/api/cases/{caseId:long}/settlement-authority-requests", async (long caseId, CreateSettlementAuthorityRequest request, ISettlementAuthorityRequestStore requests, CaseAccessService access, CancellationToken token) =>
-{
-    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
-    try { return Results.Ok(await requests.CreateAsync(caseId, request, token)); }
-    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
-});
+// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. The manager
+// dashboard's Approvals surface (list + create) was removed as redundant with the Risk Analysis
+// tab's offer/counteroffer negotiation - see ManagerDashboard.tsx. This decide route stays as
+// backend-only infrastructure with no UI caller: it's still the only path that ever updates
+// CaseRecord.SettlementAuthorizedCeiling, which the Attorney Dashboard's Trial Watch displays, so
+// removing it would silently freeze that field. Pure record-keeping (Manager Dashboard sign-off
+// consolidation, item 4) - only ordinary case-write access is required, no Chief-Counsel-only gate.
 app.MapPost("/api/settlement-authority-requests/{id:long}/decide", async (long id, DecideSettlementAuthorityRequest decision, ISettlementAuthorityRequestStore requests, CaseAccessService access, CancellationToken token) =>
 {
     var existing = (await requests.GetAsync(null, token)).FirstOrDefault(r => r.Id == id);
@@ -715,47 +707,11 @@ app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/unmark", 
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
-// Final implementation, item 1: the primary bulk-entry surface, scoped to a job number's tracts -
-// marks the SAME milestone with the SAME occurred-on date across every listed case in one action,
-// so entering this data can be at least as fast as the spreadsheet it replaces. Each case is marked
-// through the exact same IPreFilingMilestoneStore.MarkAsync path a single-case mark uses (so
-// PreFilingMilestoneGate's sequential-order validation and CanActOnPreFilingMilestone's access rule
-// both still apply per case) - a case that can't legally take the mark yet, or the caller can't act
-// on, is reported as a failure rather than aborting the whole batch. All rows share one generated
-// BatchId so the audit trail shows they came from one action.
-app.MapPost("/api/prefiling-milestones/bulk-mark", async (BulkMarkPreFilingMilestoneRequest request, IPreFilingMilestoneStore milestones, HttpContext context, CaseAccessService access, CancellationToken token) =>
-{
-    var batchId = Guid.NewGuid().ToString("N");
-    var result = new BulkMarkPreFilingMilestoneResult { BatchId = batchId };
-    foreach (var caseId in request.CaseIds)
-    {
-        try
-        {
-            if (!await CanActOnPreFilingMilestone(caseId, context, access, token))
-            {
-                result.Failures.Add(new BulkMarkPreFilingMilestoneFailure { CaseId = caseId, Error = "You do not have access to act on this case." });
-                continue;
-            }
-            var marked = await milestones.MarkAsync(caseId, request.Milestone, new MarkPreFilingMilestoneRequest
-            {
-                OccurredDate = request.OccurredDate,
-                Note = request.Note,
-                BatchId = batchId,
-            }, token);
-            result.Marked.Add(marked);
-        }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-        {
-            result.Failures.Add(new BulkMarkPreFilingMilestoneFailure { CaseId = caseId, Error = ex.Message });
-        }
-    }
-    return Results.Ok(result);
-});
 app.MapGet("/api/prefiling-milestones/aging", async (IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAgingAsync(token)));
 // Manager/Administrator Dashboard Milestone 4: a global (no case-scoped path segment) read, so the
 // dashboard's Incoming Pipeline panel can fetch every case's milestones in one call - mirrors
-// GET /api/settlement-authority-requests's optional-caseId shape exactly. The per-case
+// GET /api/review-notes's optional-caseId shape below. The per-case
 // GET /api/cases/{caseId}/prefiling-milestones route above stays for case-workspace use.
 app.MapGet("/api/prefiling-milestones", async (long? caseId, IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAsync(caseId, token)));

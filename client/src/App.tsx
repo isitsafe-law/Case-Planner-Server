@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord, SettlementAuthorityRequestRecord } from './dashboard/types'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
@@ -1625,11 +1625,11 @@ export function districtForCountyChange(currentDistrict: string | null | undefin
 
 const takingTypes = ['Partial', 'Full', 'TCE'] as const
 
-// Exported starting with the Manager/Administrator Dashboard Milestone 5 Approvals tab - the first
-// dashboard sub-component (SettlementAuthoritySection.tsx) to call this directly rather than going
-// through an App.tsx-level onSubmit callback the way RecordDecisionDialog/PipelineHandoffDialog do,
-// since the Settlement Authority decide action is opened and owned entirely within the Approvals
-// tab's own component tree (dialog state included), not threaded up to App.tsx.
+// Exported so dashboard sub-components (e.g. IncomingPipelinePanel.tsx's inline milestone mark) can
+// call this directly rather than going through an App.tsx-level onSubmit callback the way
+// RecordDecisionDialog/PipelineHandoffDialog do, since that action is opened and owned entirely
+// within the sub-component's own tree (dialog/inline-form state included), not threaded up to
+// App.tsx.
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {})
   const accessToken = await getApiAccessToken()
@@ -2295,7 +2295,6 @@ function App() {
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
   // Manager/Administrator Dashboard Milestone 4: division-wide (no caseId query param), the same
   // way circuitClerksData/assessorsData are fetched - see loadInitial below.
-  const [settlementAuthorityRequests, setSettlementAuthorityRequests] = useState<SettlementAuthorityRequestRecord[]>([])
   const [preFilingMilestones, setPreFilingMilestones] = useState<PreFilingMilestoneRecord[]>([])
   // Manager/Administrator Dashboard Milestone 5: the Approvals tab's Filing Status section uses the
   // server's already-aggregated aging view (GET /api/prefiling-milestones/aging) rather than
@@ -2855,7 +2854,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, settlementAuthorityRequestsData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2879,7 +2878,6 @@ function App() {
         api<AssessorRecord[]>('/api/assessors'),
         api<CollectorRecord[]>('/api/collectors'),
         api<NewspaperRecord[]>('/api/newspapers'),
-        api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'),
         api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
         api<PreFilingMilestoneAgingSummary>('/api/prefiling-milestones/aging'),
         api<ReviewNoteRecord[]>('/api/review-notes'),
@@ -2907,7 +2905,6 @@ function App() {
       setAssessors(assessorsData)
       setCollectors(collectorsData)
       setNewspapers(newspapersData)
-      setSettlementAuthorityRequests(settlementAuthorityRequestsData)
       setPreFilingMilestones(preFilingMilestonesData)
       setPreFilingMilestonesAging(preFilingMilestonesAgingData)
       setReviewNotes(reviewNotesData)
@@ -2935,25 +2932,10 @@ function App() {
     }
   }
 
-  // Manager/Administrator Dashboard Milestone 5: the Approvals tab's onDecided callback. The
-  // POST /api/settlement-authority-requests/{id}/decide call itself lives in
-  // SettlementAuthorityDecisionDialog/ApprovalsTab (a division-wide queue, not a single-case edit,
-  // so it doesn't fit loadCurrentCase's per-case refresh shape) - this is only the refresh half,
-  // re-fetching the one division-wide list rather than invalidating all of loadInitial, mirroring
-  // saveCircuitClerk's own re-fetch-after-save pattern above.
-  async function refreshSettlementAuthorityRequests() {
-    try {
-      setSettlementAuthorityRequests(await api<SettlementAuthorityRequestRecord[]>('/api/settlement-authority-requests'))
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to refresh Settlement Authority requests.')
-    }
-  }
-
-  // Final implementation, item 1: re-fetches after a bulk-mark action (BulkMilestoneGrid.tsx) - both
-  // the raw per-case milestone list (drives the grid itself and IncomingPipelinePanel/
-  // NeedsAttentionTab's shared stall detector) and the server's pre-aggregated aging view (Filing
-  // Status section), same "refetch exactly what changed" convention as
-  // refreshSettlementAuthorityRequests above.
+  // Final implementation, item 1: re-fetches after an inline mark from the Incoming Pipeline panel -
+  // both the raw per-case milestone list (drives IncomingPipelinePanel/NeedsAttentionTab's shared
+  // stall detector) and the server's pre-aggregated aging view (Filing Status section), same
+  // "refetch exactly what changed" convention as saveCircuitClerk's own re-fetch-after-save pattern.
   async function refreshPreFilingMilestones() {
     try {
       const [milestonesData, agingData] = await Promise.all([
@@ -10527,12 +10509,10 @@ function App() {
         <ManagerDashboard
           allCases={allCases}
           hearings={queueHearings}
-          settlementAuthorityRequests={settlementAuthorityRequests}
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
-          onDecided={refreshSettlementAuthorityRequests}
           onMilestonesMutated={refreshPreFilingMilestones}
         />
       )}

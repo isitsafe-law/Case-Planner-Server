@@ -36,7 +36,7 @@ export function IncomingPipelinePanel({
   onOpenCase: (caseId: number) => void
   // Final implementation, item 1c: lets a manager mark directly from an aging row without
   // navigating to the case - refreshes preFilingMilestones (and everything the shared stall
-  // detector depends on) after a successful inline mark, same as BulkMilestoneGrid.tsx's onMutated.
+  // detector depends on) after a successful inline mark.
   onMutated?: () => Promise<void>
 }) {
   const [markingCaseId, setMarkingCaseId] = useState<number | null>(null)

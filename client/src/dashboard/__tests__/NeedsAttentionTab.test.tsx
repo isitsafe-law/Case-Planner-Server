@@ -3,12 +3,11 @@ import type { CaseRecord } from '../../App'
 import {
   buildNeedsAttentionRows,
   feeShiftReferenceRow,
-  pendingApprovalRow,
   preFilingStallRow,
   serviceSoftFlagRow,
   staleActivityRow,
 } from '../NeedsAttentionTab'
-import type { PreFilingMilestoneRecord, ReviewNoteRecord, SettlementAuthorityRequestRecord } from '../types'
+import type { PreFilingMilestoneRecord, ReviewNoteRecord } from '../types'
 
 const NOW = new Date('2026-07-27T12:00:00Z')
 
@@ -110,26 +109,6 @@ describe('feeShiftReferenceRow (rule c)', () => {
   })
 })
 
-describe('pendingApprovalRow (rule d)', () => {
-  function makeRequest(overrides: Partial<SettlementAuthorityRequestRecord> = {}): SettlementAuthorityRequestRecord {
-    return { id: 1, caseId: 1, requestedAmount: 50000, status: 'Pending', requestedAt: '2026-07-01T00:00:00Z', ...overrides }
-  }
-
-  it('ignores a non-Pending request', () => {
-    expect(pendingApprovalRow(makeRequest({ status: 'Approved' }), makeCase(), 5, NOW)).toBeNull()
-  })
-
-  it('returns null within the threshold', () => {
-    expect(pendingApprovalRow(makeRequest({ requestedAt: '2026-07-25T00:00:00Z' }), makeCase(), 5, NOW)).toBeNull()
-  })
-
-  it('flags a request pending beyond the threshold, falling back to the case attorney', () => {
-    const row = pendingApprovalRow(makeRequest({ requestingAttorney: null }), makeCase({ assignedAttorney: 'Jane Roe' }), 5, NOW)
-    expect(row).not.toBeNull()
-    expect(row!.attorney).toBe('Jane Roe')
-  })
-})
-
 describe('preFilingStallRow (rule 0, final implementation item 3)', () => {
   it('only applies to a case actually in Pipeline status', () => {
     expect(preFilingStallRow(makeCase({ caseStatus: 'Active Litigation' }), [], [], 7, NOW)).toBeNull()
@@ -172,14 +151,14 @@ describe('buildNeedsAttentionRows', () => {
       serviceDeadlineBasisDate: '2026-01-01',
       lastMeaningfulActivityDate: '2026-01-01',
     })
-    const rows = buildNeedsAttentionRows([record], [], [], [], 14, 5, 7, NOW)
+    const rows = buildNeedsAttentionRows([record], [], [], 14, 7, NOW)
     const caseIds = rows.map((r) => r.caseId)
     expect(caseIds.filter((id) => id === 1).length).toBeGreaterThan(1)
   })
 
   it('is empty when nothing trips any rule', () => {
     const record = makeCase({ id: 1, servicePerfected: true, caseStatus: 'Active Litigation', lastMeaningfulActivityDate: NOW.toISOString() })
-    expect(buildNeedsAttentionRows([record], [], [], [], 14, 5, 7, NOW)).toEqual([])
+    expect(buildNeedsAttentionRows([record], [], [], 14, 7, NOW)).toEqual([])
   })
 
   it('groups rows by rule type before sorting by age within each group', () => {
@@ -187,7 +166,7 @@ describe('buildNeedsAttentionRows', () => {
       makeCase({ id: 1, serviceDeadlineBasisDate: '2026-01-01' }), // service, old
       makeCase({ id: 2, serviceDeadlineBasisDate: '2026-05-01' }), // service, newer
     ]
-    const rows = buildNeedsAttentionRows(cases, [], [], [], 14, 5, 7, NOW)
+    const rows = buildNeedsAttentionRows(cases, [], [], 14, 7, NOW)
     expect(rows[0].caseId).toBe(1)
     expect(rows[1].caseId).toBe(2)
   })
@@ -198,7 +177,7 @@ describe('buildNeedsAttentionRows', () => {
       makeCase({ id: 2, serviceDeadlineBasisDate: '2026-01-01' }),
     ]
     const milestones = [makeMilestone({ caseId: 1, markedAt: '2026-07-01T00:00:00Z' })]
-    const rows = buildNeedsAttentionRows(cases, [], milestones, [], 14, 5, 7, NOW)
+    const rows = buildNeedsAttentionRows(cases, milestones, [], 14, 7, NOW)
     expect(rows[0].ruleType).toBe('preFilingStall')
     expect(rows[0].caseId).toBe(1)
   })

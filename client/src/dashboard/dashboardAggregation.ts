@@ -1,8 +1,6 @@
-// Manager/Administrator Dashboard Milestone 5, part 2 of 2 (By Attorney / By Job / Needs Attention).
-// Pure, exported computation helpers shared by ByAttorneyTab.tsx and ByJobTab.tsx - kept separate
-// from either component file so neither tab ends up as the "original" copy the other reimplements
-// from, matching this feature's existing precedent of exporting pure math for unit testing (see
-// SettlementAuthoritySection.tsx's daysPending / settlementAuthorityDelta).
+// Manager/Administrator Dashboard Milestone 5, part 2 of 2 (By Attorney). Pure, exported computation
+// helpers used by ByAttorneyTab.tsx - kept separate from the component file, matching this feature's
+// existing precedent of exporting pure math for unit testing.
 
 import type { CaseRecord, Hearing } from '../App'
 
@@ -76,9 +74,7 @@ export function nextHardDate(cases: CaseRecord[], allHearings: Hearing[]): NextH
   return best
 }
 
-// Local formatter matching SettlementAuthoritySection.tsx's own private formatCurrency (a null
-// amount renders as "—", not "$0.00" or "Not set") - kept as its own copy per that file's own
-// precedent of not sharing this tiny formatter across dashboard files.
+// Local formatter: a null amount renders as "—", not "$0.00" or "Not set".
 export function formatCurrencyOrDash(value?: number | null): string {
   if (value == null) return '—'
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

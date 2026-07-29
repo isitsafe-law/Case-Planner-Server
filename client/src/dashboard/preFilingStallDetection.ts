@@ -17,8 +17,8 @@ export type PreFilingStallInfo = {
 }
 
 // Whole days elapsed from an ISO timestamp to `now` (default: actual now) - same floor-not-round,
-// never-negative convention as SettlementAuthoritySection.tsx's daysPending/NeedsAttentionTab.tsx's
-// daysSince, generalized here to a third basis (milestone markedAt / review note createdAt).
+// never-negative convention as NeedsAttentionTab.tsx's daysSince, generalized here to a different
+// basis (milestone markedAt / review note createdAt).
 function daysSince(dateStr: string, now: Date): number {
   const diffMs = now.getTime() - new Date(dateStr).getTime()
   return Math.max(0, Math.floor(diffMs / 86_400_000))

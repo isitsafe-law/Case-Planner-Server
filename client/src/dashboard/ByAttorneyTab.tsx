@@ -7,7 +7,6 @@ import { EmptyState } from './EmptyState'
 import { needsAttention } from './ManagerDashboard'
 import { nextHardDate, statusDistribution, type NextHardDate, type StatusCount } from './dashboardAggregation'
 import { StatusDistributionBar, StatusDistributionLegend } from './StatusDistributionBar'
-import type { SettlementAuthorityRequestRecord } from './types'
 
 // Note: this tab deliberately does not use ManagerDashboard.tsx's exported isOpenForDivision - the
 // "tract counts by status" bar and every other total here intentionally span all six caseStatus
@@ -21,27 +20,17 @@ export type AttorneyRow = {
   totalTracts: number
   nextHard: NextHardDate | null
   needsAttentionCount: number
-  pendingApprovalsCount: number
 }
 
 // Groups allCases by assignedAttorney (blank/missing -> "Unassigned", matching
 // IncomingPipelinePanel.tsx's own convention) and computes each column's value for every group.
 // Exported for unit testing independent of the rendered table.
-export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[], settlementAuthorityRequests: SettlementAuthorityRequestRecord[]): AttorneyRow[] {
+export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[]): AttorneyRow[] {
   const groups = new Map<string, CaseRecord[]>()
   for (const record of allCases) {
     const attorney = record.assignedAttorney || 'Unassigned'
     if (!groups.has(attorney)) groups.set(attorney, [])
     groups.get(attorney)!.push(record)
-  }
-
-  const attorneyByCaseId = new Map(allCases.map((record) => [record.id, record.assignedAttorney || 'Unassigned']))
-  const pendingByAttorney = new Map<string, number>()
-  for (const request of settlementAuthorityRequests) {
-    if (request.status !== 'Pending') continue
-    const attorney = attorneyByCaseId.get(request.caseId)
-    if (!attorney) continue
-    pendingByAttorney.set(attorney, (pendingByAttorney.get(attorney) || 0) + 1)
   }
 
   return Array.from(groups.entries()).map(([attorney, cases]) => ({
@@ -51,11 +40,10 @@ export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[], s
     totalTracts: cases.length,
     nextHard: nextHardDate(cases, hearings),
     needsAttentionCount: cases.filter(needsAttention).length,
-    pendingApprovalsCount: pendingByAttorney.get(attorney) || 0,
   }))
 }
 
-type AttorneySortColumn = 'attorney' | 'tracts' | 'nextHardDate' | 'needsAttention' | 'pendingApprovals'
+type AttorneySortColumn = 'attorney' | 'tracts' | 'nextHardDate' | 'needsAttention'
 
 // Sortable on every column per spec. The stacked-bar "tract counts by status" column has no single
 // obvious sort key of its own, so it sorts by total tract count (a judgment call, documented here
@@ -71,8 +59,6 @@ export function sortAttorneyRows(rows: AttorneyRow[], column: AttorneySortColumn
         return dir * (a.totalTracts - b.totalTracts)
       case 'needsAttention':
         return dir * (a.needsAttentionCount - b.needsAttentionCount)
-      case 'pendingApprovals':
-        return dir * (a.pendingApprovalsCount - b.pendingApprovalsCount)
       case 'nextHardDate': {
         if (!a.nextHard && !b.nextHard) return 0
         if (!a.nextHard) return 1
@@ -90,25 +76,22 @@ const COLUMNS: { key: AttorneySortColumn; label: string }[] = [
   { key: 'tracts', label: 'Tract Counts by Status' },
   { key: 'nextHardDate', label: 'Next Hard Date' },
   { key: 'needsAttention', label: 'Needs Attention' },
-  { key: 'pendingApprovals', label: 'Pending Approvals' },
 ]
 
 export function ByAttorneyTab({
   allCases,
   hearings,
-  settlementAuthorityRequests,
   onOpenCase,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
-  settlementAuthorityRequests: SettlementAuthorityRequestRecord[]
   onOpenCase: (caseId: number) => void
 }) {
   const [sortColumn, setSortColumn] = useState<AttorneySortColumn>('attorney')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const rows = useMemo(() => buildAttorneyRows(allCases, hearings, settlementAuthorityRequests), [allCases, hearings, settlementAuthorityRequests])
+  const rows = useMemo(() => buildAttorneyRows(allCases, hearings), [allCases, hearings])
   const sortedRows = useMemo(() => sortAttorneyRows(rows, sortColumn, sortDirection), [rows, sortColumn, sortDirection])
 
   function toggleSort(column: AttorneySortColumn) {
@@ -138,7 +121,6 @@ export function ByAttorneyTab({
         'Next Hard Date': row.nextHard ? formatDate(row.nextHard.date) : '',
         'Next Hard Date Label': row.nextHard?.label || '',
         'Needs Attention Count': row.needsAttentionCount,
-        'Pending Approvals Count': row.pendingApprovalsCount,
       }
     })
     downloadCsv(`By_Attorney_${new Date().toISOString().slice(0, 10)}.csv`, csvRows)
@@ -187,7 +169,6 @@ export function ByAttorneyTab({
                     <td><StatusDistributionBar counts={row.distribution} /></td>
                     <td>{row.nextHard ? <>{formatDate(row.nextHard.date)}<div className="subtle-text">{row.nextHard.label}</div></> : '—'}</td>
                     <td>{row.needsAttentionCount}</td>
-                    <td>{row.pendingApprovalsCount}</td>
                   </tr>
                   {isExpanded && (
                     <tr>

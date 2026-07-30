@@ -60,12 +60,10 @@ export function ManagerDashboard({
   const eventsNext30 = useMemo(() => countEventsInWindow(allCases, hearings, 30), [allCases, hearings])
   const needsAttentionCount = useMemo(() => allCases.filter(needsAttention).length, [allCases])
   const pipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [allCases])
-  const unassignedPipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline' && !record.assignedAttorney).length, [allCases])
   const openCases = useMemo(() => allCases.filter(isOpenForDivision), [allCases])
   const totalOpenCount = openCases.length
   const openPipelineCount = useMemo(() => openCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [openCases])
   const openFiledCount = totalOpenCount - openPipelineCount
-  const openUnassignedCount = useMemo(() => openCases.filter((record) => !record.assignedAttorney).length, [openCases])
   const openNeedsAttentionCount = useMemo(() => openCases.filter(needsAttention).length, [openCases])
 
   function goToCalendar(nextHorizon?: CalendarHorizon) {
@@ -77,7 +75,7 @@ export function ManagerDashboard({
     <main className="page">
       <div className="dash-hd">
         <h2>Division Overview</h2>
-        <span className="dash-date">A 30,000-foot view across every tract in the division. Local SQLite preview; manager-only enforcement begins with Entra.</span>
+        <span className="dash-date">Testing view pending Microsoft Entra ID integration.</span>
       </div>
 
       <div className="ui-tiles" style={{ marginBottom: '1rem', flexWrap: 'wrap' }}>
@@ -101,11 +99,10 @@ export function ManagerDashboard({
           onClick={() => setActiveTab('needsAttention')}
         />
         <MetricTile label="Tracts in Pipeline" value={pipelineCount} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
-        <MetricTile label="Unassigned Pipeline" value={unassignedPipelineCount} tone={unassignedPipelineCount > 0 ? 'warn' : 'default'} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
         <MetricTile label="Open tracts · division" value={totalOpenCount} />
       </div>
       <div className="helper-text management-workload-summary" aria-label="Open tract workload summary">
-        {openPipelineCount} pipeline · {openFiledCount} filed · {openUnassignedCount} unassigned · {openNeedsAttentionCount} need attention
+        {openPipelineCount} pipeline · {openFiledCount} filed · {openNeedsAttentionCount} need attention
       </div>
 
       <div className="segmented-tabs">

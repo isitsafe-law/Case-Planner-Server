@@ -1181,7 +1181,6 @@ public sealed partial class CasePlannerRepository
         var checklist = await GetChecklistItemsAsync(null);
         var discovery = await GetDiscoveryItemsAsync(null);
         var service = await GetServiceQueueAsync(allowedCaseIds);
-        var hearings = await GetHearingsAsync(null);
         var rows = new List<UpcomingWorkItemRecord>();
 
         bool Eligible(long caseId, string itemType)
@@ -1207,8 +1206,6 @@ public sealed partial class CasePlannerRepository
         foreach (var item in deadlines.Where(i => i.Status is not ("Done" or "Complete"))) Add($"deadline-{item.Id}", item.CaseId, item.Title, "deadline", item.DueDate, "deadlines");
         foreach (var item in discovery.Where(i => !i.Status.Contains("complete", StringComparison.OrdinalIgnoreCase) && !i.Status.Contains("cancel", StringComparison.OrdinalIgnoreCase))) Add($"discovery-{item.Id}", item.CaseId, item.RequestTitle ?? $"{item.Direction} {item.DiscoveryType}", "discovery", item.FollowUpDate ?? item.DueDate, "discovery");
         foreach (var item in service.Where(i => !i.ServicePerfected)) Add($"service-{item.CaseId}", item.CaseId, item.ServiceDeadline120 is null ? "Complete service record" : "Perfect service", "service", item.ServiceDeadline120 ?? item.FilingDate, "details");
-        foreach (var item in hearings) Add($"hearing-{item.Id}", item.CaseId, item.Title, "hearing", item.HearingDate, "hearings");
-
         return rows.OrderBy(item => item.IsOverdue ? 0 : item.DueDate is null ? 5 : item.Urgency == "Due Today" ? 1 : item.Urgency == "Next 7 Days" ? 2 : item.Urgency == "Next 14 Days" ? 3 : 4)
             .ThenBy(item => item.DueDate ?? "9999-12-31")
             .ThenBy(item => item.CaseName)

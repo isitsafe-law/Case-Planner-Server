@@ -113,7 +113,6 @@ public sealed class SqlServerWorkspaceQuery(
         foreach(var x in (await deadlines.GetAsync(null,token)).Where(x=>x.Status is not("Done" or "Complete")))Add($"deadline-{x.Id}",x.CaseId,x.Title,"deadline",x.DueDate,"deadlines");
         foreach(var x in (await discovery.GetAsync(null,token)).Where(x=>!x.Status.Contains("complete",StringComparison.OrdinalIgnoreCase)&&!x.Status.Contains("cancel",StringComparison.OrdinalIgnoreCase)))Add($"discovery-{x.Id}",x.CaseId,x.RequestTitle??$"{x.Direction} {x.DiscoveryType}","discovery",x.FollowUpDate??x.DueDate,"discovery");
         foreach(var x in await GetServiceQueueAsync(visibleCaseIds,token))if(!x.ServicePerfected)Add($"service-{x.CaseId}",x.CaseId,x.ServiceDeadline120 is null?"Complete service record":"Perfect service","service",x.ServiceDeadline120??x.FilingDate,"details");
-        foreach(var x in await hearings.GetAsync(null,token))Add($"hearing-{x.Id}",x.CaseId,x.Title,"hearing",x.HearingDate,"hearings");
         return rows.OrderBy(x=>Date(x.DueDate)??DateOnly.MaxValue).ThenBy(x=>x.CaseName).Take(Math.Clamp(limit,1,200)).ToList();
     }
 

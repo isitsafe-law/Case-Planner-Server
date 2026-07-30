@@ -3,6 +3,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
+import { GlobalCalendarTab } from './dashboard/GlobalCalendarTab'
+import { CASE_EVENT_TYPES } from './eventTypes'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
 import { ActionQueueRow, type ActionQueueHandlers } from './dashboard/ActionQueueRow'
 import { DiscoveryControlPanel } from './dashboard/DiscoveryControlPanel'
@@ -36,7 +38,7 @@ import { formatDate, formatDateTime } from './ui/format'
 import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPanel'
 import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 
-type PageKey = 'dashboard' | 'managerDashboard' | 'cases' | 'queues' | 'reports' | 'settings'
+type PageKey = 'dashboard' | 'managerDashboard' | 'calendar' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'events' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
@@ -545,7 +547,7 @@ type CaseNote = {
   updatedAt: string
 }
 
-const eventTypes = ['Jury Trial', 'Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Other'] as const
+const eventTypes = CASE_EVENT_TYPES
 
 export type Hearing = {
   id: number
@@ -917,7 +919,7 @@ function caseRoleLabel(role: string): string {
   return role === 'LegalAssistant' ? 'Legal Assistant' : role
 }
 
-type UpcomingWorkType = 'task' | 'deadline' | 'discovery' | 'service' | 'hearing'
+type UpcomingWorkType = 'task' | 'deadline' | 'discovery' | 'service'
 type UpcomingWorkItem = {
   key: string
   caseId: number
@@ -1122,6 +1124,7 @@ type ApiError = {
 const navItems: { key: PageKey; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'managerDashboard', label: 'Division Overview' },
+  { key: 'calendar', label: 'Calendar' },
   { key: 'cases', label: 'Cases' },
   { key: 'queues', label: 'Work Queues' },
   { key: 'reports', label: 'Reports' },
@@ -2309,7 +2312,7 @@ function App() {
   // Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections, not wired into the work queues,
   // the per-case Handoff-history dialog, or anything else.
   const [pipelineHandoffs, setPipelineHandoffs] = useState<PipelineHandoffRecord[]>([])
-  const [workQueueFilter, setWorkQueueFilter] = useState<'all' | 'service' | 'deadlines' | 'checklist' | 'discovery' | 'hearings'>('all')
+  const [workQueueFilter, setWorkQueueFilter] = useState<'all' | 'service' | 'deadlines' | 'checklist' | 'discovery'>('all')
   const [workQueueUrgency, setWorkQueueUrgency] = useState('All Open')
   const [serverUpcomingWorkItems, setServerUpcomingWorkItems] = useState<UpcomingWorkItem[]>([])
   const [serverUpcomingWorkLoaded, setServerUpcomingWorkLoaded] = useState(false)
@@ -2542,10 +2545,6 @@ function App() {
   const [importExcelFileName, setImportExcelFileName] = useState('No file selected.')
   const [selectedTagId, setSelectedTagId] = useState(0)
   const [caseDraft, setCaseDraft] = useState<CaseRecord>(emptyCase())
-  // Set when saveCase is blocked on the Director signature milestone (Manager Dashboard sign-off
-  // consolidation, item 3) - pre-expands PreFilingMilestonesPanel's override control so "continue
-  // anyway" is immediately visible rather than a separate toggle the user has to find first.
-  const [filingGateBlocked, setFilingGateBlocked] = useState(false)
   const [deadlineDraft, setDeadlineDraft] = useState<DeadlineItem>(emptyDeadline())
   const [checklistDraft, setChecklistDraft] = useState<ChecklistItem>(emptyChecklist())
   const [discoveryDraft, setDiscoveryDraft] = useState<DiscoveryItem>(emptyDiscovery())
@@ -3396,7 +3395,6 @@ function App() {
     clearModalFeedback()
     if (kind === 'case') {
       setCaseDraft(workspace?.case ?? emptyCase())
-      setFilingGateBlocked(false)
     } else if (kind === 'deadline') {
       setDeadlineDraft(emptyDeadline(selectedCaseId ?? caseDraft.id))
     } else if (kind === 'checklist') {
@@ -3854,7 +3852,6 @@ function App() {
   function startEditCase() {
     if (!selectedCase.id) return
     setCaseDraft(selectedCase)
-    setFilingGateBlocked(false)
     openModal('case', 'edit')
   }
 
@@ -3873,6 +3870,13 @@ function App() {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
     setHearingDraft(emptyHearing(caseId))
+    openModal('event', 'create')
+  }
+
+  function startNewJuryTrial() {
+    const caseId = selectedCaseId ?? selectedCase.id
+    if (!caseId) return
+    setHearingDraft({ ...emptyHearing(caseId), eventType: 'Jury Trial', title: 'Jury Trial' })
     openModal('event', 'create')
   }
 
@@ -4764,7 +4768,6 @@ function App() {
     try {
       setErrorMessage('')
       clearModalFeedback()
-      setFilingGateBlocked(false)
       const saved = await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(payload) })
       if (previous && saved.caseStatus === 'Pipeline') {
         const changes: string[] = []
@@ -4801,16 +4804,6 @@ function App() {
       const text = error instanceof Error ? error.message : 'Unable to save case.'
       setErrorMessage(text)
       setModalFeedback(text)
-      // The pre-filing gate's error names the control that resolves it (Director Signature
-      // Received milestone) but a generic top-of-page banner doesn't show the user where that
-      // control lives - scroll them straight to it and pre-expand the "continue anyway" reason
-      // field, turning this into a one-click-each-path soft forcing-prompt (Manager Dashboard
-      // sign-off consolidation, item 3) rather than a dead-end error. Loose substring match (not
-      // the exact sentence) so this survives minor wording tweaks to the gate's message.
-      if (text.includes('Director signature milestone')) {
-        scrollToCaseEditorSection('preFilingSignOff')
-        setFilingGateBlocked(true)
-      }
     }
   }
 
@@ -6450,7 +6443,6 @@ function App() {
   const sortedDeadlineQueue = useMemo(() => sortQueueItems(queueDeadlines.filter((item) => !isDeadlineDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueDeadlines, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedChecklistQueue = useMemo(() => sortQueueItems(queueChecklist.filter((item) => !isChecklistDone(item) && matchesUrgency(item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.task)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.dueDate), [queueChecklist, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   const sortedDiscoveryQueue = useMemo(() => sortQueueItems(queueDiscovery.filter((item) => item.status !== 'Complete' && matchesUrgency(item.followUpDate || item.dueDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.requestTitle || item.discoveryType)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.followUpDate || item.dueDate), [queueDiscovery, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
-  const sortedHearingQueue = useMemo(() => sortQueueItems(queueHearings.filter((item) => !isEventPastOrResolved(item) && matchesUrgency(item.hearingDate, workQueueUrgency) && queueSearchMatches(item.caseId, item.title)), workQueueSort, (item) => queueCaseName(item.caseId), (item) => item.hearingDate), [queueHearings, workQueueUrgency, workQueueSort, allCases, workQueueSearch])
   // Raw eligible-work pipeline (all types, no urgency/limit narrowing) - the dashboard's "Due in the
   // next 7 days" panel and the Work Queue page both read from this; the Work Queue page owns its own
   // type/urgency/search filtering separately (workQueueFilter etc.), so this stays unfiltered here.
@@ -6469,7 +6461,6 @@ function App() {
     for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId, 'deadline')) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'work' })
     for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId, 'discovery')) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
     for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId, 'service')) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'servicePublication' })
-    for (const item of queueHearings) if (eligible(item.caseId, 'hearing')) items.push({ key: `hearing-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'hearing', dueDate: item.hearingDate, source: item, tab: 'work' })
     return items.sort((a, b) => {
       const dueA = a.dueDate || '9999-12-31'
       const dueB = b.dueDate || '9999-12-31'
@@ -6477,7 +6468,7 @@ function App() {
       const urgencyB = !b.dueDate ? 5 : dueB < today ? 0 : dueB === today ? 1 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 7 ? 2 : DateOnlyFromString(dueB)! - DateOnlyFromString(today)! <= 14 ? 3 : 4
       return urgencyA - urgencyB || dueA.localeCompare(dueB) || a.caseName.localeCompare(b.caseName)
     })
-  }, [queueChecklist, queueDeadlines, queueDiscovery, queueService, queueHearings, allCases])
+  }, [queueChecklist, queueDeadlines, queueDiscovery, queueService, allCases])
   useEffect(() => {
     let cancelled = false
     // Fixed "all open" fetch - the dashboard no longer exposes type/urgency/limit controls, so the
@@ -6508,9 +6499,8 @@ function App() {
     const deadlines = sortedDeadlineQueue.length
     const tasks = sortedChecklistQueue.length
     const discovery = sortedDiscoveryQueue.length
-    const hearings = sortedHearingQueue.length
-    return workQueueFilter === 'service' ? service : workQueueFilter === 'deadlines' ? deadlines : workQueueFilter === 'checklist' ? tasks : workQueueFilter === 'discovery' ? discovery : workQueueFilter === 'hearings' ? hearings : service + deadlines + tasks + discovery + hearings
-  }, [sortedServiceQueue, sortedDeadlineQueue, sortedChecklistQueue, sortedDiscoveryQueue, sortedHearingQueue, workQueueFilter])
+    return workQueueFilter === 'service' ? service : workQueueFilter === 'deadlines' ? deadlines : workQueueFilter === 'checklist' ? tasks : workQueueFilter === 'discovery' ? discovery : service + deadlines + tasks + discovery
+  }, [sortedServiceQueue, sortedDeadlineQueue, sortedChecklistQueue, sortedDiscoveryQueue, workQueueFilter])
   const docketCases = useMemo(() => {
     if (!docketMetricFilter) return []
     return allCases.filter((c) => {
@@ -6692,37 +6682,32 @@ function App() {
     const deadlineRows: QueueRow[] = sortedDeadlineQueue.map((item) => ({ kind: 'deadline', key: `deadline-${item.id}`, item }))
     const taskRows: QueueRow[] = sortedChecklistQueue.map((item) => ({ kind: 'task', key: `task-${item.id}`, item }))
     const discoveryRows: QueueRow[] = sortedDiscoveryQueue.map((item) => ({ kind: 'discovery', key: `discovery-${item.id}`, item }))
-    const eventRows: QueueRow[] = sortedHearingQueue.map((item) => ({ kind: 'event', key: `event-${item.id}`, item }))
-
     const facetRows: QueueRow[] =
       workQueueFilter === 'service' ? serviceRows
       : workQueueFilter === 'deadlines' ? deadlineRows
       : workQueueFilter === 'checklist' ? taskRows
       : workQueueFilter === 'discovery' ? discoveryRows
-      : workQueueFilter === 'hearings' ? eventRows
-      : sortQueueItems([...serviceRows, ...deadlineRows, ...taskRows, ...discoveryRows, ...eventRows], workQueueSort, queueRowCaseName, queueRowDue)
+      : sortQueueItems([...serviceRows, ...deadlineRows, ...taskRows, ...discoveryRows], workQueueSort, queueRowCaseName, queueRowDue)
 
     const totalDeadlinesOpen = queueDeadlines.filter((item) => !isDeadlineDone(item)).length
     const totalTasksOpen = queueChecklist.filter((item) => !isChecklistDone(item)).length
-    const allOpenItemsCount = queueService.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length + queueHearings.length
+    const allOpenItemsCount = queueService.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length
 
     const totalForFacet =
       workQueueFilter === 'service' ? filteredServiceQueue.length
       : workQueueFilter === 'deadlines' ? totalDeadlinesOpen
       : workQueueFilter === 'checklist' ? totalTasksOpen
       : workQueueFilter === 'discovery' ? queueDiscovery.length
-      : workQueueFilter === 'hearings' ? queueHearings.length
-      : filteredServiceQueue.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length + queueHearings.length
+      : filteredServiceQueue.length + totalDeadlinesOpen + totalTasksOpen + queueDiscovery.length
 
     const clearFilters = () => { setWorkQueueUrgency('All Open'); setWorkQueueFilter('all'); setWorkQueueSearch(''); setServiceConditionFilter('all') }
 
     const typeFacets: { key: typeof workQueueFilter; label: string; count: number }[] = [
-      { key: 'all', label: 'All', count: sortedServiceQueue.length + sortedDeadlineQueue.length + sortedChecklistQueue.length + sortedDiscoveryQueue.length + sortedHearingQueue.length },
+      { key: 'all', label: 'All', count: sortedServiceQueue.length + sortedDeadlineQueue.length + sortedChecklistQueue.length + sortedDiscoveryQueue.length },
       { key: 'service', label: 'Service', count: sortedServiceQueue.length },
       { key: 'deadlines', label: 'Deadlines', count: sortedDeadlineQueue.length },
       { key: 'checklist', label: 'Tasks', count: sortedChecklistQueue.length },
       { key: 'discovery', label: 'Discovery', count: sortedDiscoveryQueue.length },
-      { key: 'hearings', label: 'Events', count: sortedHearingQueue.length },
     ]
     const serviceConditionChips: { key: typeof serviceConditionFilter; label: string }[] = [
       { key: 'all', label: 'All conditions' },
@@ -7383,11 +7368,7 @@ function App() {
                 <div className="prefiling-workflow-review">
                   <PreFilingMilestonesPanel
                     caseId={selectedCase.id}
-                    filingGateOverrideReason={caseDraft.filingGateOverrideReason}
-                    onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
-                    autoOpenOverride={filingGateBlocked}
                     visibleMilestones={['PleadingsPackageSent', 'ChiefCounselSignaturesReceived']}
-                    showOverride={false}
                     onMutated={async () => { await loadInitial(); await refreshCaseActivityLog(selectedCase.id) }}
                   />
                   <h5 className="form-section-heading top-gap">Review Notes</h5>
@@ -8641,22 +8622,25 @@ function App() {
   }
 
   function renderEventsTab() {
-    const events = [...(workspace?.hearings ?? [])].sort((a, b) => (a.hearingDate || '9999-12-31').localeCompare(b.hearingDate || '9999-12-31'))
+    const allEvents = workspace?.hearings ?? []
+    const trialEvents = allEvents.filter((event) => event.eventType === 'Jury Trial')
+    const trial = [...trialEvents].filter((event) => !isEventPastOrResolved(event)).sort((a, b) => (a.hearingDate || '9999-12-31').localeCompare(b.hearingDate || '9999-12-31'))[0]
+    const upcoming = allEvents.filter((event) => !isEventPastOrResolved(event) && event.id !== trial?.id).sort((a, b) => (a.hearingDate || '9999-12-31').localeCompare(b.hearingDate || '9999-12-31'))
+    const past = allEvents.filter((event) => isEventPastOrResolved(event)).sort((a, b) => (b.hearingDate || '').localeCompare(a.hearingDate || ''))
+    const renderEvent = (event: Hearing) => <tr key={event.id}>
+      <td><strong>{event.eventType || 'Other'}</strong><div className="ui-sub">{event.title}</div>{event.description && <div className="ui-sub">{event.description}</div>}</td>
+      <td className="ui-data">{event.endDate && event.endDate !== event.hearingDate ? `${displayDate(event.hearingDate)} – ${displayDate(event.endDate)}` : displayDate(event.hearingDate)}{event.startTime ? ` · ${event.startTime}` : ''}</td>
+      <td>{event.location || '—'}</td>
+      <td><div className="button-row compact-actions"><button onClick={() => startEditHearing(event)}>Edit</button><button onClick={() => void deleteHearing(event)}>Delete</button></div></td>
+    </tr>
     return (
       <div className="workspace-sections">
-        <Panel title="Events" headerAction={<Btn size="sm" onClick={startNewHearing}>Add Event</Btn>}>
-          <p className="helper-text">Trials, hearings, depositions, mediation, meetings, inspections, and other scheduled proceedings.</p>
-          {events.length === 0 ? <div className="compact-empty-state"><p>No events recorded yet.</p><Btn variant="primary" onClick={startNewHearing}>Add Event</Btn></div> : (
-            <div className="table-wrap"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Type</th><th>Date</th><th>Location</th><th>Actions</th></tr></thead><tbody>
-              {events.map((event) => <tr key={event.id}>
-                <td><strong>{event.title}</strong>{event.description && <div className="ui-sub">{event.description}</div>}</td>
-                <td>{event.eventType || 'Hearing'}</td>
-                <td className="ui-data">{event.endDate && event.endDate !== event.hearingDate ? `${displayDate(event.hearingDate)} – ${displayDate(event.endDate)}` : displayDate(event.hearingDate)}{event.startTime ? ` · ${event.startTime}` : ''}</td>
-                <td>{event.location || '—'}</td>
-                <td><div className="button-row compact-actions"><button onClick={() => startEditHearing(event)}>Edit</button><button onClick={() => void deleteHearing(event)}>Delete</button></div></td>
-              </tr>)}
-            </tbody></table></div>
-          )}
+        <Panel title="Events" headerAction={<div className="button-row compact-actions"><Btn size="sm" variant="primary" onClick={startNewJuryTrial}>Add Jury Trial</Btn><Btn size="sm" onClick={startNewHearing}>Add Event</Btn></div>}>
+          <p className="helper-text">Case proceedings and scheduled events. Move an event by editing its date; delete canceled events.</p>
+          {trial ? <div className="prefiling-overview-card top-gap-small"><div><span className="eyebrow">Jury Trial</span><h3>{trial.endDate && trial.endDate !== trial.hearingDate ? `${displayDate(trial.hearingDate)} – ${displayDate(trial.endDate)}` : displayDate(trial.hearingDate)}</h3><p>{trial.location || 'Location not set'}{trial.description ? ` · ${trial.description}` : ''}</p></div><div className="button-row compact-actions"><button onClick={() => startEditHearing(trial)}>Edit Trial</button><button onClick={() => void deleteHearing(trial)}>Delete</button></div></div> : <div className="compact-empty-state top-gap-small"><p>No jury trial scheduled.</p><Btn size="sm" variant="primary" onClick={startNewJuryTrial}>Add Jury Trial</Btn></div>}
+          <h3 className="top-gap">Upcoming Events</h3>
+          {upcoming.length === 0 ? <p className="helper-text">No other upcoming events.</p> : <div className="table-wrap"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Date</th><th>Location</th><th>Actions</th></tr></thead><tbody>{upcoming.map(renderEvent)}</tbody></table></div>}
+          <details className="top-gap-small"><summary>Past Events ({past.length})</summary>{past.length === 0 ? <p className="helper-text top-gap-small">No past events.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Date</th><th>Location</th><th>Actions</th></tr></thead><tbody>{past.map(renderEvent)}</tbody></table></div>}</details>
         </Panel>
       </div>
     )
@@ -9586,9 +9570,6 @@ function App() {
                 <h4 className="form-section-heading">Pre-Filing Sign-Off</h4>
                 <PreFilingMilestonesPanel
                   caseId={selectedCase.id}
-                  filingGateOverrideReason={caseDraft.filingGateOverrideReason}
-                  onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
-                  autoOpenOverride={filingGateBlocked}
                   // Deliberately loadInitial() + refreshCaseActivityLog(), NOT refreshAll(). This
                   // panel lives inside the still-open case editor, and refreshAll's loadWorkspace
                   // call does setCaseDraft(data.case) as a side effect - confirmed live that this
@@ -9979,16 +9960,16 @@ function App() {
 
           {activeModal === 'event' && (
             <form className="form-grid modal-form" onSubmit={saveHearing} noValidate>
-              <label>
+              {hearingDraft.eventType === 'Jury Trial' ? <div className="field"><span className="field-label">Type</span><strong>Jury Trial</strong></div> : <label>
                 <span>Type</span>
                 <select
-                  value={(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') ? hearingDraft.eventType || 'Hearing' : '__custom'}
+                  value={(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') && hearingDraft.eventType !== 'Jury Trial' ? hearingDraft.eventType ?? '' : '__custom'}
                   onChange={(event) => setHearingDraft({ ...hearingDraft, eventType: event.target.value === '__custom' ? '' : event.target.value })}
                 >
-                  {eventTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                  {eventTypes.filter((type) => type !== 'Jury Trial').map((type) => <option key={type} value={type}>{type}</option>)}
                   <option value="__custom">Custom…</option>
                 </select>
-              </label>
+              </label>}
               {!(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') && (
                 <label><span>Custom Type</span><input value={hearingDraft.eventType || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, eventType: event.target.value })} placeholder="e.g. Site Visit" /></label>
               )}
@@ -10455,7 +10436,7 @@ function App() {
                         <UiEmptyState colSpan={5} title="Nothing due in the next 7 days" hint="Deadlines, tasks, discovery, service, and hearings due soon will appear here." />
                       ) : dashboardDueThisWeekItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
-                          <td><TypeChip kind={item.type === 'hearing' ? 'event' : item.type} /></td>
+                          <td><TypeChip kind={item.type} /></td>
                           <td>{item.title}</td>
                           <td className="ui-sub">{item.caseName}</td>
                           <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}>{item.dueDate ? displayDate(item.dueDate) : '—'}</td>
@@ -10489,6 +10470,15 @@ function App() {
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}
+          onOpenCase={(caseId) => openCase(caseId, 'overview')}
+        />
+      )}
+
+      {page === 'calendar' && (
+        <GlobalCalendarTab
+          allCases={allCases}
+          hearings={queueHearings}
+          currentUserName={currentUser?.displayName}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
         />
       )}

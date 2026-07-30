@@ -59,20 +59,18 @@ type MarkDraft = { occurredDate: string; note: string }
 
 export function PreFilingMilestonesPanel({
   caseId,
-  filingGateOverrideReason,
-  onOverrideReasonChange,
   onMutated,
-  autoOpenOverride,
   visibleMilestones,
-  showOverride = true,
+  onOverrideReasonChange: _onOverrideReasonChange,
+  filingGateOverrideReason: _filingGateOverrideReason,
+  autoOpenOverride: _autoOpenOverride,
 }: {
   caseId: number
-  filingGateOverrideReason?: string
-  onOverrideReasonChange: (value: string | undefined) => void
   onMutated: () => Promise<void>
-  autoOpenOverride?: boolean
   visibleMilestones?: PreFilingMilestone[]
-  showOverride?: boolean
+  onOverrideReasonChange?: (value: string | undefined) => void
+  filingGateOverrideReason?: string
+  autoOpenOverride?: boolean
 }) {
   const [milestones, setMilestones] = useState<PreFilingMilestoneRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -82,15 +80,6 @@ export function PreFilingMilestonesPanel({
   const [unmarkOpenFor, setUnmarkOpenFor] = useState<string | null>(null)
   const [unmarkReason, setUnmarkReason] = useState('')
   const [busyMilestone, setBusyMilestone] = useState<string | null>(null)
-  const [overrideOpen, setOverrideOpen] = useState(Boolean(filingGateOverrideReason))
-
-  // A blocked save (App.tsx's saveCase) sets autoOpenOverride so the "continue anyway" path is
-  // immediately visible rather than requiring the user to first find and click a separate toggle -
-  // the soft-forcing-prompt behavior Manager Dashboard sign-off consolidation item 3 calls for.
-  useEffect(() => {
-    if (autoOpenOverride) setOverrideOpen(true)
-  }, [autoOpenOverride])
-
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -105,7 +94,7 @@ export function PreFilingMilestonesPanel({
         if (!cancelled) setLoading(false)
       }
     }
-    // Reset per-case UI state (an open Unmark form, a half-typed override reason toggle) so
+    // Reset per-case UI state (including any open Unmark form) so
     // switching cases while this panel is mounted never leaks one case's in-progress action onto
     // another's milestones.
     setUnmarkOpenFor(null)
@@ -298,32 +287,6 @@ export function PreFilingMilestonesPanel({
         </div>
       )}
 
-      {showOverride && <div className="prefiling-override top-gap-small">
-        {!overrideOpen ? (
-          <button type="button" className="link-button" onClick={() => setOverrideOpen(true)}>
-            Continue Without Marking…
-          </button>
-        ) : (
-          <div>
-            <label>
-              <span>Reason for continuing without the Director Signature Received milestone (required)</span>
-              <textarea
-                rows={2}
-                value={filingGateOverrideReason || ''}
-                onChange={(event) => onOverrideReasonChange(event.currentTarget.value)}
-                placeholder="Why is this case leaving Pipeline without the Director signature milestone?"
-              />
-            </label>
-            <button
-              type="button"
-              className="link-button top-gap-small"
-              onClick={() => { setOverrideOpen(false); onOverrideReasonChange(undefined) }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-      </div>}
     </div>
   )
 }

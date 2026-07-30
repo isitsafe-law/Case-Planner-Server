@@ -4,6 +4,7 @@ import { formatDate } from '../ui/format'
 import { EmptyState } from '../ui/EmptyState'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
+import { CASE_EVENT_TYPES } from '../eventTypes'
 
 export const CALENDAR_HORIZONS = [7, 30, 60, 90, 120, 180, 'all'] as const
 export type CalendarHorizon = typeof CALENDAR_HORIZONS[number]
@@ -11,7 +12,7 @@ export type CalendarHorizon = typeof CALENDAR_HORIZONS[number]
 // The synthetic event type for a case's trialDate/trialEndDate - never render generic "Trial" per
 // ARDOT terminology (see Complaint in Condemnation / Landowner Exceptions / etc. conventions
 // elsewhere in this app).
-export const JURY_TRIAL_EVENT_TYPE = 'Jury Trial on Just Compensation'
+export const JURY_TRIAL_EVENT_TYPE = 'Jury Trial'
 
 type CalendarEvent = {
   key: string
@@ -60,9 +61,10 @@ export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[],
   const hearingCount = hearings.filter((h) => {
     const start = toEpochDay(h.hearingDate)
     const end = toEpochDay(h.endDate || h.hearingDate)
-    return start != null && end != null && end >= today && start <= end
+    return start != null && end != null && end >= today && start <= today + days
   }).length
-  const trialCount = allCases.filter((c) => inWindow(toEpochDay(c.trialDate))).length
+  const recordedTrialCaseIds = new Set(hearings.filter((h) => h.eventType === JURY_TRIAL_EVENT_TYPE).map((h) => h.caseId))
+  const trialCount = allCases.filter((c) => !recordedTrialCaseIds.has(c.id) && inWindow(toEpochDay(c.trialDate))).length
   return hearingCount + trialCount
 }
 
@@ -91,6 +93,7 @@ export function ManagerCalendarTab({
   // display columns, plus a synthetic Jury Trial event per case with a trialDate in the window.
   const windowEvents = useMemo(() => {
     const events: CalendarEvent[] = []
+    const recordedTrialCaseIds = new Set(hearings.filter((hearing) => hearing.eventType === JURY_TRIAL_EVENT_TYPE).map((hearing) => hearing.caseId))
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
@@ -112,7 +115,7 @@ export function ManagerCalendarTab({
     }
     for (const record of allCases) {
       const day = toEpochDay(record.trialDate)
-      if (day == null || day < today || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
+      if (recordedTrialCaseIds.has(record.id) || day == null || day < today || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
       events.push({
         key: `trial-${record.id}`,
         caseId: record.id,
@@ -177,7 +180,7 @@ export function ManagerCalendarTab({
   const eventTypeOptions = useMemo(() => {
     const set = new Set<string>()
     windowEvents.forEach((event) => set.add(event.eventType))
-    set.add(JURY_TRIAL_EVENT_TYPE)
+    CASE_EVENT_TYPES.forEach((type) => set.add(type))
     return Array.from(set).sort()
   }, [windowEvents])
 

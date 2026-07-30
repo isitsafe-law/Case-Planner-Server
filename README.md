@@ -66,7 +66,11 @@ Close and Reopen are administrative actions inside Edit Case in the SQLite previ
 
 ## Management dashboard
 
-The Division Overview summarizes upcoming events, needs-attention cases, pipeline matters, unassigned pipeline matters, and open tracts across the management scope. Open tracts include pipeline and filed work and exclude resolved/closed, legacy closed/complete, and Triage cases. The open-tract display provides pipeline, filed, unassigned, and needs-attention context.
+The Division Overview summarizes upcoming events, needs-attention cases, pipeline matters, and open tracts across the management scope. Open tracts include pipeline and filed work and exclude resolved/closed, legacy closed/complete, and Triage cases. Unassigned pipeline cases remain available through the pipeline data-quality/reporting views but are not a separate Division Overview card.
+
+The top-level Calendar is the shared case-event view. It defaults to the signed-in attorney when Entra identity is available; SQLite preview mode provides an all-attorney view for testing. It supports 30/60/90/120/180-day and See All ranges, attorney scope, event-type filters, multi-day events, and links back to cases. Events are intentionally not Work Queue items; Work Queue contains tasks, deadlines, discovery, and service work. The manager calendar uses the same event catalog and permission-filtered event feed.
+
+Planned Work is priority level 4 in the attorney Action Queue. It is an observational bucket for open filed-case work that is appropriate to schedule or advance but is not an immediate deadline, attorney decision, discovery issue, or stale-momentum concern. It is not a second task list and does not create work by itself; the underlying case signal and review date remain the source of truth.
 
 The manager dashboard does not show a permanent Awaiting Triage card. Triage is surfaced conditionally in the attorney workflow only when triage cases exist.
 

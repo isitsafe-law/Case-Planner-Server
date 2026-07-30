@@ -170,3 +170,12 @@ Organization defaults now have a concurrency-protected SQL singleton initialized
 Before production pilot access, business owners should verify the attorney identity, bar number, phone,
 email, mailing address, division head, ROW section head, and Chief Legal Counsel values because these fields
 flow into generated legal documents.
+
+### Pipeline transition compatibility note
+
+The active pre-filing workflow uses the Pleadings Package Sent and Chief Counsel Signatures Received
+milestones. The former Director Signature Received milestone is retained only as legacy historical data and
+does not block a case from leaving Pipeline; there is intentionally no separate UI field for it. SQLite and
+SQL Server save paths must remain aligned on this behavior. Administrative Actions (Close/Reopen) is placed at
+the bottom of the Edit Case form and remains broadly available in the SQLite test build until Entra-based
+authorization is enabled.

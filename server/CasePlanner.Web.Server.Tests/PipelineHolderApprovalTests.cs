@@ -233,15 +233,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
             service.RecordAsync(c.Id, new RecordPipelineHolderApprovalRequest { HolderRole = "Filing Staff", Status = "Approved" }));
     }
 
-    // --- Milestone 2's Filing Approval gate on the case-status transition itself
-    // (PipelinePromotionGate.RequiresFilingApproval), exercised through
-    // CasePlannerRepository.SaveCaseAsync -> SaveCaseInternalAsync. RequiresFilingApproval's trigger
-    // condition is unchanged from Milestone 2 (still exercised by the two tests below, which don't
-    // depend on WHICH check basis blocks the save). Milestone 4 corrected what actually gates a
-    // Pipeline exit - it's no longer "Chief Counsel recorded an Approved decision in
-    // pipeline_holder_approvals" but "the Director Signature Received milestone is marked in
-    // case_prefiling_milestones" (PipelinePromotionGate.EnsureFilingReady) - see
-    // PreFilingMilestoneTests.cs for that coverage now. ---
+    // --- Pipeline exits do not require the removed Director Signature Received milestone. ---
 
     [Fact]
     public async Task SaveCaseAsync_StayingInPipeline_UnrelatedFieldEditsNeverTriggerTheGate()
@@ -281,7 +273,7 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SaveCaseAsync_AutoRecomputedCaseStatus_IsStillGatedEvenWhenIncomingCaseStatusIsBlank()
+    public async Task SaveCaseAsync_AutoRecomputedCaseStatus_IsNotBlockedByRemovedDirectorSignatureMilestone()
     {
         // The trickiest case: the incoming model's CaseStatus is left blank, which triggers
         // SaveCaseInternalAsync's existing auto-recompute block (MapConsolidatedCaseStatus) BEFORE
@@ -296,10 +288,9 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
         loaded.Stage = "Service";
         loaded.CaseNumber = "1CV-24-777";
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
-        Assert.Contains("Director signature", ex.Message);
+        await _fixture.Repository.SaveCaseAsync(loaded);
 
         var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Pipeline", reloaded.CaseStatus);
+        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
     }
 }

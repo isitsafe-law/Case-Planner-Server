@@ -9637,16 +9637,6 @@ function App() {
               </div>
             </section>
 
-            {modalMode !== 'create' && (
-              <section className="form-section administrative-actions">
-                <h4 className="form-section-heading">Administrative Actions</h4>
-                <p className="helper-text">Closing removes the case from ordinary open-work views but preserves tasks, deadlines, events, documents, notes, and audit history. Reopening restores it to active work.</p>
-                <button type="button" className="danger" onClick={() => void changeStatus(caseDraft.status === 'Closed' ? 'Active' : 'Closed')}>
-                  {caseDraft.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
-                </button>
-              </section>
-            )}
-
             {/* Placement decision: this is the ONLY instance of PreFilingMilestonesPanel in the
                 app (not duplicated on the read-only Overview tab). The Continue Without Marking
                 override control below rides on caseDraft/patchCaseDraft, which only exists inside this editor - a
@@ -9769,6 +9759,16 @@ function App() {
                 ) : <p className="top-gap-small">No issue tags assigned.</p>}
               </div>
             </section>
+
+            {modalMode !== 'create' && (
+              <section className="form-section administrative-actions">
+                <h4 className="form-section-heading">Administrative Actions</h4>
+                <p className="helper-text">Closing removes the case from ordinary open-work views but preserves tasks, deadlines, events, documents, notes, and audit history. Reopening restores it to active work.</p>
+                <button type="button" className="danger" onClick={() => void changeStatus(caseDraft.status === 'Closed' ? 'Active' : 'Closed')}>
+                  {caseDraft.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
+                </button>
+              </section>
+            )}
           </form>
         </Drawer>
       )}

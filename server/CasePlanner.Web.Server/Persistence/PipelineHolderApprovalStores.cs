@@ -23,12 +23,10 @@ internal static class PipelinePromotionGate
     // used for any gating decision.
     public static readonly string[] GatedChain = ["Legal Assistant", "Attorney", "Deputy Chief Counsel", "Chief Counsel"];
 
-    // Milestone 2's analogous gate on the case-status transition itself (rather than the holder
-    // handoff): a case/tract cannot leave Pipeline status - i.e. be saved with CaseStatus changing
-    // to anything else - until the Director's real-world Declaration of Taking signature has been
-    // recorded (case_prefiling_milestones, milestone="DirectorSignatureReceived" - see
-    // EnsureFilingReady below). True only for a genuine forward move out of Pipeline; staying in
-    // Pipeline (or a blank/no-op newCaseStatus) is never gated here.
+    // Legacy filing-gate compatibility helpers. The active case-status transition no longer
+    // checks DirectorSignatureReceived because that milestone was removed from the workflow UI.
+    // Historical rows and the transient override property remain compatible with older data and
+    // clients, but no user is required to enter a director-signature value to leave Pipeline.
     //
     // Manager/Administrator Dashboard Milestone 4 correction: this check basis used to be "Chief
     // Counsel has recorded an Approved decision in pipeline_holder_approvals" (EnsureFilingApproved,
@@ -49,19 +47,11 @@ internal static class PipelinePromotionGate
         && !string.IsNullOrWhiteSpace(newCaseStatus)
         && !string.Equals(newCaseStatus, "Pipeline", StringComparison.Ordinal);
 
-    // Replaces EnsureFilingApproved (Milestone 2). directorSignatureMarked comes from
-    // case_prefiling_milestones (is_marked for milestone="DirectorSignatureReceived") rather than
-    // pipeline_holder_approvals. Manager Dashboard sign-off consolidation, item 3: this is a soft
-    // forcing-prompt, not a hard block - when the Director's signature isn't yet on record, ANY
-    // actor may push the case forward anyway by supplying a non-blank reason (the former
-    // "Attorney" exclusion is gone; the client is what decides who sees this control, not the
-    // server). Deliberately a pure function - no entraOptions/HTTP-layer/role concerns here, just
-    // the milestone state and the override reason.
+    // Retained for source/API compatibility with older callers and tests. It is no longer called
+    // by either SQLite or SQL Server case saves.
     public static void EnsureFilingReady(bool directorSignatureMarked, string? overrideReason)
     {
-        if (directorSignatureMarked) return;
-        if (!string.IsNullOrWhiteSpace(overrideReason)) return;
-        throw new InvalidOperationException("The Director signature milestone must be marked before this case can leave Pipeline status (or provide a reason to continue anyway).");
+        return;
     }
 }
 

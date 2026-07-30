@@ -227,7 +227,7 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     // --- PipelinePromotionGate.EnsureFilingReady: the corrected Pipeline-exit gate ---
 
     [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_BlockedWithoutDirectorSignatureMilestoneMarked()
+    public async Task SaveCaseAsync_LeavingPipeline_DoesNotRequireRemovedDirectorSignatureMilestone()
     {
         var c = await CreatePipelineCaseAsync();
         // Zero pipeline_holder_approvals rows AND zero case_prefiling_milestones rows on file -
@@ -241,11 +241,10 @@ public class PreFilingMilestoneTests : IAsyncLifetime
         var loaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
         loaded.CaseStatus = "Filed / Service Pending";
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _fixture.Repository.SaveCaseAsync(loaded));
-        Assert.Contains("Director signature", ex.Message);
+        await _fixture.Repository.SaveCaseAsync(loaded);
 
         var reloaded = (await _fixture.Repository.GetCasesAsync("", "", "", "", true)).Single(x => x.Id == c.Id);
-        Assert.Equal("Pipeline", reloaded.CaseStatus);
+        Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
     }
 
     // --- Pre-filing sign-off/Settlement Authority final implementation, item 4:
@@ -323,7 +322,7 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SaveCaseAsync_LeavingPipeline_ManagerOverride_SucceedsWithoutDirectorSignature_AndWritesFilingGateOverriddenActivity()
+    public async Task SaveCaseAsync_LeavingPipeline_LegacyOverrideReasonDoesNotCreateASeparateGateEvent()
     {
         await using var managerFixture = await RepositoryTestFixture.CreateAsync(new RoleTestActor(Guid.NewGuid(), "Manager"));
         var c = await managerFixture.Repository.SaveCaseAsync(new CaseRecord
@@ -341,13 +340,7 @@ public class PreFilingMilestoneTests : IAsyncLifetime
         Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
 
         var log = await managerFixture.Repository.GetActivityLogAsync(c.Id);
-        var entry = Assert.Single(log, e => e.ActivityType == "FilingGateOverridden");
-        Assert.Equal("CaseStatus", entry.FieldChanged);
-        Assert.Equal("Pipeline", entry.PreviousValue);
-        Assert.Equal("Filed / Service Pending", entry.NewValue);
-        Assert.Equal("Director verbally confirmed signature; paperwork still in transit.", entry.Notes);
-        Assert.Equal("Manager", entry.ActorRoleAtAction);
-        Assert.True(entry.IsMeaningful);
+        Assert.DoesNotContain(log, e => e.ActivityType == "FilingGateOverridden");
     }
 
     [Fact]
@@ -373,8 +366,7 @@ public class PreFilingMilestoneTests : IAsyncLifetime
         Assert.Equal("Filed / Service Pending", reloaded.CaseStatus);
 
         var log = await attorneyFixture.Repository.GetActivityLogAsync(c.Id);
-        var entry = Assert.Single(log, e => e.ActivityType == "FilingGateOverridden");
-        Assert.Equal("Attorney", entry.ActorRoleAtAction);
+        Assert.DoesNotContain(log, e => e.ActivityType == "FilingGateOverridden");
     }
 
     // --- GetPreFilingMilestoneAgingAsync: data layer for the future "Needs Attention" tab ---

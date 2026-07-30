@@ -9060,26 +9060,10 @@ public sealed partial class CasePlannerRepository
                 }
             }
 
-            // Milestone 2 gate (corrected in Milestone 4): analogous to the Task B holder-promotion
-            // gate above, but on the case-status transition itself. Must run using model.CaseStatus's
-            // finalized, post-auto-recompute value (see the block at the top of this method) and must
-            // run before the actual INSERT/UPDATE below. The check basis is now
-            // case_prefiling_milestones (milestone="DirectorSignatureReceived") rather than
-            // pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc comment
-            // for why. originatedInSystem read from the row's own persisted value, not
-            // model.OriginatedInSystem, to close off a client-side bypass (pre-filing sign-off/
-            // Settlement Authority final implementation, item 4).
-            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus, originatedInSystem))
-            {
-                var milestoneCmd = connection.CreateCommand();
-                milestoneCmd.Transaction = tx;
-                milestoneCmd.CommandText = "SELECT is_marked FROM case_prefiling_milestones WHERE case_id=@case_id AND milestone='DirectorSignatureReceived'";
-                milestoneCmd.Parameters.AddWithValue("@case_id", model.Id);
-                var isMarkedValue = await milestoneCmd.ExecuteScalarAsync();
-                var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToInt64(isMarkedValue) != 0;
-                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, model.FilingGateOverrideReason);
-                overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
-            }
+            // Pipeline no longer has a separate Director Signature Received milestone in its
+            // active transition gate. That milestone was removed from the workflow card, so
+            // checking it here would create an impossible requirement with no corresponding
+            // user action. Legacy milestone rows remain preserved and readable for history.
         }
 
         var cmd = connection.CreateCommand();

@@ -88,28 +88,10 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                 }
             }
 
-            // Milestone 2 gate (corrected in Milestone 4): analogous to
-            // SqlServerCaseQuickActionService.SetHolderAsync's Task B holder-promotion gate, but on
-            // the case-status transition itself. model.CaseStatus is already finalized by
-            // NormalizeForSave (called at the top of this method) before this point, so no separate
-            // post-recompute concern here. Must run before the UPDATE below. The check basis is now
-            // dbo.case_prefiling_milestones (milestone='DirectorSignatureReceived') rather than
-            // dbo.pipeline_holder_approvals - see PipelinePromotionGate.EnsureFilingReady's doc
-            // comment for why. originatedInSystem read from the row's own persisted value (not
-            // model.OriginatedInSystem, which the client could tamper with) - a historically-imported
-            // case skips this gate entirely (pre-filing sign-off/Settlement Authority final
-            // implementation, item 4).
-            if (PipelinePromotionGate.RequiresFilingApproval(previousCaseStatus, model.CaseStatus, originatedInSystem))
-            {
-                await using var milestoneCmd = connection.CreateCommand();
-                milestoneCmd.Transaction = transaction;
-                milestoneCmd.CommandText = "SELECT is_marked FROM dbo.case_prefiling_milestones WHERE case_id=@caseId AND milestone='DirectorSignatureReceived'";
-                milestoneCmd.Parameters.Add(new SqlParameter("@caseId", model.Id));
-                var isMarkedValue = await milestoneCmd.ExecuteScalarAsync(cancellationToken);
-                var directorSignatureMarked = isMarkedValue is not null && isMarkedValue is not DBNull && Convert.ToBoolean(isMarkedValue);
-                PipelinePromotionGate.EnsureFilingReady(directorSignatureMarked, model.FilingGateOverrideReason);
-                overrideApplied = !directorSignatureMarked && !string.IsNullOrWhiteSpace(model.FilingGateOverrideReason);
-            }
+            // Pipeline no longer has a separate Director Signature Received milestone in its
+            // active transition gate. That milestone was removed from the workflow card, so
+            // checking it here would create an impossible requirement with no corresponding
+            // user action. Legacy milestone rows remain preserved and readable for history.
         }
 
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))

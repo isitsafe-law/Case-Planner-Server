@@ -562,9 +562,8 @@ public sealed class PipelineHolderApprovalRecord
 // settlement_authority_requests uses - so marking or unmarking the same milestone again just
 // updates this one row rather than inserting a new one. See PreFilingMilestoneGate
 // (PipelineHolderApprovalStores.cs) for the four-milestone strict sequential-order enforcement, and
-// PipelinePromotionGate.EnsureFilingReady for how DirectorSignatureReceived now gates a case
-// leaving Pipeline status (replacing Milestone 2's old, incorrectly-modeled Chief-Counsel-approval
-// check).
+// PipelinePromotionGate's legacy compatibility helpers; DirectorSignatureReceived is preserved
+// for history but no longer gates a case leaving Pipeline because it has no active UI control.
 public sealed class PreFilingMilestoneRecord
 {
     public long Id { get; set; }

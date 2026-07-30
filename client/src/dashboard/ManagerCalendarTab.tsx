@@ -57,7 +57,11 @@ export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[],
   const today = todayEpochDay()
   const end = today + days
   const inWindow = (day: number | null) => day != null && day >= today && day <= end
-  const hearingCount = hearings.filter((h) => inWindow(toEpochDay(h.hearingDate))).length
+  const hearingCount = hearings.filter((h) => {
+    const start = toEpochDay(h.hearingDate)
+    const end = toEpochDay(h.endDate || h.hearingDate)
+    return start != null && end != null && end >= today && start <= end
+  }).length
   const trialCount = allCases.filter((c) => inWindow(toEpochDay(c.trialDate))).length
   return hearingCount + trialCount
 }
@@ -89,13 +93,15 @@ export function ManagerCalendarTab({
     const events: CalendarEvent[] = []
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
-      if (day == null || day < today || (windowEnd != null && day > windowEnd)) continue
+      const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
+      if (day == null || endDay == null || endDay < today || (windowEnd != null && day > windowEnd)) continue
       const record = caseById.get(hearing.caseId)
-      if (!isActiveCase(record) || ['Completed', 'Canceled', 'Cancelled'].includes(hearing.status || '')) continue
+      if (!isActiveCase(record)) continue
       events.push({
         key: `hearing-${hearing.id}`,
         caseId: hearing.caseId,
         date: hearing.hearingDate as string,
+        endDate: hearing.endDate,
         eventType: hearing.eventType || 'Hearing',
         title: hearing.title,
         jobNumber: record?.jobNumber || '',
@@ -123,22 +129,20 @@ export function ManagerCalendarTab({
     return events.sort((a, b) => a.date.localeCompare(b.date))
   }, [hearings, allCases, caseById, today, windowEnd])
 
-  // Past-due: a Hearing whose date has slipped by while its status is still "Scheduled" (never
-  // resolved to Completed/Continued/Canceled) - a stale/overlooked entry, not a normal part of the
-  // forward calendar, so it's pulled in regardless of the selected horizon (the horizon window
-  // never includes dates before today).
+  // Past-due events are date-derived. A multi-day event remains current until its end date.
   const pastDueEvents = useMemo(() => {
     const events: CalendarEvent[] = []
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
-      if (day == null || day >= today) continue
-      if ((hearing.status || 'Scheduled') !== 'Scheduled') continue
+      const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
+      if (day == null || endDay == null || endDay >= today) continue
       const record = caseById.get(hearing.caseId)
       if (!isActiveCase(record)) continue
       events.push({
         key: `pastdue-${hearing.id}`,
         caseId: hearing.caseId,
         date: hearing.hearingDate as string,
+        endDate: hearing.endDate,
         eventType: hearing.eventType || 'Hearing',
         title: hearing.title,
         jobNumber: record?.jobNumber || '',

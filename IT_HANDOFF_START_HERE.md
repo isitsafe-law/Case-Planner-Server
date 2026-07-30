@@ -31,6 +31,8 @@ Pipeline milestone rows are compact and focus on Pleadings Package Sent and Chie
 
 Close/Reopen remains broadly available in the SQLite preview for testing. It preserves related work and audit history. Add Entra-based authorization before production use.
 
+Events now use Jury Trial as the only trial event type and support optional end dates plus start/end times. The ordinary event form no longer exposes event status; legacy status values remain stored for compatibility, while date ranges and deletion drive active visibility. The Work tab no longer edits the competing case-level jury date. Pipeline displays use Pipeline Stage rather than falling back to litigation stage values, and Pipeline/Triage work generation remains blocked for ordinary litigation templates.
+
 Imported cases use a consolidated Triage and Activate screen. A single `Save and Activate` action saves reviewed fields, optionally stores discovery strategy, records activation, and generates only selected checklist/deadline templates. Service not perfected and discovery strategy deferred are warnings, not ordinary activation blockers. The working Excel importer is intentionally unchanged.
 
 Service-pending behavior is graduated: day 60 is an attorney check-in; day 90 begins management-visible risk; days 105/115 are high and urgent bands; day 120 is due/overdue. Pipeline, closed, and perfected cases are excluded from filed-case service alerts. The manager Needs Attention view does not elevate routine day-60 cases.

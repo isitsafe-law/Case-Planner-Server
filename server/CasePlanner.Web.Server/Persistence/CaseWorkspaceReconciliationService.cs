@@ -29,7 +29,7 @@ public sealed class CaseWorkspaceReconciliationService(
         }
         foreach(var id in shBy.Keys.Intersect(thBy.Keys))
         {
-            var a=shBy[id];var b=thBy[id]; Compare("Hearing",id,"CaseId",a.CaseId.ToString(),b.CaseId.ToString(),mismatches); Compare("Hearing",id,"Title",a.Title,b.Title,mismatches); Compare("Hearing",id,"HearingDate",a.HearingDate,b.HearingDate,mismatches); Compare("Hearing",id,"Location",a.Location,b.Location,mismatches); Compare("Hearing",id,"Description",a.Description,b.Description,mismatches); Compare("Hearing",id,"CreatedAt",a.CreatedAt,b.CreatedAt,mismatches); Compare("Hearing",id,"UpdatedAt",a.UpdatedAt,b.UpdatedAt,mismatches);
+            var a=shBy[id];var b=thBy[id]; Compare("Hearing",id,"CaseId",a.CaseId.ToString(),b.CaseId.ToString(),mismatches); Compare("Hearing",id,"Title",a.Title,b.Title,mismatches); Compare("Hearing",id,"HearingDate",a.HearingDate,b.HearingDate,mismatches); Compare("Hearing",id,"EndDate",a.EndDate,b.EndDate,mismatches); Compare("Hearing",id,"StartTime",a.StartTime,b.StartTime,mismatches); Compare("Hearing",id,"EndTime",a.EndTime,b.EndTime,mismatches); Compare("Hearing",id,"EventType",a.EventType,b.EventType,mismatches); Compare("Hearing",id,"Location",a.Location,b.Location,mismatches); Compare("Hearing",id,"Description",a.Description,b.Description,mismatches); Compare("Hearing",id,"CreatedAt",a.CreatedAt,b.CreatedAt,mismatches); Compare("Hearing",id,"UpdatedAt",a.UpdatedAt,b.UpdatedAt,mismatches);
         }
         var missingNotes=Missing(snBy,tnBy); var missingHearings=Missing(shBy,thBy);
         return new(missingNotes.Count==0&&missingHearings.Count==0&&mismatches.Count==0,sn.Count,tn.Count,sh.Count,th.Count,missingNotes,missingHearings,mismatches.Take(100).ToList());

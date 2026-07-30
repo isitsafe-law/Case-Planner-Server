@@ -115,7 +115,7 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
         await using var connection = Connections.CreateConnection(); await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id,case_id,title,hearing_date,location,description,created_at,updated_at,status,row_version
+            SELECT id,case_id,title,hearing_date,end_date,start_time,end_time,location,description,created_at,updated_at,event_type,status,row_version
             FROM dbo.hearings WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId)
             ORDER BY COALESCE(hearing_date,'9999-12-31'),id
             """;
@@ -127,6 +127,10 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
 
     public async Task<HearingRecord> SaveAsync(HearingRecord model, CancellationToken token = default)
     {
+        if (DateOnly.TryParse(model.HearingDate, out var start) && DateOnly.TryParse(model.EndDate, out var end) && end < start)
+            throw new InvalidOperationException("Event end date cannot be before its start date.");
+        if (string.Equals(model.HearingDate, model.EndDate, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(model.StartTime) && !string.IsNullOrWhiteSpace(model.EndTime) && string.CompareOrdinal(model.EndTime, model.StartTime) < 0)
+            throw new InvalidOperationException("Event end time cannot be before its start time on the same date.");
         var isNew = model.Id == 0;
         await using var connection = Connections.CreateConnection(); await connection.OpenAsync(token); await using var transaction = await connection.BeginTransactionAsync(token);
         if (isNew) await EnsureCaseExistsAsync(connection, transaction, model.CaseId, token);
@@ -138,20 +142,20 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
         }
         var now = DateTime.UtcNow.ToString("O"); await using var command = connection.CreateCommand(); command.Transaction = transaction;
         if (isNew) command.CommandText = """
-            INSERT INTO dbo.hearings (case_id,title,hearing_date,location,description,created_at,updated_at,status)
-            OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at VALUES (@caseId,@title,@date,@location,@description,@now,@now,@status)
+            INSERT INTO dbo.hearings (case_id,title,hearing_date,end_date,start_time,end_time,location,description,created_at,updated_at,event_type,status)
+            OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at VALUES (@caseId,@title,@date,@endDate,@startTime,@endTime,@location,@description,@now,@now,@eventType,@status)
             """;
         else
         {
             command.CommandText = """
-                UPDATE dbo.hearings SET title=@title,hearing_date=@date,location=@location,description=@description,updated_at=@now,status=@status
+                UPDATE dbo.hearings SET title=@title,hearing_date=@date,end_date=@endDate,start_time=@startTime,end_time=@endTime,location=@location,description=@description,updated_at=@now,event_type=@eventType,status=@status
                 OUTPUT INSERTED.id,INSERTED.row_version,INSERTED.created_at,INSERTED.updated_at
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
             command.Parameters.Add(new SqlParameter("@id", model.Id)); command.Parameters.Add(new SqlParameter("@version", ExpectedVersion(model.RowVersion, "hearing", model.Id)));
         }
         command.Parameters.Add(new SqlParameter("@caseId", model.CaseId)); command.Parameters.Add(new SqlParameter("@title", string.IsNullOrWhiteSpace(model.Title) ? "Hearing" : model.Title.Trim()));
-        command.Parameters.Add(new SqlParameter("@date", Db(Date(model.HearingDate)))); command.Parameters.Add(new SqlParameter("@location", Db(model.Location))); command.Parameters.Add(new SqlParameter("@description", Db(model.Description))); command.Parameters.Add(new SqlParameter("@now", now));
+        command.Parameters.Add(new SqlParameter("@date", Db(Date(model.HearingDate)))); command.Parameters.Add(new SqlParameter("@endDate", Db(Date(model.EndDate)))); command.Parameters.Add(new SqlParameter("@startTime", Db(model.StartTime))); command.Parameters.Add(new SqlParameter("@endTime", Db(model.EndTime))); command.Parameters.Add(new SqlParameter("@location", Db(model.Location))); command.Parameters.Add(new SqlParameter("@description", Db(model.Description))); command.Parameters.Add(new SqlParameter("@eventType", string.IsNullOrWhiteSpace(model.EventType) ? "Hearing" : model.EventType.Trim())); command.Parameters.Add(new SqlParameter("@now", now));
         command.Parameters.Add(new SqlParameter("@status", string.IsNullOrWhiteSpace(model.Status) ? "Scheduled" : model.Status.Trim()));
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
@@ -173,7 +177,7 @@ public sealed class SqlServerHearingStore(IDatabaseConnectionFactory connections
 
     private static HearingRecord Read(DbDataReader reader) => new()
     {
-        Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),Title=Text(reader,2)??"",HearingDate=Date(Text(reader,3)),Location=Text(reader,4),Description=Text(reader,5),
-        CreatedAt=Text(reader,6)??"",UpdatedAt=Text(reader,7)??"",Status=Text(reader,8)??"Scheduled",RowVersion=Convert.ToBase64String((byte[])reader.GetValue(9))
+        Id=reader.GetInt64(0),CaseId=reader.GetInt64(1),Title=Text(reader,2)??"",HearingDate=Date(Text(reader,3)),EndDate=Date(Text(reader,4)),StartTime=Text(reader,5),EndTime=Text(reader,6),Location=Text(reader,7),Description=Text(reader,8),
+        CreatedAt=Text(reader,9)??"",UpdatedAt=Text(reader,10)??"",EventType=Text(reader,11)??"Hearing",Status=Text(reader,12)??"Scheduled",RowVersion=Convert.ToBase64String((byte[])reader.GetValue(13))
     };
 }

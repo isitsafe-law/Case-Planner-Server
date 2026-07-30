@@ -36,7 +36,7 @@ export function DivisionPipelineTab({
 
   const pipeline = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline'), [allCases])
   const holders = useMemo(() => Array.from(new Set(pipeline.map((record) => record.currentHolder || 'Unassigned'))).sort(), [pipeline])
-  const stages = useMemo(() => Array.from(new Set(pipeline.map((record) => record.pipelineStage || record.stage || 'Stage not set'))).sort(), [pipeline])
+  const stages = useMemo(() => Array.from(new Set(pipeline.map((record) => record.pipelineStage || 'Pipeline stage not set'))).sort(), [pipeline])
 
   const rows = useMemo(() => {
     const query = search.trim().toLocaleLowerCase()
@@ -45,7 +45,7 @@ export function DivisionPipelineTab({
       const haystack = [record.jobNumber, record.tract, record.caseName, record.landowner, record.assignedAttorney].filter(Boolean).join(' ').toLocaleLowerCase()
       return (!query || haystack.includes(query)) &&
         (holder === 'All' || (record.currentHolder || 'Unassigned') === holder) &&
-        (stage === 'All' || (record.pipelineStage || record.stage || 'Stage not set') === stage) &&
+        (stage === 'All' || (record.pipelineStage || 'Pipeline stage not set') === stage) &&
         stall !== null
     })
     return filtered.sort((a, b) => {
@@ -54,7 +54,7 @@ export function DivisionPipelineTab({
           case 'job': return record.jobNumber || ''
           case 'tract': return record.tract || ''
           case 'holder': return record.currentHolder || 'Unassigned'
-          case 'stage': return record.pipelineStage || record.stage || ''
+          case 'stage': return record.pipelineStage || ''
           case 'nextAction': return record.nextAction || 'zzzz'
           case 'followUp': return record.nextReviewDate || '9999-12-31'
           case 'activity': return record.lastMeaningfulActivityDate || record.dateSentToCurrentHolder || ''
@@ -74,7 +74,7 @@ export function DivisionPipelineTab({
     downloadCsv(`Division_Pipeline_${new Date().toISOString().slice(0, 10)}.csv`, rows.map((record) => ({
       'Job Number': record.jobNumber || '', Tract: record.tract || '', 'Case Name': record.caseName || '',
       Attorney: record.assignedAttorney || 'Unassigned', Holder: record.currentHolder || 'Unassigned',
-      Stage: record.pipelineStage || record.stage || '', 'Next Action': record.nextAction || '',
+      'Pipeline Stage': record.pipelineStage || '', 'Next Action': record.nextAction || '',
       'Follow-up Date': record.nextReviewDate || '', 'Days Since Activity': daysSince(record.lastMeaningfulActivityDate || record.dateSentToCurrentHolder) ?? '',
     })))
   }
@@ -101,7 +101,7 @@ export function DivisionPipelineTab({
             return <article className="division-pipeline-row" key={record.id}>
               <div className="pipeline-row-identity"><strong>{[record.jobNumber, record.tract].filter(Boolean).join(' · ') || 'Unnumbered matter'}</strong><span>{record.caseName || record.landowner || 'Unnamed case'}</span><span className="subtle-text">{record.assignedAttorney || 'Unassigned attorney'}</span></div>
               <div><span className="pipeline-field-label">Holder</span><strong>{record.currentHolder || 'Unassigned'}</strong></div>
-              <div><span className="pipeline-field-label">Stage / status</span><strong>{record.pipelineStage || record.stage || 'Stage not set'}</strong><span>{stall?.label || 'No pre-filing milestone recorded'}</span></div>
+              <div><span className="pipeline-field-label">Pipeline Stage</span><strong>{record.pipelineStage || 'Pipeline stage not set'}</strong><span>{stall?.label || 'No pre-filing milestone recorded'}</span></div>
               <div><span className="pipeline-field-label">Next action</span><strong>{record.nextAction || 'Not set'}</strong><span>{record.nextReviewDate ? `Follow-up ${record.nextReviewDate}` : 'No follow-up date'}</span></div>
               <div><span className="pipeline-field-label">Last activity</span><strong>{age == null ? 'No date' : `${age} day${age === 1 ? '' : 's'} ago`}</strong><span>{stall?.isReturnedForRevision ? 'Returned for revision' : 'Active pipeline matter'}</span></div>
               <div className="pipeline-row-actions"><Btn size="sm" onClick={() => onOpenCase(record.id)}>Open Case</Btn></div>

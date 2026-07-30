@@ -545,9 +545,7 @@ type CaseNote = {
   updatedAt: string
 }
 
-const eventTypes = ['Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Other'] as const
-
-const eventStatuses = ['Scheduled', 'Completed', 'Continued', 'Canceled'] as const
+const eventTypes = ['Jury Trial', 'Hearing', 'Deposition', 'Mediation', 'Filing Deadline', 'Other'] as const
 
 export type Hearing = {
   id: number
@@ -556,6 +554,9 @@ export type Hearing = {
   eventType?: string | null
   status?: string | null
   hearingDate?: string | null
+  endDate?: string | null
+  startTime?: string | null
+  endTime?: string | null
   location?: string | null
   description?: string | null
   createdAt: string
@@ -1799,7 +1800,7 @@ function emptyExhibit(caseId: number): Exhibit {
 }
 
 function emptyHearing(caseId: number): Hearing {
-  return { id: 0, caseId, title: '', eventType: 'Hearing', status: 'Scheduled', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' }
+  return { id: 0, caseId, title: '', eventType: 'Hearing', hearingDate: '', endDate: '', startTime: '', endTime: '', location: '', description: '', createdAt: '', updatedAt: '' }
 }
 
 function emptyTrialMotion(caseId: number): TrialMotion {
@@ -2072,20 +2073,11 @@ function isQueueDateOverdue(dateValue?: string | null): boolean {
   return matchesUrgency(dateValue, 'Overdue')
 }
 
-function eventStatusTone(status?: string | null): StatusTone {
-  if (status === 'Completed') return 'ok'
-  if (status === 'Continued') return 'warn'
-  if (status === 'Canceled') return 'danger'
-  return 'neutral'
-}
-
-// Events have no "done" checkbox like deadlines/tasks; "resolved" means the status was explicitly
-// set to Completed/Canceled, and "past" means the date has slipped by without either of those
-// (still worth hiding from the Work Queue's forward-looking list, unlike deadlines/tasks which
-// intentionally surface "Overdue" on request via matchesUrgency).
+// Events remain visible while their date range is current. Deletion removes an event from active
+// calendars; there is no separate status workflow.
 function isEventPastOrResolved(item: Hearing): boolean {
-  if (item.status === 'Completed' || item.status === 'Canceled') return true
-  return isQueueDateOverdue(item.hearingDate)
+  const through = item.endDate || item.hearingDate
+  return isQueueDateOverdue(through)
 }
 
 function serviceWarningTone(warningLevel: string): StatusTone {
@@ -2252,7 +2244,6 @@ function App() {
   // Whether the Jury Trial "Through" (end date) input is revealed. Reset per-case in loadWorkspace
   // (auto-open when the loaded case already has a trialEndDate) rather than derived from
   // selectedCase inline, since this is a top-level hook and selectedCase isn't defined yet here.
-  const [trialRangeOpen, setTrialRangeOpen] = useState(false)
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
   const caseMenuRef = useRef<HTMLDivElement | null>(null)
   const caseEditorSectionRefs = useRef<Record<CaseEditorSectionKey, HTMLElement | null>>({
@@ -2971,7 +2962,6 @@ function App() {
       const data = await api<WorkspaceResponse>(`/api/cases/${caseId}`)
       setWorkspace(data)
       setCaseDraft(data.case)
-      setTrialRangeOpen(Boolean(data.case.trialEndDate))
       void loadPlatformGenerationHistory(caseId)
       void loadCaseAssignments(caseId)
       setDeadlineDraft(emptyDeadline(caseId))
@@ -4339,32 +4329,6 @@ function App() {
     }
   }
 
-  async function persistCasePatch(patch: Partial<CaseRecord>, successMessage: string) {
-    const record = workspace?.case ?? selectedCase
-    if (!record?.id) return
-    const triageProgress = record.status === 'Triage' && !('status' in patch)
-    const payload = {
-      ...serializeCaseDraft({ ...record, ...patch }),
-      // Triage may record the eventual consolidated status before activation, but it must
-      // remain excluded from live queues and deadline generation until the final Activate step.
-      ...(triageProgress ? { status: 'Triage' } : {}),
-    }
-    const validation = validateCaseDraft(payload)
-    if (Object.keys(validation.fieldErrors).length > 0) {
-      setErrorMessage(validation.summary)
-      return
-    }
-
-    try {
-      setErrorMessage('')
-      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(payload) })
-      await refreshAll(record.id)
-      setMessage(successMessage)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the case.')
-    }
-  }
-
   async function persistDeadline(draft: DeadlineItem, successMessage: string, closeAfterSave: boolean) {
     const caseId = draft.caseId || selectedCaseId || caseDraft.id
     if (!caseId) return
@@ -5383,8 +5347,16 @@ function App() {
     event.preventDefault()
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    if (!hearingDraft.title.trim()) {
-      setModalFeedback('Enter an event title before saving.', { title: 'Title is required.' })
+    if (!hearingDraft.hearingDate) {
+      setModalFeedback('Enter a start date before saving.', { hearingDate: 'Start date is required.' })
+      return
+    }
+    if (hearingDraft.endDate && hearingDraft.endDate < hearingDraft.hearingDate) {
+      setModalFeedback('The end date cannot be before the start date.', { endDate: 'End date must be on or after the start date.' })
+      return
+    }
+    if (hearingDraft.endDate && hearingDraft.endDate === hearingDraft.hearingDate && hearingDraft.startTime && hearingDraft.endTime && hearingDraft.endTime < hearingDraft.startTime) {
+      setModalFeedback('The end time cannot be before the start time on the same date.', { endTime: 'End time must be after the start time.' })
       return
     }
     try {
@@ -5395,10 +5367,12 @@ function App() {
         body: JSON.stringify({
           ...hearingDraft,
           caseId,
-          title: hearingDraft.title.trim(),
+          title: hearingDraft.title.trim() || (hearingDraft.eventType === 'Jury Trial' ? 'Jury Trial' : 'Event'),
           eventType: hearingDraft.eventType?.trim() || 'Hearing',
-          status: (eventStatuses as readonly string[]).includes(hearingDraft.status || '') ? hearingDraft.status : 'Scheduled',
           hearingDate: normalizeDateValue(hearingDraft.hearingDate),
+          endDate: normalizeDateValue(hearingDraft.endDate),
+          startTime: normalizeTextValue(hearingDraft.startTime),
+          endTime: normalizeTextValue(hearingDraft.endTime),
           location: normalizeTextValue(hearingDraft.location),
           description: normalizeTextValue(hearingDraft.description),
         }),
@@ -5410,21 +5384,6 @@ function App() {
       setMessage('Event saved.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save the event.')
-    }
-  }
-
-  // Inline status update from a Work/Work Queue row's StatusSelect, mirroring
-  // updateServiceLogStatus's pattern: POST the existing record with the new status, then reload.
-  async function updateHearingStatus(hearing: Hearing, status: string) {
-    const caseId = hearing.caseId || selectedCaseId || caseDraft.id
-    if (!caseId) return
-    try {
-      setErrorMessage('')
-      await api('/api/hearings', { method: 'POST', body: JSON.stringify({ ...hearing, status, caseId }) })
-      await refreshAll(caseId)
-      setMessage('Event status updated.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the event status.')
     }
   }
 
@@ -6419,7 +6378,7 @@ function App() {
 
   const openChecklistCount = workspace?.checklistItems.filter((item) => !isChecklistDone(item)).length ?? 0
   const openDiscoveryCount = workspace?.discoveryItems.filter((item) => item.status.includes('Waiting') || item.status.includes('Follow-Up')).length ?? 0
-  // Soonest upcoming event (excluding Completed/Canceled and past dates) for the workspace header's
+  // Soonest upcoming event based on its date range for the workspace header's
   // "Next event" tile and the Overview summary pill. Kept as a top-level useMemo (not computed
   // inside renderCaseWorkspace) so hook call order stays stable whether or not that render
   // function runs this pass — see the other queue useMemos above for the same convention.
@@ -7088,10 +7047,8 @@ function App() {
                 {item.location && <div className="ui-sub">{item.location}</div>}
               </td>
               {renderCaseCell(item.caseId, 'work')}
-              <td className="ui-data">{displayDate(item.hearingDate)}</td>
-              <td>
-                <StatusSelect value={item.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(item.status)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void updateHearingStatus(item, value)} />
-              </td>
+              <td className="ui-data">{item.endDate && item.endDate !== item.hearingDate ? `${displayDate(item.hearingDate)} – ${displayDate(item.endDate)}` : displayDate(item.hearingDate)}</td>
+              <td />
               <td>
                 <div className="ui-row-actions">
                   <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
@@ -7419,7 +7376,7 @@ function App() {
               <div className="prefiling-overview-card">
                 <div>
                   <span className="eyebrow">Pre-filing workflow</span>
-                  <h3>{selectedCase.pipelineStage || selectedCase.stage || 'Pipeline stage not set'}</h3>
+                  <h3>{selectedCase.pipelineStage || 'Pipeline stage not set'}</h3>
                   <p className="prefiling-holder-line"><strong>Current holder:</strong> {selectedCase.currentHolder || 'Unassigned'} <select aria-label="Change current holder" value={selectedCase.currentHolder || ''} onChange={(event) => void updatePipelineHolder(event.currentTarget.value)}><option value="">Unassigned</option><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Filing Staff</option><option>Other</option></select></p>
                 </div>
                 <span className="helper-text">Core pre-filing milestones only. Existing legacy milestone history remains preserved.</span>
@@ -8690,13 +8647,12 @@ function App() {
         <Panel title="Events" headerAction={<Btn size="sm" onClick={startNewHearing}>Add Event</Btn>}>
           <p className="helper-text">Trials, hearings, depositions, mediation, meetings, inspections, and other scheduled proceedings.</p>
           {events.length === 0 ? <div className="compact-empty-state"><p>No events recorded yet.</p><Btn variant="primary" onClick={startNewHearing}>Add Event</Btn></div> : (
-            <div className="table-wrap"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Type</th><th>Date</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            <div className="table-wrap"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Type</th><th>Date</th><th>Location</th><th>Actions</th></tr></thead><tbody>
               {events.map((event) => <tr key={event.id}>
                 <td><strong>{event.title}</strong>{event.description && <div className="ui-sub">{event.description}</div>}</td>
                 <td>{event.eventType || 'Hearing'}</td>
-                <td className="ui-data">{displayDate(event.hearingDate)}</td>
+                <td className="ui-data">{event.endDate && event.endDate !== event.hearingDate ? `${displayDate(event.hearingDate)} – ${displayDate(event.endDate)}` : displayDate(event.hearingDate)}{event.startTime ? ` · ${event.startTime}` : ''}</td>
                 <td>{event.location || '—'}</td>
-                <td><StatusSelect value={event.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(event.status)} ariaLabel={`Status for ${event.title}`} onChange={(value) => void updateHearingStatus(event, value)} /></td>
                 <td><div className="button-row compact-actions"><button onClick={() => startEditHearing(event)}>Edit</button><button onClick={() => void deleteHearing(event)}>Delete</button></div></td>
               </tr>)}
             </tbody></table></div>
@@ -8897,10 +8853,8 @@ function App() {
           <div className="ui-sub">{hearing.eventType || 'Hearing'}{hearing.location ? ` · ${hearing.location}` : ''}</div>
           {hearing.description && <div className="ui-sub work-event-desc" title={hearing.description}>{hearing.description}</div>}
         </td>
-        <td className="ui-data">{displayDate(hearing.hearingDate)}</td>
-        <td>
-          <StatusSelect value={hearing.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(hearing.status)} ariaLabel={`Status for ${hearing.title}`} onChange={(value) => void updateHearingStatus(hearing, value)} />
-        </td>
+        <td className="ui-data">{hearing.endDate && hearing.endDate !== hearing.hearingDate ? `${displayDate(hearing.hearingDate)} – ${displayDate(hearing.endDate)}` : displayDate(hearing.hearingDate)}</td>
+        <td />
         <td>
           <div className="ui-row-actions">
             <button className="row-icon-button" title="Edit event" aria-label={`Edit event ${hearing.title}`} onClick={() => startEditHearing(hearing)}>✎</button>
@@ -8975,35 +8929,6 @@ function App() {
               {facet.label} · {facet.count}
             </FilterChip>
           ))}
-          <label className="work-trial-date">
-            <span>Jury Trial</span>
-            <input
-              type="date"
-              value={selectedCase.trialDate || ''}
-              onChange={(event) => void persistCasePatch({ trialDate: event.target.value }, 'Jury trial date updated.')}
-            />
-          </label>
-          {trialRangeOpen ? (
-            <>
-              <label className="work-trial-date">
-                <span>Through</span>
-                <input
-                  type="date"
-                  value={selectedCase.trialEndDate || ''}
-                  onChange={(event) => void persistCasePatch({ trialEndDate: event.target.value }, 'Jury trial end date updated.')}
-                />
-              </label>
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => { setTrialRangeOpen(false); void persistCasePatch({ trialEndDate: '' }, 'Jury trial end date removed.') }}
-              >
-                Remove end date
-              </button>
-            </>
-          ) : (
-            <button type="button" className="link-button" onClick={() => setTrialRangeOpen(true)}>+ Add end date</button>
-          )}
         </div>
 
         {selCount > 0 && (
@@ -10070,9 +9995,11 @@ function App() {
               <label className="full-span">
                 <span>Title</span>
                 <input value={hearingDraft.title} onChange={(event) => setHearingDraft({ ...hearingDraft, title: event.target.value })} placeholder="e.g. Motion Hearing, Trial" />
-                {modalFieldErrors.title && <small className="field-error">{modalFieldErrors.title}</small>}
               </label>
-              <label><span>Date</span><input type="date" value={hearingDraft.hearingDate || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, hearingDate: event.target.value })} /></label>
+              <label><span>Start date</span><input type="date" value={hearingDraft.hearingDate || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, hearingDate: event.target.value })} />{modalFieldErrors.hearingDate && <small className="field-error">{modalFieldErrors.hearingDate}</small>}</label>
+              <label><span>Start time (optional)</span><input type="time" value={hearingDraft.startTime || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, startTime: event.target.value })} /></label>
+              <label><span>End date (optional)</span><input type="date" min={hearingDraft.hearingDate || undefined} value={hearingDraft.endDate || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, endDate: event.target.value })} />{modalFieldErrors.endDate && <small className="field-error">{modalFieldErrors.endDate}</small>}</label>
+              <label><span>End time (optional)</span><input type="time" value={hearingDraft.endTime || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, endTime: event.target.value })} />{modalFieldErrors.endTime && <small className="field-error">{modalFieldErrors.endTime}</small>}</label>
               <label><span>Location</span><input value={hearingDraft.location || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, location: event.target.value })} placeholder="Courtroom, address, or venue" /></label>
               <label className="full-span"><span>Notes</span><textarea value={hearingDraft.description || ''} onChange={(event) => setHearingDraft({ ...hearingDraft, description: event.target.value })} placeholder="What this event covers" /></label>
               <div className="button-row compact-actions full-span modal-footer">

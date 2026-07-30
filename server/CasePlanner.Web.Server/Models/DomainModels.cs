@@ -853,10 +853,13 @@ public sealed class HearingRecord
     // avoid a much larger mechanical rename across the dashboard/work-queue/SQL-pilot code that
     // reads this table - only the client-facing tab label and event-type vocabulary changed.
     public string EventType { get; set; } = "Hearing";
-    // Scheduled | Completed | Continued | Canceled (see migration 029). Existing rows default
-    // to "Scheduled".
+    // Legacy compatibility only. Event status is no longer edited or used by the active UI;
+    // date existence and deletion determine event visibility.
     public string Status { get; set; } = "Scheduled";
     public string? HearingDate { get; set; }
+    public string? EndDate { get; set; }
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
     public string? Location { get; set; }
     public string? Description { get; set; }
     public string CreatedAt { get; set; } = "";

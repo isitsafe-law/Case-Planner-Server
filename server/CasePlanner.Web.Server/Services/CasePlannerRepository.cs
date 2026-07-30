@@ -4865,7 +4865,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, title, hearing_date, location, description, created_at, updated_at, event_type, status
+            SELECT id, case_id, title, hearing_date, end_date, start_time, end_time, location, description, created_at, updated_at, event_type, status
             FROM hearings
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY COALESCE(hearing_date, '9999-12-31') DESC, id DESC
@@ -4880,12 +4880,15 @@ public sealed partial class CasePlannerRepository
                 CaseId = reader.GetInt64(1),
                 Title = reader.IsDBNull(2) ? "" : reader.GetString(2),
                 HearingDate = NormalizeDate(reader.IsDBNull(3) ? null : reader.GetString(3)),
-                Location = reader.IsDBNull(4) ? null : reader.GetString(4),
-                Description = reader.IsDBNull(5) ? null : reader.GetString(5),
-                CreatedAt = reader.IsDBNull(6) ? "" : reader.GetString(6),
-                UpdatedAt = reader.IsDBNull(7) ? "" : reader.GetString(7),
-                EventType = reader.IsDBNull(8) ? "Hearing" : reader.GetString(8),
-                Status = reader.IsDBNull(9) ? "Scheduled" : reader.GetString(9),
+                EndDate = NormalizeDate(reader.IsDBNull(4) ? null : reader.GetString(4)),
+                StartTime = reader.IsDBNull(5) ? null : reader.GetString(5),
+                EndTime = reader.IsDBNull(6) ? null : reader.GetString(6),
+                Location = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Description = reader.IsDBNull(8) ? null : reader.GetString(8),
+                CreatedAt = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                UpdatedAt = reader.IsDBNull(10) ? "" : reader.GetString(10),
+                EventType = reader.IsDBNull(11) ? "Hearing" : reader.GetString(11),
+                Status = reader.IsDBNull(12) ? "Scheduled" : reader.GetString(12),
             });
         }
 
@@ -4894,6 +4897,7 @@ public sealed partial class CasePlannerRepository
 
     public async Task<HearingRecord> SaveHearingAsync(HearingRecord model)
     {
+        ValidateHearingDates(model);
         return await WithWriteAsync(async (connection, tx) =>
         {
             var now = DateTime.UtcNow.ToString("O");
@@ -4902,8 +4906,8 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO hearings (case_id, title, hearing_date, location, description, created_at, updated_at, event_type, status)
-                    VALUES (@case_id, @title, @hearing_date, @location, @description, @created_at, @updated_at, @event_type, @status);
+                    INSERT INTO hearings (case_id, title, hearing_date, end_date, start_time, end_time, location, description, created_at, updated_at, event_type, status)
+                    VALUES (@case_id, @title, @hearing_date, @end_date, @start_time, @end_time, @location, @description, @created_at, @updated_at, @event_type, @status);
                     SELECT last_insert_rowid();
                     """;
                 cmd.Parameters.AddWithValue("@created_at", now);
@@ -4912,7 +4916,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE hearings
-                    SET title=@title, hearing_date=@hearing_date, location=@location, description=@description, updated_at=@updated_at, event_type=@event_type, status=@status
+                    SET title=@title, hearing_date=@hearing_date, end_date=@end_date, start_time=@start_time, end_time=@end_time, location=@location, description=@description, updated_at=@updated_at, event_type=@event_type, status=@status
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -4922,6 +4926,9 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@case_id", model.CaseId);
             cmd.Parameters.AddWithValue("@title", DbValue(BlankToNull(model.Title) ?? "Hearing"));
             cmd.Parameters.AddWithValue("@hearing_date", DbValue(model.HearingDate));
+            cmd.Parameters.AddWithValue("@end_date", DbValue(model.EndDate));
+            cmd.Parameters.AddWithValue("@start_time", DbValue(model.StartTime));
+            cmd.Parameters.AddWithValue("@end_time", DbValue(model.EndTime));
             cmd.Parameters.AddWithValue("@location", DbValue(model.Location));
             cmd.Parameters.AddWithValue("@description", DbValue(model.Description));
             cmd.Parameters.AddWithValue("@updated_at", now);
@@ -4930,6 +4937,16 @@ public sealed partial class CasePlannerRepository
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CreatedAt = string.IsNullOrWhiteSpace(model.CreatedAt) ? now : model.CreatedAt;
             model.UpdatedAt = now;
+            if (string.Equals(model.EventType, "Jury Trial", StringComparison.OrdinalIgnoreCase))
+            {
+                await using var trial = connection.CreateCommand();
+                trial.Transaction = tx;
+                trial.CommandText = "UPDATE cases SET trial_date=@trial_date, trial_end_date=@trial_end_date WHERE id=@case_id";
+                trial.Parameters.AddWithValue("@trial_date", DbValue(model.HearingDate));
+                trial.Parameters.AddWithValue("@trial_end_date", DbValue(model.EndDate));
+                trial.Parameters.AddWithValue("@case_id", model.CaseId);
+                await trial.ExecuteNonQueryAsync();
+            }
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved hearing for case {model.CaseId} at {DateTime.Now:G}");
             return model;
         });
@@ -6405,6 +6422,9 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "risk_analysis_offer_log", "updated_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "hearings", "event_type", "TEXT NOT NULL DEFAULT 'Hearing'");
         await AddColumnIfMissingAsync(connection, "hearings", "status", "TEXT NOT NULL DEFAULT 'Scheduled'");
+        await AddColumnIfMissingAsync(connection, "hearings", "end_date", "TEXT");
+        await AddColumnIfMissingAsync(connection, "hearings", "start_time", "TEXT");
+        await AddColumnIfMissingAsync(connection, "hearings", "end_time", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "analysis_date", "TEXT");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "interest_rate", "REAL NOT NULL DEFAULT 0.06");
         await AddColumnIfMissingAsync(connection, "risk_analyses", "contingency_fee_percent", "REAL NOT NULL DEFAULT 0.30");
@@ -9486,6 +9506,14 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@value", value);
         cmd.Parameters.AddWithValue("@updated_at", DateTime.UtcNow.ToString("O"));
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static void ValidateHearingDates(HearingRecord model)
+    {
+        if (DateOnly.TryParse(model.HearingDate, out var start) && DateOnly.TryParse(model.EndDate, out var end) && end < start)
+            throw new InvalidOperationException("Event end date cannot be before its start date.");
+        if (string.Equals(model.HearingDate, model.EndDate, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(model.StartTime) && !string.IsNullOrWhiteSpace(model.EndTime) && string.CompareOrdinal(model.EndTime, model.StartTime) < 0)
+            throw new InvalidOperationException("Event end time cannot be before its start time on the same date.");
     }
 
     public async Task<PrefilingReviewSettings> GetPrefilingReviewSettingsAsync()

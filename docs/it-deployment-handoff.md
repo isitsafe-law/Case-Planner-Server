@@ -179,3 +179,12 @@ does not block a case from leaving Pipeline; there is intentionally no separate 
 SQL Server save paths must remain aligned on this behavior. Administrative Actions (Close/Reopen) is placed at
 the bottom of the Edit Case form and remains broadly available in the SQLite test build until Entra-based
 authorization is enabled.
+
+### Event date compatibility note
+
+The active Events UI treats Jury Trial as the only trial event type and supports optional end dates and
+start/end times for multi-day proceedings. Event status columns remain only for legacy compatibility; active
+calendar and hard-date behavior is date-driven, and deleting an event removes it from active views. SQLite
+adds the new event date-range columns at startup; SQL Server uses migration 066. Existing case-level trial
+date values remain readable while new Jury Trial edits synchronize them for document and legacy-report
+compatibility.

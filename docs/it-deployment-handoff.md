@@ -12,6 +12,12 @@ This document separates home development resources from an eventual agency produ
 `DESKTOP-7N5464F\CASEPLANNERDEV`, its data, local certificates, and local Windows identity are development
 resources only and must not be copied into production configuration.
 
+The current SQLite preview uses a consolidated imported-case Triage and Activate screen and graduated
+service-pending alerts. Day 60 is an attorney check-in; management-facing service exceptions begin at
+day 90 and intensify at days 105, 115, and 120. These are application workflow rules, not a replacement
+for legal-deadline policy. Verify the thresholds and service-deadline source of truth during the Entra/
+SQL Server pilot before production configuration or threshold administration is approved.
+
 ## Production resources owned by IT
 
 - Supported central SQL Server instance and a dedicated Case Planner database.

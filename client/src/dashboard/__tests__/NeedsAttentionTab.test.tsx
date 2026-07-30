@@ -45,13 +45,10 @@ describe('serviceSoftFlagRow (rule a)', () => {
     expect(serviceSoftFlagRow(makeCase({ serviceDeadlineBasisDate: '2026-06-27' }), NOW)).toBeNull()
   })
 
-  it('flags a case past the 60-day window, using soft-flag language (never "overdue")', () => {
+  it('flags a case in the management band after 90 days with a concrete countdown', () => {
     const row = serviceSoftFlagRow(makeCase({ serviceDeadlineBasisDate: '2026-01-01' }), NOW)
     expect(row).not.toBeNull()
-    expect(row!.reason).toBe('Service pending beyond the 60-day check-in point')
-    expect(row!.reason.toLowerCase()).not.toContain('overdue')
-    expect(row!.reason.toLowerCase()).not.toContain('missed')
-    expect(row!.reason.toLowerCase()).not.toContain('violation')
+    expect(row!.reason).toContain('Service deadline')
     expect(row!.age).toBeGreaterThan(60)
   })
 
@@ -164,7 +161,7 @@ describe('buildNeedsAttentionRows', () => {
   it('groups rows by rule type before sorting by age within each group', () => {
     const cases = [
       makeCase({ id: 1, serviceDeadlineBasisDate: '2026-01-01' }), // service, old
-      makeCase({ id: 2, serviceDeadlineBasisDate: '2026-05-01' }), // service, newer
+      makeCase({ id: 2, serviceDeadlineBasisDate: '2026-04-15' }), // service, newer but still in the management band
     ]
     const rows = buildNeedsAttentionRows(cases, [], [], 14, 7, NOW)
     expect(rows[0].caseId).toBe(1)

@@ -63,17 +63,22 @@ export function PreFilingMilestonesPanel({
   onOverrideReasonChange,
   onMutated,
   autoOpenOverride,
+  visibleMilestones,
+  showOverride = true,
 }: {
   caseId: number
   filingGateOverrideReason?: string
   onOverrideReasonChange: (value: string | undefined) => void
   onMutated: () => Promise<void>
   autoOpenOverride?: boolean
+  visibleMilestones?: PreFilingMilestone[]
+  showOverride?: boolean
 }) {
   const [milestones, setMilestones] = useState<PreFilingMilestoneRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [markDrafts, setMarkDrafts] = useState<Record<string, MarkDraft>>({})
+  const [noteOpenFor, setNoteOpenFor] = useState<string | null>(null)
   const [unmarkOpenFor, setUnmarkOpenFor] = useState<string | null>(null)
   const [unmarkReason, setUnmarkReason] = useState('')
   const [busyMilestone, setBusyMilestone] = useState<string | null>(null)
@@ -106,6 +111,7 @@ export function PreFilingMilestonesPanel({
     setUnmarkOpenFor(null)
     setUnmarkReason('')
     setMarkDrafts({})
+    setNoteOpenFor(null)
     if (caseId) void load()
     return () => {
       cancelled = true
@@ -145,6 +151,7 @@ export function PreFilingMilestonesPanel({
         delete next[milestone]
         return next
       })
+      setNoteOpenFor(null)
       await refetch()
       await onMutated()
     } catch (error) {
@@ -185,7 +192,14 @@ export function PreFilingMilestonesPanel({
         <p className="helper-text">Loading pre-filing milestones…</p>
       ) : (
         <div className="prefiling-milestone-list">
-          {PRE_FILING_MILESTONE_ORDER.map((milestone) => {
+          {(() => {
+            const coreMilestones = visibleMilestones ?? PRE_FILING_MILESTONE_ORDER
+            const pleadingsSent = milestones.find((item) => item.milestone === 'PleadingsPackageSent')?.isMarked
+            const chiefSigned = milestones.find((item) => item.milestone === 'ChiefCounselSignaturesReceived')?.isMarked
+            const derivedStatus = chiefSigned ? 'Review complete — proceeding to filing' : pleadingsSent ? 'Awaiting chief counsel review' : 'Pleadings preparation'
+            return <>
+              <p className="prefiling-derived-status"><strong>{derivedStatus}</strong></p>
+              {coreMilestones.map((milestone) => {
             const record = milestones.find((item) => item.milestone === milestone)
             const isMarked = Boolean(record?.isMarked)
             const isBusy = busyMilestone === milestone
@@ -207,7 +221,12 @@ export function PreFilingMilestonesPanel({
                       {record?.markedByDisplay ? ` · ${record.markedByDisplay}` : ''}
                       {record?.markedByRole ? ` (${record.markedByRole})` : ''}
                     </p>
-                    {record?.note && <p className="helper-text">{record.note}</p>}
+                    {record?.note && (
+                      <details className="prefiling-note-detail">
+                        <summary>Note available</summary>
+                        <p className="helper-text">{record.note}</p>
+                      </details>
+                    )}
 
                     {unmarkOpenFor === milestone ? (
                       <div className="prefiling-unmark-form top-gap-small">
@@ -249,7 +268,7 @@ export function PreFilingMilestonesPanel({
                   </div>
                 ) : (
                   <div className="prefiling-mark-form">
-                    <div className="form-section-grid">
+                    <div className="form-section-grid prefiling-mark-compact">
                       <label>
                         <span>Occurred date</span>
                         <input
@@ -258,37 +277,28 @@ export function PreFilingMilestonesPanel({
                           onChange={(event) => setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, occurredDate: event.currentTarget.value } }))}
                         />
                       </label>
-                      <label className="full-span">
-                        <span>Note (optional)</span>
-                        <textarea
-                          rows={2}
-                          value={draft.note}
-                          onChange={(event) => setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, note: event.currentTarget.value } }))}
-                          placeholder={
-                            milestone === 'PleadingsPackageSent'
-                              ? 'Optional - e.g. a simple list of what was included (complaint, summons, exhibits...)'
-                              : 'Optional note'
-                          }
-                        />
-                      </label>
+                      {noteOpenFor === milestone && <label className="full-span"><span>Note (optional)</span><textarea rows={2} value={draft.note} onChange={(event) => setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, note: event.currentTarget.value } }))} placeholder={milestone === 'PleadingsPackageSent' ? 'What was included?' : 'Optional note'} /></label>}
                     </div>
                     {missingPrereq && (
                       <p className="helper-text">{missingPrereq} must be marked first.</p>
                     )}
                     <div className="button-row compact-actions top-gap-small">
-                      <Btn size="sm" disabled={Boolean(missingPrereq) || isBusy} onClick={() => void mark(milestone)}>
-                        Mark
+                      <Btn size="sm" aria-label="Mark" disabled={Boolean(missingPrereq) || isBusy} onClick={() => void mark(milestone)}>
+                        Mark complete
                       </Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => setNoteOpenFor(noteOpenFor === milestone ? null : milestone)}>{noteOpenFor === milestone ? 'Hide note' : 'Add note'}</Btn>
                     </div>
                   </div>
                 )}
               </div>
             )
-          })}
+              })}
+            </>
+          })()}
         </div>
       )}
 
-      <div className="prefiling-override top-gap-small">
+      {showOverride && <div className="prefiling-override top-gap-small">
         {!overrideOpen ? (
           <button type="button" className="link-button" onClick={() => setOverrideOpen(true)}>
             Continue Without Marking…
@@ -313,7 +323,7 @@ export function PreFilingMilestonesPanel({
             </button>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

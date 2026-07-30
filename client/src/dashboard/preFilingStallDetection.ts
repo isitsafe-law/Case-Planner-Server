@@ -1,4 +1,4 @@
-import { PRE_FILING_MILESTONE_ORDER, preFilingMilestoneLabel, type PreFilingMilestone, type PreFilingMilestoneRecord, type ReviewNoteRecord } from './types'
+import { CORE_PRE_FILING_MILESTONE_ORDER, preFilingMilestoneLabel, type PreFilingMilestone, type PreFilingMilestoneRecord, type ReviewNoteRecord } from './types'
 import { isReturnedForRevisionDecision } from '../case-workspace/ReviewNotesLog'
 
 // Final implementation, item 3: ONE aging calculation per tract, not two parallel ones - shared by
@@ -44,7 +44,7 @@ export function computePreFilingStallInfo(
   let furthestMarkedAt: string | null = null
   for (const record of caseMilestones) {
     if (!record.isMarked) continue
-    const index = PRE_FILING_MILESTONE_ORDER.indexOf(record.milestone as (typeof PRE_FILING_MILESTONE_ORDER)[number])
+    const index = CORE_PRE_FILING_MILESTONE_ORDER.indexOf(record.milestone as (typeof CORE_PRE_FILING_MILESTONE_ORDER)[number])
     if (index > furthestIndex) {
       furthestIndex = index
       furthestMarkedAt = record.markedAt || null
@@ -57,8 +57,8 @@ export function computePreFilingStallInfo(
   const mostRecentReturnNote = returnNotes[0]
 
   const nextMilestone: PreFilingMilestone | null = furthestIndex === -1
-    ? PRE_FILING_MILESTONE_ORDER[0]
-    : (PRE_FILING_MILESTONE_ORDER[furthestIndex + 1] ?? null)
+    ? CORE_PRE_FILING_MILESTONE_ORDER[0]
+    : (CORE_PRE_FILING_MILESTONE_ORDER[furthestIndex + 1] ?? null)
 
   if (mostRecentReturnNote && (!furthestMarkedAt || (mostRecentReturnNote.createdAt || '') > furthestMarkedAt)) {
     return {

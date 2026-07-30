@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from 'react'
+import type { ComponentProps, FormEvent, ReactNode } from 'react'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
@@ -41,7 +41,7 @@ type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadl
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'events' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
-type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender' | 'deep-navy' | 'forest' | 'slate' | 'sunset' | 'rose'
+type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender' | 'deep-navy' | 'forest' | 'slate' | 'sunset' | 'rose' | 'ocean' | 'plum' | 'amber' | 'carbon' | 'arctic'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
@@ -467,6 +467,7 @@ type ServiceStatusSummary = {
   serviceNotes?: string | null
   warningLevel: string
   warningText: string
+  daysSinceFiling?: number | null
   daysRemaining?: number | null
   serviceDeadlineCalculated: boolean
   publicationDate?: string | null
@@ -487,6 +488,7 @@ type ServiceQueueItem = {
   serviceDeadlineBasisDate?: string | null
   serviceDeadline120?: string | null
   daysRemaining?: number | null
+  daysSinceFiling?: number | null
   servicePerfected: boolean
   servicePerfectedDate?: string | null
   serviceMethod?: string | null
@@ -2088,7 +2090,7 @@ function isEventPastOrResolved(item: Hearing): boolean {
 
 function serviceWarningTone(warningLevel: string): StatusTone {
   if (warningLevel === 'overdue' || warningLevel === 'missing') return 'danger'
-  if (warningLevel === 'urgent' || warningLevel === 'upcoming') return 'warn'
+  if (warningLevel === 'urgent' || warningLevel === 'high' || warningLevel === 'warning' || warningLevel === 'upcoming') return 'warn'
   return 'neutral'
 }
 
@@ -2198,7 +2200,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'light'
     const stored = window.localStorage.getItem(themeStorageKey)
-    return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender', 'deep-navy', 'forest', 'slate', 'sunset', 'rose'].includes(stored || '') ? stored as ThemeMode : 'light'
+    return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender', 'deep-navy', 'forest', 'slate', 'sunset', 'rose', 'ocean', 'plum', 'amber', 'carbon', 'arctic'].includes(stored || '') ? stored as ThemeMode : 'light'
   })
   const [page, setPage] = useState<PageKey>('dashboard')
   const [shutdownBusy, setShutdownBusy] = useState(false)
@@ -3361,7 +3363,9 @@ function App() {
   function resetModalDraft(kind: ModalKind, mode: ModalMode = 'create') {
     const caseId = selectedCaseId ?? caseDraft.id
     if (kind === 'case') {
-      setCaseDraft(mode === 'edit' && workspace ? workspace.case : emptyCase())
+      const blank = emptyCase()
+      if (mode === 'create' && currentUser?.displayName) blank.assignedAttorney = currentUser.displayName
+      setCaseDraft(mode === 'edit' && workspace ? workspace.case : blank)
     } else if (kind === 'deadline') {
       setDeadlineDraft(mode === 'edit' ? deadlineDraft : emptyDeadline(caseId))
     } else if (kind === 'checklist') {
@@ -4170,7 +4174,7 @@ function App() {
   }
 
 
-  async function activateTriageCase() {
+  async function activateTriageCase(patch: Parameters<NonNullable<ComponentProps<typeof TriageWizard>['onActivate']>>[0], options: { discoveryStrategy: string; generateChecklist: boolean; generateDeadlines: boolean }) {
     const record = workspace?.case ?? selectedCase
     if (!record?.id) return
     try {
@@ -4178,28 +4182,34 @@ function App() {
       // Status must flip to Active BEFORE generation - GenerateDeadlines/ChecklistForCaseAsync
       // are gated to produce nothing for Triage cases.
       const workflowStatus = record.caseStatus && record.caseStatus !== 'Triage' ? record.caseStatus : 'Active Litigation'
-      await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(serializeCaseDraft({ ...record, caseStatus: workflowStatus })) })
+      const activated = await api<CaseRecord>('/api/cases', { method: 'POST', body: JSON.stringify(serializeCaseDraft({ ...record, ...patch, caseStatus: patch.caseStatus || workflowStatus })) })
+      if (activated.status === 'Active' && options.discoveryStrategy) {
+        const existing = discoveryPosture ?? {
+          id: 0, caseId: record.id, strategy: 'Strategy not selected', strategyReason: null, strategySelectedDate: null,
+          discoveryServedDate: null, responsesDueDate: null, responsesReceivedDate: null, responsesReviewedDate: null,
+          discoveryCutoffDate: null, plannedDepositions: null, deficiencyStatus: null, nextDecision: null,
+          nextReviewDate: null, isComplete: false, completionChangedAt: null, completionChangedBy: null, createdAt: null, updatedAt: null,
+        }
+        await api<DiscoveryPosture>(`/api/cases/${record.id}/discovery-posture`, { method: 'POST', body: JSON.stringify({ ...existing, strategy: options.discoveryStrategy, caseId: record.id }) })
+      }
       await api(`/api/cases/${record.id}/activity`, { method: 'POST', body: JSON.stringify({ activityType: 'CaseActivated', notes: 'Triage completed; case activated' }) })
       setTriageWizardOpen(false)
-      if (await confirmAction({ title: 'Generate templates?', message: 'Generate checklist and deadline templates for this case now?', confirmLabel: 'Generate' })) {
-        await addFromTemplates(record.id)
-      } else {
-        await refreshAll(record.id)
-      }
+      if (options.generateChecklist || options.generateDeadlines) await addFromTemplates(record.id, options.generateChecklist, options.generateDeadlines)
+      else await refreshAll(record.id)
       setMessage('Case activated. Live tracking has started.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to activate the case.')
     }
   }
 
-  async function addFromTemplates(caseIdOverride?: number) {
+  async function addFromTemplates(caseIdOverride?: number, includeChecklist = true, includeDeadlines = true) {
     const caseId = caseIdOverride ?? selectedCaseId ?? caseDraft.id
     if (!caseId) return
     try {
       setErrorMessage('')
       const [checklistResult, deadlineResult] = await Promise.all([
-        api<{ added: number }>(`/api/cases/${caseId}/generate-checklist`, { method: 'POST' }),
-        api<{ added: number; updated: number }>(`/api/cases/${caseId}/generate-deadlines`, { method: 'POST' }),
+        includeChecklist ? api<{ added: number }>(`/api/cases/${caseId}/generate-checklist`, { method: 'POST' }) : Promise.resolve({ added: 0 }),
+        includeDeadlines ? api<{ added: number; updated: number }>(`/api/cases/${caseId}/generate-deadlines`, { method: 'POST' }) : Promise.resolve({ added: 0, updated: 0 }),
       ])
       await refreshAll(caseId)
       setMessage(`From templates: ${checklistResult.added} task(s) added, ${deadlineResult.added} deadline(s) added, ${deadlineResult.updated} updated.`)
@@ -7410,21 +7420,17 @@ function App() {
                 <div>
                   <span className="eyebrow">Pre-filing workflow</span>
                   <h3>{selectedCase.pipelineStage || selectedCase.stage || 'Pipeline stage not set'}</h3>
-                  <p>{selectedCase.currentHolder || 'Unassigned'} currently has responsibility for moving this matter forward.</p>
+                  <p className="prefiling-holder-line"><strong>Current holder:</strong> {selectedCase.currentHolder || 'Unassigned'} <select aria-label="Change current holder" value={selectedCase.currentHolder || ''} onChange={(event) => void updatePipelineHolder(event.currentTarget.value)}><option value="">Unassigned</option><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Filing Staff</option><option>Other</option></select></p>
                 </div>
-                <div className="prefiling-overview-facts">
-                  <label><strong>Waiting on</strong><input defaultValue={selectedCase.shortPostureSummary || ''} placeholder={selectedCase.currentHolder || 'Not specified'} onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.shortPostureSummary || '')) void persistCasePatch({ shortPostureSummary: event.currentTarget.value || null }, 'Waiting-on note updated.') }} /></label>
-                  <label><strong>Next action</strong><input defaultValue={selectedCase.nextAction || ''} placeholder="Set next action" onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.nextAction || '')) void persistCasePatch({ nextAction: event.currentTarget.value || null }, 'Next action updated.') }} /></label>
-                  <label><strong>Follow-up date</strong><input type="date" defaultValue={selectedCase.nextReviewDate || ''} onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.nextReviewDate || '')) void persistCasePatch({ nextReviewDate: event.currentTarget.value || null }, 'Follow-up date updated.') }} /></label>
-                  <span><strong>Filing gate</strong>{selectedCase.filingGateOverrideReason ? 'Override recorded' : 'Director signature required'}</span>
-                </div>
-                <span className="helper-text">Record handoffs, notes, and milestone dates here. Marked milestones can be unmarked with a reason.</span>
+                <span className="helper-text">Core pre-filing milestones only. Existing legacy milestone history remains preserved.</span>
                 <div className="prefiling-workflow-review">
                   <PreFilingMilestonesPanel
                     caseId={selectedCase.id}
                     filingGateOverrideReason={caseDraft.filingGateOverrideReason}
                     onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
                     autoOpenOverride={filingGateBlocked}
+                    visibleMilestones={['PleadingsPackageSent', 'ChiefCounselSignaturesReceived']}
+                    showOverride={false}
                     onMutated={async () => { await loadInitial(); await refreshCaseActivityLog(selectedCase.id) }}
                   />
                   <h5 className="form-section-heading top-gap">Review Notes</h5>
@@ -8700,6 +8706,17 @@ function App() {
     )
   }
 
+  async function updatePipelineHolder(holder: string) {
+    const record = workspace?.case ?? selectedCase
+    if (!record?.id || holder === (record.currentHolder || '')) return
+    try {
+      const result = await api<{ rowVersion?: string | null }>(`/api/cases/${record.id}/holder`, { method: 'POST', body: JSON.stringify({ rowVersion: record.rowVersion, currentHolder: holder }) })
+      applyCaseRowVersion(record.id, result.rowVersion)
+      await refreshAll(record.id)
+      setMessage('Current holder updated.')
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to update the current holder.') }
+  }
+
   // Unified Work tab (redesign Step 4a): one table replaces the old Deadlines and Tasks
   // tabs. Rows merge workspace.deadlines + checklistItems + hearings, grouped under phase headers
   // with progress bars; the facet chips replace the old per-tab open/done chip pairs.
@@ -9527,9 +9544,6 @@ function App() {
                     {consolidatedCaseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                   </select>
                 </label>
-                {(caseDraft.caseStatus || 'Pipeline') === 'Pipeline' && (
-                  <label><span>Current Holder</span><select value={caseDraft.currentHolder || 'Legal Assistant'} onChange={(event) => patchCaseDraft({ currentHolder: event.target.value })}><option>Legal Assistant</option><option>Attorney</option><option>Deputy Chief Counsel</option><option>Chief Counsel</option><option>Other</option></select></label>
-                )}
                 <label className="full-span"><span>Case Style</span><textarea value={caseDraft.caseStyle || ''} onChange={(event) => patchCaseDraft({ caseStyle: event.target.value })} placeholder="Full case caption, e.g. State of Arkansas ex rel. Arkansas State Highway Commission v. John Doe, et al." /></label>
                 <label className="full-span"><span>Case Folder Path</span><input value={caseDraft.caseFolderPath || ''} onChange={(event) => patchCaseDraft({ caseFolderPath: event.target.value })} placeholder={String.raw`\\fileserver\share\JobNumber\Tract`} /></label>
               </div>
@@ -10572,10 +10586,14 @@ function App() {
             servicePerfectedDate: selectedCase.servicePerfectedDate || '',
             trialDate: selectedCase.trialDate || '',
             closedDate: selectedCase.closedDate || '',
+            assignedAttorney: selectedCase.assignedAttorney || currentUser?.displayName || '',
+            nextAction: selectedCase.nextAction || '',
+            nextReviewDate: selectedCase.nextReviewDate || '',
+            discoveryStrategy: discoveryPosture?.strategy || 'Strategy not selected',
           }}
           counties={arkansasCounties}
+          attorneys={attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name)}
           workflowStatuses={consolidatedCaseStatuses.filter((status) => status !== 'Pipeline' && status !== 'Triage')}
-          onSaveStep={(patch) => persistCasePatch(patch, 'Triage progress saved.')}
           onActivate={activateTriageCase}
           onClose={() => setTriageWizardOpen(false)}
         />
@@ -11152,6 +11170,11 @@ function App() {
                     <option value="slate">Slate</option>
                     <option value="sunset">Sunset</option>
                     <option value="rose">Rose</option>
+                    <option value="ocean">Ocean</option>
+                    <option value="plum">Plum</option>
+                    <option value="amber">Amber</option>
+                    <option value="carbon">Carbon</option>
+                    <option value="arctic">Arctic</option>
                   </select>
                 </label>
               </div>

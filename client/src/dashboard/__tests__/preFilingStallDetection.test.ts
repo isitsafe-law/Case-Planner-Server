@@ -31,7 +31,7 @@ describe('computePreFilingStallInfo', () => {
 
   it('reports completion once the last milestone in sequence is marked, with a null nextMilestone', () => {
     const milestones = [
-      milestone({ milestone: 'DirectorSignatureReceived', isMarked: true, markedAt: '2026-07-27T00:00:00Z' }),
+      milestone({ milestone: 'ChiefCounselSignaturesReceived', isMarked: true, markedAt: '2026-07-27T00:00:00Z' }),
     ]
     const info = computePreFilingStallInfo(1, milestones, [], NOW)
     expect(info.label).toBe('All pre-filing milestones complete')
@@ -45,7 +45,7 @@ describe('computePreFilingStallInfo', () => {
       milestone({ id: 2, milestone: 'ChiefCounselSignaturesReceived', isMarked: true, markedAt: '2026-07-15T00:00:00Z' }),
     ]
     const info = computePreFilingStallInfo(1, milestones, [], NOW)
-    expect(info.label).toBe('Awaiting Declaration of Taking Sent to Director')
+    expect(info.label).toBe('All pre-filing milestones complete')
     expect(info.daysStalled).toBe(13)
   })
 
@@ -70,7 +70,7 @@ describe('computePreFilingStallInfo', () => {
       reviewNote({ decision: 'Sent back for revision', createdAt: '2026-07-01T00:00:00Z' }),
     ]
     const info = computePreFilingStallInfo(1, milestones, notes, NOW)
-    expect(info.label).toBe('Awaiting Declaration of Taking Sent to Director')
+    expect(info.label).toBe('All pre-filing milestones complete')
     expect(info.isReturnedForRevision).toBe(false)
   })
 
@@ -95,7 +95,7 @@ describe('computePreFilingStallInfo', () => {
 
   it('only considers rows/notes matching the given caseId', () => {
     const milestones = [
-      milestone({ caseId: 1, milestone: 'DirectorSignatureReceived', isMarked: true, markedAt: '2026-07-27T00:00:00Z' }),
+      milestone({ caseId: 1, milestone: 'ChiefCounselSignaturesReceived', isMarked: true, markedAt: '2026-07-27T00:00:00Z' }),
       milestone({ caseId: 2, milestone: 'PleadingsPackageSent', isMarked: true, markedAt: '2026-07-01T00:00:00Z' }),
     ]
     const info = computePreFilingStallInfo(1, milestones, [], NOW)

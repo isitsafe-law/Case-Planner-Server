@@ -69,6 +69,9 @@ export function nextHardDate(cases: CaseRecord[], allHearings: Hearing[]): NextH
   }
   for (const hearing of allHearings) {
     if (!caseIds.has(hearing.caseId)) continue
+    // Hard dates are external/legal/proceeding commitments. Completed and canceled events are
+    // historical, and generic Other events are not promoted without an explicit classification.
+    if (hearing.status === 'Completed' || hearing.status === 'Canceled' || hearing.eventType === 'Other') continue
     consider(hearing.hearingDate, hearing.title || hearing.eventType || 'Hearing')
   }
   return best

@@ -355,6 +355,14 @@ export const PRE_FILING_MILESTONE_ORDER: PreFilingMilestone[] = [
   'DirectorSignatureReceived',
 ]
 
+// The ordinary card and stall detector intentionally use only these two business milestones.
+// The broader order remains available for compatibility with legacy history and the server's
+// filing-readiness gate; old values are preserved but are not routine workflow prompts.
+export const CORE_PRE_FILING_MILESTONE_ORDER: PreFilingMilestone[] = [
+  'PleadingsPackageSent',
+  'ChiefCounselSignaturesReceived',
+]
+
 const PRE_FILING_MILESTONE_LABELS: Record<PreFilingMilestone, string> = {
   PleadingsPackageSent: 'Pleadings Package Sent',
   ChiefCounselSignaturesReceived: 'Chief Counsel Signatures Received',

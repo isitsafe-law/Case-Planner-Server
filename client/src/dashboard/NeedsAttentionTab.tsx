@@ -72,19 +72,28 @@ export function preFilingStallRow(
   }
 }
 
-// Rule (a): past the 60-day service soft flag. Soft-flag language only - never "overdue", "missed",
-// or "violation"; the 60-day window is explicitly a soft check-in point, not a deadline (hard ARDOT
-// terminology rule, not a style preference).
+// Service exceptions are deliberately management-focused: day 60 is an attorney check-in, not a
+// division-level exception. Management sees the developing-risk bands beginning at day 90.
 export function serviceSoftFlagRow(record: CaseRecord, now: Date = new Date()): NeedsAttentionRow | null {
-  if (record.servicePerfected) return null
+  if (record.servicePerfected || !record.serviceRequired) return null
+  if (record.status === 'Triage' || record.status === 'Closed' || record.status === 'Complete' || ['Pipeline', 'Resolved / Closed'].includes(record.caseStatus || '')) return null
   const basis = record.serviceDeadlineBasisDate || record.filingDate
   if (!basis) return null
   const ageDays = daysSince(basis, now)
-  if (ageDays <= 60) return null
+  if (ageDays < 90) return null
+  const deadline = new Date(`${basis}T00:00:00`)
+  const daysRemaining = Math.ceil((deadline.getTime() + 120 * 86_400_000 - now.getTime()) / 86_400_000)
+  const reason = daysRemaining <= 0
+    ? daysRemaining === 0 ? 'Service deadline is today' : `Service deadline passed ${Math.abs(daysRemaining)} day${Math.abs(daysRemaining) === 1 ? '' : 's'} ago`
+    : ageDays >= 115
+      ? `Urgent service risk · ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining`
+      : ageDays >= 105
+        ? `High-priority service risk · ${daysRemaining} days remaining`
+        : `Service pending · approximately ${daysRemaining} days remaining`
   return {
     key: `service-${record.id}`,
     ruleType: 'service',
-    reason: 'Service pending beyond the 60-day check-in point',
+    reason,
     age: ageDays,
     attorney: record.assignedAttorney || 'Unassigned',
     caseId: record.id,
@@ -150,7 +159,7 @@ const RULE_ORDER: RuleType[] = ['preFilingStall', 'service', 'activity', 'feeShi
 // Builds the combined, single ranked exception list (not four separate tables) - a case can appear
 // more than once if it triggers more than one rule, which is expected, not a bug to deduplicate.
 //
-// Sort order: grouped by rule type in RULE_ORDER (pre-filing stall, then service soft-flag, then
+// Sort order: grouped by rule type in RULE_ORDER (pre-filing stall, then service exception, then
 // stale-activity, then fee-shift reference) so a manager scanning top to bottom sees like exceptions
 // together, rather than four rule types interleaved by a single shared "severity" number this app
 // has no real basis for computing (see design-system's "no unexplained scores" precedent, matching

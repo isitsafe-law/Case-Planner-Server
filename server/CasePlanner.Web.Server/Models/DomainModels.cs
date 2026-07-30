@@ -1562,6 +1562,7 @@ public sealed class ServiceStatusSummary
     public string? ServiceNotes { get; set; }
     public string WarningLevel { get; set; } = "none";
     public string WarningText { get; set; } = "";
+    public int? DaysSinceFiling { get; set; }
     public int? DaysRemaining { get; set; }
     public bool ServiceDeadlineCalculated { get; set; }
     public string? PublicationDate { get; set; }
@@ -1583,6 +1584,7 @@ public sealed class ServiceQueueItem
     public string? ServiceDeadlineBasisDate { get; set; }
     public string? ServiceDeadline120 { get; set; }
     public int? DaysRemaining { get; set; }
+    public int? DaysSinceFiling { get; set; }
     public bool ServiceRequired { get; set; } = true;
     public bool ServicePerfected { get; set; }
     public string? ServicePerfectedDate { get; set; }

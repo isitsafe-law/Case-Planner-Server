@@ -33,18 +33,22 @@ public static class ServiceStatusEngine
         var past=!string.IsNullOrEmpty(caseRecord.Stage)&&StagesPastService.Contains(caseRecord.Stage);
         if(result.ServicePerfected||closed||past)return Set(result,"resolved",result.ServicePerfected?$"Service perfected on {Display(result.ServicePerfectedDate)}.":closed?"Case is closed; service tracking no longer applies.":"Case has progressed past the Service stage.");
         if(deadline is null)return Set(result,"missing","Service deadline not set.");
+        result.DaysSinceFiling = basis is { } filing ? Math.Max(0, today.DayNumber - filing.DayNumber) : null;
         result.DaysRemaining=deadline.Value.DayNumber-today.DayNumber;
-        return result.DaysRemaining<0?Set(result,"overdue",$"120-day service deadline overdue by {Math.Abs(result.DaysRemaining.Value)} day(s).")
-            :result.DaysRemaining<=14?Set(result,"urgent",$"120-day service deadline due in {result.DaysRemaining} day(s).")
-            :result.DaysRemaining<=30?Set(result,"upcoming",$"120-day service deadline due in {result.DaysRemaining} day(s).")
-            :Set(result,"normal",$"120-day service deadline due in {result.DaysRemaining} day(s).");
+        var days = result.DaysSinceFiling ?? 0;
+        if (result.DaysRemaining <= 0) return Set(result, "overdue", result.DaysRemaining == 0 ? "Service deadline is today." : $"Service deadline passed {Math.Abs(result.DaysRemaining.Value)} day(s) ago.");
+        if (days >= 115) return Set(result, "urgent", $"Service pending · {result.DaysRemaining} day(s) remaining before the service deadline.");
+        if (days >= 105) return Set(result, "high", $"Service pending · {result.DaysRemaining} day(s) remaining before the service deadline.");
+        if (days >= 90) return Set(result, "warning", $"Service remains pending · about {result.DaysRemaining} day(s) remain before the service deadline.");
+        if (days >= 60) return Set(result, "checkin", "Service remains pending at the 60-day check-in point. Review current service efforts.");
+        return Set(result, "normal", $"Service pending · {result.DaysRemaining} day(s) remaining.");
     }
 
     public static List<ServiceQueueItem> BuildQueue(IEnumerable<CaseRecord> cases,IEnumerable<PublicationRecord> publications,DateOnly? asOf=null)=>
         cases.Select(c=>{var p=publications.FirstOrDefault(x=>x.CaseId==c.Id);var s=Build(c,p,asOf);return new ServiceQueueItem
         {CaseId=c.Id,CaseName=c.CaseName,CaseNumber=c.CaseNumber,JobNumber=c.JobNumber,Tract=c.Tract,County=c.County,
         FilingDate=c.FilingDate,ServiceDeadlineBasisDate=s.ServiceDeadlineBasisDate,ServiceDeadline120=s.ServiceDeadline120,
-        DaysRemaining=s.DaysRemaining,ServiceRequired=s.ServiceRequired,ServicePerfected=s.ServicePerfected,
+        DaysRemaining=s.DaysRemaining,DaysSinceFiling=s.DaysSinceFiling,ServiceRequired=s.ServiceRequired,ServicePerfected=s.ServicePerfected,
         ServicePerfectedDate=s.ServicePerfectedDate,ServiceMethod=s.ServiceMethod,ServiceStatus=s.ServiceStatus,
         NotesPreview=s.ServiceNotes??s.PublicationNotes,WarningLevel=s.WarningLevel,WarningText=s.WarningText};}).ToList();
 

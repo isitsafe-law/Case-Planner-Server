@@ -1,5 +1,13 @@
 # IT deployment handoff
 
+> Current local testing uses the portable SQLite package documented in the repository `README.md` and
+> `IT_HANDOFF_START_HERE.md`. This document describes the future Entra/SQL Server deployment boundary;
+> it is not a statement that production SQL Server or Entra cutover is complete.
+
+The current case workspace uses one consolidated pre-filing workflow surface near the case header. Do not
+use older screenshots or notes that describe separate holder/review header controls or pre-filing sign-off
+inside the routine Edit Case form.
+
 This document separates home development resources from an eventual agency production deployment.
 `DESKTOP-7N5464F\CASEPLANNERDEV`, its data, local certificates, and local Windows identity are development
 resources only and must not be copied into production configuration.

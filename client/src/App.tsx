@@ -39,7 +39,7 @@ import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 type PageKey = 'dashboard' | 'managerDashboard' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
-type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
+type CaseTabKey = 'overview' | 'work' | 'events' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
 type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender' | 'deep-navy' | 'forest' | 'slate' | 'sunset' | 'rose'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
@@ -934,11 +934,12 @@ function normalizeUpcomingWorkTab(tab: string, type: UpcomingWorkType): CaseTabK
     case 'deadlines':
     case 'checklist':
     case 'hearings':
-      return 'work'
+      return 'events'
     case 'details':
       return type === 'service' ? 'servicePublication' : 'overview'
     case 'overview':
     case 'work':
+    case 'events':
     case 'discovery':
     case 'documents':
     case 'riskAnalysis':
@@ -1485,6 +1486,7 @@ export function computeHandoffSegments(
 const caseTabs: { key: CaseTabKey; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'work', label: 'Work' },
+  { key: 'events', label: 'Events' },
   { key: 'discovery', label: 'Discovery' },
   { key: 'servicePublication', label: 'Service & Publication' },
   { key: 'riskAnalysis', label: 'Valuation & Risk' },
@@ -2239,6 +2241,7 @@ function App() {
   const [defermentDateDraft, setDefermentDateDraft] = useState('')
   const [casesView, setCasesView] = useState<CasesViewKey>('list')
   const [caseTab, setCaseTab] = useState<CaseTabKey>('overview')
+  const [countyOfficialsOpen, setCountyOfficialsOpen] = useState(false)
   // Work tab facet (replaces the old deadlineViewFilter/checklistViewFilter pair): 'open' shows
   // open deadlines + open tasks + all events; 'deadlines'/'tasks' narrow to the open items of that
   // type; 'events' shows all events (no done-ness); 'done' shows done deadlines + done tasks.
@@ -7247,7 +7250,7 @@ function App() {
               )}
             </div>
           </div>
-          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+          {false && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
               <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} readOnly />
@@ -7258,7 +7261,7 @@ function App() {
               record-keeping - advancing or returning the holder is never blocked on this (Manager
               Dashboard sign-off consolidation, item 1). Only shown during the Pipeline phase - same
               scope as the stepper above - and stops mattering once the case files. */}
-          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+          {false && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Review Status</span>
               <span className="chip-row">
@@ -7270,7 +7273,7 @@ function App() {
               </span>
             </div>
           )}
-          {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && HOLDER_STEPS.includes((selectedCase.currentHolder || '') as HolderStep) && (
+          {false && pipelineApprovalPending !== null && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && HOLDER_STEPS.includes((selectedCase.currentHolder || '') as HolderStep) && (
             <div className="workspace-holder-row top-gap-small">
               {pipelineApprovalPending === null ? (
                 <span className="button-row compact-actions">
@@ -7291,19 +7294,19 @@ function App() {
               ) : (
                 <div className="form-grid compact-actions">
                   <label className="full-span">
-                    <span>{pipelineApprovalPending.status === 'Approved' ? 'Note (optional)' : 'Reason for returning (recommended)'}</span>
+                    <span>{pipelineApprovalPending!.status === 'Approved' ? 'Note (optional)' : 'Reason for returning (recommended)'}</span>
                     <textarea
                       rows={2}
                       value={pipelineApprovalNoteDraft}
                       onChange={(event) => setPipelineApprovalNoteDraft(event.target.value)}
-                      placeholder={pipelineApprovalPending.status === 'Approved' ? 'Optional note…' : 'What needs to change before this can move forward?'}
+                      placeholder={pipelineApprovalPending!.status === 'Approved' ? 'Optional note…' : 'What needs to change before this can move forward?'}
                     />
                   </label>
                   <span className="button-row compact-actions full-span">
                     <span className="helper-text">
-                      {pipelineApprovalPending.status === 'Approved'
-                        ? (nextHolderStep(pipelineApprovalPending.role) ? `Confirm approval and send to ${nextHolderStep(pipelineApprovalPending.role)}?` : 'Confirm approval?')
-                        : `Confirm returning to ${previousHolderStep(pipelineApprovalPending.role) || 'the prior holder'} for revision?`}
+                      {pipelineApprovalPending!.status === 'Approved'
+                        ? (nextHolderStep(pipelineApprovalPending!.role) ? `Confirm approval and send to ${nextHolderStep(pipelineApprovalPending!.role)}?` : 'Confirm approval?')
+                        : `Confirm returning to ${previousHolderStep(pipelineApprovalPending!.role) || 'the prior holder'} for revision?`}
                     </span>
                     <button
                       className="primary"
@@ -7390,11 +7393,6 @@ function App() {
                 {!isNewCase && selectedCase.caseFolderPath && (
                   <button onClick={() => void openCaseFolder()}>Open Case Folder</button>
                 )}
-                {!isNewCase && (
-                  <button onClick={() => void changeStatus(selectedCase.status === 'Closed' ? 'Active' : 'Closed')}>
-                    {selectedCase.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
-                  </button>
-                )}
               </div>
             </section>
 
@@ -7415,12 +7413,23 @@ function App() {
                   <p>{selectedCase.currentHolder || 'Unassigned'} currently has responsibility for moving this matter forward.</p>
                 </div>
                 <div className="prefiling-overview-facts">
-                  <span><strong>Waiting on</strong>{selectedCase.shortPostureSummary || selectedCase.currentHolder || 'Not specified'}</span>
-                  <span><strong>Next action</strong>{selectedCase.nextAction || 'Not set'}</span>
-                  <span><strong>Follow-up</strong>{selectedCase.nextReviewDate ? displayDate(selectedCase.nextReviewDate) : 'Not set'}</span>
-                  <span><strong>Readiness</strong>{selectedCase.filingGateOverrideReason ? 'Override recorded' : 'Director signature gate applies'}</span>
+                  <label><strong>Waiting on</strong><input defaultValue={selectedCase.shortPostureSummary || ''} placeholder={selectedCase.currentHolder || 'Not specified'} onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.shortPostureSummary || '')) void persistCasePatch({ shortPostureSummary: event.currentTarget.value || null }, 'Waiting-on note updated.') }} /></label>
+                  <label><strong>Next action</strong><input defaultValue={selectedCase.nextAction || ''} placeholder="Set next action" onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.nextAction || '')) void persistCasePatch({ nextAction: event.currentTarget.value || null }, 'Next action updated.') }} /></label>
+                  <label><strong>Follow-up date</strong><input type="date" defaultValue={selectedCase.nextReviewDate || ''} onBlur={(event) => { if (event.currentTarget.value !== (selectedCase.nextReviewDate || '')) void persistCasePatch({ nextReviewDate: event.currentTarget.value || null }, 'Follow-up date updated.') }} /></label>
+                  <span><strong>Filing gate</strong>{selectedCase.filingGateOverrideReason ? 'Override recorded' : 'Director signature required'}</span>
                 </div>
-                <button className="link-button" onClick={() => scrollToCaseEditorSection('preFilingSignOff')}>Open pre-filing review</button>
+                <span className="helper-text">Record handoffs, notes, and milestone dates here. Marked milestones can be unmarked with a reason.</span>
+                <div className="prefiling-workflow-review">
+                  <PreFilingMilestonesPanel
+                    caseId={selectedCase.id}
+                    filingGateOverrideReason={caseDraft.filingGateOverrideReason}
+                    onOverrideReasonChange={(value) => patchCaseDraft({ filingGateOverrideReason: value })}
+                    autoOpenOverride={filingGateBlocked}
+                    onMutated={async () => { await loadInitial(); await refreshCaseActivityLog(selectedCase.id) }}
+                  />
+                  <h5 className="form-section-heading top-gap">Review Notes</h5>
+                  <ReviewNotesLog caseId={selectedCase.id} onAdded={async () => { await loadInitial(); await refreshCaseActivityLog(selectedCase.id) }} />
+                </div>
               </div>
             )}
 
@@ -7668,6 +7677,8 @@ function App() {
         {caseTab === 'servicePublication' && (
           <div className="workspace-sections">
             <Panel title="County Officials">
+              <details className="county-official-details" open={countyOfficialsOpen} onToggle={(event) => setCountyOfficialsOpen(event.currentTarget.open)}>
+                <summary>County reference details</summary>
               {!selectedCase.county ? (
                 <p className="helper-text">No county officials on file for this county — this case has no County set yet.</p>
               ) : (() => {
@@ -7767,6 +7778,7 @@ function App() {
                   </>
                 )
               })()}
+              </details>
             </Panel>
 
             <Panel title="Service &amp; Publication">
@@ -7975,6 +7987,7 @@ function App() {
         )}
 
         {caseTab === 'work' && renderWorkTab()}
+        {caseTab === 'events' && renderEventsTab()}
 
         {caseTab === 'discovery' && (
           <div className="workspace-sections">
@@ -8664,7 +8677,30 @@ function App() {
     )
   }
 
-  // Unified Work tab (redesign Step 4a): one table replaces the old Deadlines, Tasks, and Events
+  function renderEventsTab() {
+    const events = [...(workspace?.hearings ?? [])].sort((a, b) => (a.hearingDate || '9999-12-31').localeCompare(b.hearingDate || '9999-12-31'))
+    return (
+      <div className="workspace-sections">
+        <Panel title="Events" headerAction={<Btn size="sm" onClick={startNewHearing}>Add Event</Btn>}>
+          <p className="helper-text">Trials, hearings, depositions, mediation, meetings, inspections, and other scheduled proceedings.</p>
+          {events.length === 0 ? <div className="compact-empty-state"><p>No events recorded yet.</p><Btn variant="primary" onClick={startNewHearing}>Add Event</Btn></div> : (
+            <div className="table-wrap"><table className="ui-table compact-table"><thead><tr><th>Event</th><th>Type</th><th>Date</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+              {events.map((event) => <tr key={event.id}>
+                <td><strong>{event.title}</strong>{event.description && <div className="ui-sub">{event.description}</div>}</td>
+                <td>{event.eventType || 'Hearing'}</td>
+                <td className="ui-data">{displayDate(event.hearingDate)}</td>
+                <td>{event.location || '—'}</td>
+                <td><StatusSelect value={event.status || 'Scheduled'} options={eventStatuses} tone={eventStatusTone(event.status)} ariaLabel={`Status for ${event.title}`} onChange={(value) => void updateHearingStatus(event, value)} /></td>
+                <td><div className="button-row compact-actions"><button onClick={() => startEditHearing(event)}>Edit</button><button onClick={() => void deleteHearing(event)}>Delete</button></div></td>
+              </tr>)}
+            </tbody></table></div>
+          )}
+        </Panel>
+      </div>
+    )
+  }
+
+  // Unified Work tab (redesign Step 4a): one table replaces the old Deadlines and Tasks
   // tabs. Rows merge workspace.deadlines + checklistItems + hearings, grouped under phase headers
   // with progress bars; the facet chips replace the old per-tab open/done chip pairs.
   function renderWorkTab() {
@@ -8690,13 +8726,12 @@ function App() {
     // done-ness); Deadlines/Tasks narrow to that type's open items; Done = done deadlines + tasks.
     const visibleDeadlines = workFacet === 'open' || workFacet === 'deadlines' ? openDeadlines : workFacet === 'done' ? doneDeadlines : []
     const visibleTasks = workFacet === 'open' || workFacet === 'tasks' ? openTasks : workFacet === 'done' ? doneTasks : []
-    const visibleEvents = workFacet === 'open' || workFacet === 'events' ? events : []
+    const visibleEvents: Hearing[] = []
 
     const facets: { key: typeof workFacet; label: string; count: number }[] = [
       { key: 'open', label: 'Open', count: openDeadlines.length + openTasks.length + events.length },
       { key: 'deadlines', label: 'Deadlines', count: openDeadlines.length },
       { key: 'tasks', label: 'Tasks', count: openTasks.length },
-      { key: 'events', label: 'Events', count: events.length },
       { key: 'done', label: 'Done', count: doneDeadlines.length + doneTasks.length },
     ]
     const switchFacet = (facet: typeof workFacet) => {
@@ -8908,7 +8943,6 @@ function App() {
         <div className="work-toolbar">
           <Btn variant="primary" onClick={() => startDeadlineModal()}>Add deadline</Btn>
           <Btn onClick={() => startChecklistModal()}>Add task</Btn>
-          <Btn onClick={startNewHearing}>Add event</Btn>
           {!workFromTemplateOpen ? (
             <Btn onClick={() => setWorkFromTemplateOpen(true)} aria-expanded={workFromTemplateOpen}>From template…</Btn>
           ) : (
@@ -9309,7 +9343,7 @@ function App() {
           ? [
               { id: 'action-add-deadline', label: 'Add deadline', action: () => { setCaseTab('work'); startDeadlineModal() } },
               { id: 'action-add-task', label: 'Add task', action: () => { setCaseTab('work'); startChecklistModal() } },
-              { id: 'action-add-event', label: 'Add event', action: () => { setCaseTab('work'); startNewHearing() } },
+              { id: 'action-add-event', label: 'Add event', action: () => { setCaseTab('events'); startNewHearing() } },
               { id: 'action-add-note', label: 'Add note', action: () => { startNewCaseNote(); setCaseTab('notes'); setNoteModalOpen(true) } },
               { id: 'action-edit-case', label: 'Edit case record', action: startEditCase },
               { id: 'action-generate-document', label: 'Generate a document', action: () => setCaseTab('documents') },
@@ -9589,6 +9623,16 @@ function App() {
               </div>
             </section>
 
+            {modalMode !== 'create' && (
+              <section className="form-section administrative-actions">
+                <h4 className="form-section-heading">Administrative Actions</h4>
+                <p className="helper-text">Closing removes the case from ordinary open-work views but preserves tasks, deadlines, events, documents, notes, and audit history. Reopening restores it to active work.</p>
+                <button type="button" className="danger" onClick={() => void changeStatus(caseDraft.status === 'Closed' ? 'Active' : 'Closed')}>
+                  {caseDraft.status === 'Closed' ? 'Reopen Case' : 'Close Case'}
+                </button>
+              </section>
+            )}
+
             {/* Placement decision: this is the ONLY instance of PreFilingMilestonesPanel in the
                 app (not duplicated on the read-only Overview tab). The Continue Without Marking
                 override control below rides on caseDraft/patchCaseDraft, which only exists inside this editor - a
@@ -9606,7 +9650,9 @@ function App() {
                 Uses modalMode !== 'create' rather than renderCaseWorkspace's own isNewCase (out of
                 scope here - this Drawer is rendered outside that function, alongside App's other
                 modals), matching the same "an existing, persisted case" meaning. */}
-            {modalMode !== 'create' && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+            {/* Legacy fallback retained in source only for migration context; routine pre-filing review
+                is rendered in the Pipeline workflow on Overview, never in this editor. */}
+            {false && modalMode !== 'create' && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
               <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.preFilingSignOff = node }}>
                 <h4 className="form-section-heading">Pre-Filing Sign-Off</h4>
                 <PreFilingMilestonesPanel
@@ -10257,7 +10303,7 @@ function App() {
                     onClick={() => toggleQueueTile(tile.level)}
                   />
                 ))}
-                <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />
+                {attorneyDashboard.triageCaseCount > 0 && <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />}
               </div>
 
               <div className="button-row compact-actions">
@@ -11634,7 +11680,7 @@ function App() {
             <Panel title="Deadline Rules">
               <p className="helper-text">Configure calculated deadlines by case-date anchor, offset, and severity. Generated deadlines retain structured source provenance and manual overrides. Only supported anchors are offered.</p>
               <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',active:true})}>Add Deadline Rule</button>
-              {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
+              {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Deadline</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor date</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Jury trial date</option><option value="date_opened">Date opened</option><option value="date_of_taking">Date of taking</option><option value="service_perfected_date">Service perfected date</option><option value="answer_filed_date">Answer filed date</option><option value="closed_date">Closed date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
               <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
             </Panel>
           )}

@@ -1,10 +1,10 @@
 Case Planner IT Review Build
-Build date: 2026-07-16
+Build date: 2026-07-29 (superseded by current portable test packages)
 Target: win-x64, self-contained, single-file ASP.NET Core server
 
 Validation:
-- Server tests: 118/118 passed
-- Client tests: 24/24 passed
+- Server tests: see current test run; this historical manifest is retained for provenance only
+- Client tests: see current test run; this historical manifest is retained for provenance only
 - Server Release publish completed successfully
 - Client production build completed successfully
 - Local SQLite health smoke test completed

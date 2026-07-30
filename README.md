@@ -1,390 +1,101 @@
-# ARDOT Legal Division Case Planner Web
+# Case Planner
 
-Case Planner currently runs as a local web application and is beginning a staged migration toward a
-centrally hosted, multi-user architecture using:
+Case Planner is an ARDOT condemnation case-management application for attorneys, legal assistants, administrators, and managing attorneys. The case is the primary work unit; a case may represent one tract within a larger job.
 
-- React + TypeScript + Vite for the client
-- ASP.NET Core Web API for the server
-- SQLite for the current runtime data store
-- SQL Server as the new migration target
+## Current status
 
-The current server remains bound to `localhost`. It is **not ready to expose to a network**: authentication,
-authorization, per-user case assignment, concurrency protection, and SQL Server repository cutover are
-still required. See [SQL Server migration foundation](docs/sql-server-migration.md).
+The current test build is a portable Windows ASP.NET application with a React client and SQLite storage. Entra authentication and final manager-only authorization are not enabled in the SQLite preview.
 
-## Local project folders
+The broad case workflow is:
 
-- `server/CasePlanner.Web.Server`: ASP.NET Core backend
-- `client`: React frontend
-- `data`: local SQLite database
-- `backups`: automatic backups before writes
-- `exports`: generated DOCX outputs
-- `templates`: unified document platform template source files (`templates/documents/platform`)
-- `logs`: local diagnostics and startup logs
-- `import_samples`: harmless import examples
+- Pipeline: pre-filing assignment, drafting, review, revision, and signatures
+- Filed / Service Pending
+- Active Litigation
+- Settlement Pending
+- Trial Preparation
+- Resolved / Closed
 
-## Current Phase 1.5 scope
+Imported historical cases may remain in Triage until intake is completed.
 
-- dashboard focused on needs attention
-- cases list page and selected-case workspace
-- selected-case tabs for Overview, Case Details, Deadlines, Checklist, Discovery, and Documents / QA
-- global work queues
-- service-focused reminders around the 120-day service deadline
-- service queue and service status card in the selected-case workspace
-- publication facts retained as supporting service detail instead of the primary warning headline
-- light and dark theme toggle with local browser persistence
-- top navigation consolidated to Dashboard, Cases, Work Queues, Documents, and Settings
-- Settings now includes Appearance, Import, Diagnostics, Storage / Paths, and About / IT Notes sections
-- in-page modal editors for case creation, deadline editing, checklist editing, and discovery editing
-- Arkansas county dropdown shared across case creation, editing, and case filters
-- CSV import browse button inside Settings
-- clearer read-only path displays with copy buttons for local browser-visible paths
-- more compact quick actions on Case Overview
-- Case Overview emphasizes deposit amount, date of taking, service timing, next action, and workload summary
-- local CSV import
-- sample CSV import template for local testing
-- DOCX case summary and case review memo generation
-- local diagnostics and health endpoints
-- write safety and backup-before-write
-- friendly duplicate issue-tag validation
-- CSV-only import messaging with XLSX deferment clearly documented
-- self-contained Windows test packaging for localhost deployment review
-- default-posture warning badge (case list + workspace header) for eminent-domain cases where
-  service is perfected but no answer/appearance has been filed within the standard window
-- per-defendant service/answer tracking on Service & Publication, replacing the single case-level
-  "Answer Filed" toggle once a case's defendant list has been entered
-- gate-based pipeline approval workflow (Legal Assistant &rarr; Attorney &rarr; Deputy Chief Counsel
-  &rarr; Chief Counsel), scoped to the Pipeline phase only; Chief Counsel approval auto-populates the
-  existing Waiting-On fields for the Director of Highways and Transportation's Declaration of Taking
-  signature
-- disposition type, final judgment amount, and attorney's fees now shown on the case workspace
-  itself, not only in cross-case Reports
-- "Open Case Folder" button on the case editor that launches Explorer at a case's network condemnation-file
-  path (Job/Tract share), plus FAP No., Judge, Division, Case Style, and Opposing Counsel Contact fields
-- "County Officials" reference lookup (Circuit Clerk, Assessor, Tax Collector) on Service &
-  Publication, seeded for all 75 Arkansas counties and editable from Settings
-- high-contrast (dark and light) theme options alongside light/dark/system, documented in
-  `design-system/MASTER.md`
-- pre-filing sign-off tracker on Pipeline tracts: four sequential milestones (Pleadings Package
-  Sent, Chief Counsel Signatures Received, Declaration of Taking Sent to Director, Director
-  Signature Received) that record ARDOT's real, out-of-band email sign-off process rather than
-  routing an approval inside the app — the Director is not a system user and never logs in. Each
-  milestone captures who marked it, their role, the date the signature actually occurred (editable,
-  often backdated), and when it was marked in the system; un-marking requires a reason and is fully
-  audited. A tract cannot leave Pipeline status until Director Signature Received is marked, unless
-  a manager overrides with a required, audited reason
-- Settlement Authority workflow: an attorney can request authority to settle up to an amount; Chief
-  Counsel exclusively decides (Approve/Grant, Deny, Request More Information), each decision
-  requiring a comment and recording the granted ceiling on the case
-- Manager/Administrator Dashboard ("Division Overview"): a division-wide view for managers, Chief
-  Counsel, and Deputy Chief Counsel — a chronological Calendar of upcoming hearings and trial dates
-  with an Incoming Pipeline panel, an Approvals tab (Settlement Authority decisions plus a read-only
-  Filing Status view), and By Attorney / By Job / Needs Attention aggregation views. Every table
-  exports to CSV. Any Manager, Chief Counsel, or Deputy Chief Counsel now sees every case
-  division-wide, not just cases they are personally assigned to — see "Database status" below
+## Portable test build
 
-## Development
+Extract the release ZIP to a writable folder and run `CasePlanner.Web.Server.exe`. Open the local HTTP address shown by the application. Keep the extracted folder together; runtime folders are created beside the executable.
 
-Development/build dependencies:
+- `data/` — SQLite database
+- `backups/` — database backups
+- `exports/` — generated documents and reports
+- `logs/` — application logs
+- `templates/` — document and reference templates
+- `import_samples/` — fictional demo import files
 
-- .NET 10 SDK (the projects target `net10.0`)
-- Node.js 20 or newer and npm
-- npm packages listed in `client/package.json`
-- ASP.NET Core 10 runtime (included with the SDK for development)
-- React + Vite frontend
-- SQLite native runtime packages restored through NuGet
-- SQL Server 2019 or newer for migration/cutover development
-- NuGet packages `Microsoft.Data.Sqlite`, `SQLitePCLRaw.bundle_e_sqlite3`, and `Microsoft.Data.SqlClient`
-- Microsoft Entra dependencies `Microsoft.Identity.Web`, `@azure/msal-browser`, and `@azure/msal-react`
-- PowerShell for the documented Windows commands and publish script
+Do not put real case data in a test package without establishing backup and retention policies.
 
-The repository solution is CasePlanner.slnx. For a repeatable Phase 1 validation run, execute
-scripts/phase1-smoke.ps1 using the existing restored assets. On a clean machine with NuGet access, add
-the `-Restore` switch first (for example, `powershell -ExecutionPolicy Bypass -File .\scripts\phase1-smoke.ps1 -Restore`).
-The first-machine handoff sequence is documented in `docs/it-first-machine-checklist.md`.
-The extracted local test package includes `verify-local.ps1` for a repeatable health/catalog/DOCX smoke check.
-The SQL Server/Entra cutover settings are provided separately in
-`server/CasePlanner.Web.Server/appsettings.SqlServer.example.json`; the normal example remains SQLite-first.
-The unified document platform (templates, versions, section/loop content, runtime inputs, and generation
-history, all DB-backed) is documented in `docs/it-deployment-handoff.md` and `docs/sql-server-migration.md`
-(migrations 023-026). Case-level document generation now uses `/api/document-platform/templates`,
-`GET /api/cases/{id}/document-platform/templates/{key}/checklist`, and
-`POST /api/cases/{id}/document-platform/templates/{key}/generate`; the Documents tab shows a section
-checklist pre-checked from the case's issue tags, freely togglable, with overlap warnings, and merges
-templates natively into `.docx` files with no third-party templating dependency.
+## Development and verification
 
-Validation note: when NuGet is unavailable, `scripts/phase1-smoke.ps1 -WebOnly` validates the server
-build/publish path only. A previously built server test assembly can be run directly with `dotnet vstest`,
-but rebuilding the test and database-migrator projects requires NuGet access or an internal package mirror.
-On a development machine with a populated global package cache, `powershell -ExecutionPolicy Bypass -File
-.\scripts\prepare-offline-nuget.ps1` creates a temporary local feed from cached packages; restore with
-`dotnet restore .\CasePlanner.slnx --source .\temp\offline-nuget`. This can still report missing packages
-if the cache was not populated by a prior full restore.
-
-The framework-dependent IIS-oriented publish profile is
-server/CasePlanner.Web.Server/Properties/PublishProfiles/IisFrameworkDependent.pubxml. It requires the
-approved ASP.NET Core/.NET 10 hosting runtime on the Windows server; Node.js is not required at runtime.
-
-Production document-storage dependency:
-
-- An IT-managed Windows file share (UNC path) or mounted filesystem path reachable from every application
-  server. The ASP.NET service identity needs create/read/write permissions beneath that root; users do not
-  need direct share access because downloads are served through the authorized API.
-- Configure `DocumentStorage__Provider=FileSystem` and `DocumentStorage__RootPath` with that approved path.
-  If `RootPath` is blank, development falls back to the local `exports` folder.
-- The share must have agency-approved backup, retention, malware scanning, capacity monitoring, and access
-  auditing. SQL Server stores document metadata and the file path; document bytes are not stored in SQL Server.
-- The unified document platform's template source files also use this root, beneath
-  `templates/documents/platform`, with every version referenced by
-  `document_template_versions.storage_path`. The application service identity therefore needs the same
-  create/read permissions for template versions. Retiring a template does not remove its source file; IT
-  retention and backup policy applies to templates as well as generated case documents.
-
-Client:
+Requirements are the .NET SDK used by the solution and Node.js/npm.
 
 ```powershell
 cd client
 npm install
 npm run build
+npm test -- --run
+
+cd ..
+dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-restore
+.\scripts\publish-portable.ps1 -Output 'release/CasePlannerWeb_Portable_SQLite_Test_<date>'
+.\scripts\local-package-smoke.ps1 -PackagePath 'release/CasePlannerWeb_Portable_SQLite_Test_<date>' -Port 5300
 ```
 
-Server:
+The package smoke test checks SQLite startup, the document-template catalog, and DOCX generation.
 
-```powershell
-cd server\CasePlanner.Web.Server
-dotnet restore
-dotnet build
-dotnet run -- --urls http://127.0.0.1:5188
+## Workflow
+
+Pipeline cases expose one consolidated blue Pre-filing Workflow card near the case header. That card contains the current holder/context, waiting-on note, next action, follow-up date, filing-gate state, milestone marking/unmarking, and review notes. Sign-off history is preserved in the pre-filing milestone/review records and activity history. The old holder/review controls are not separate header controls.
+
+Work is for deadlines and tasks. Events is for trials, hearings, depositions, mediation, meetings, inspections, and other scheduled proceedings. The controlling jury-trial date remains `cases.trial_date` and stays prominent in the case header. The next upcoming event may also appear in the header and drops off after it passes or is resolved.
+
+Close and Reopen are administrative actions inside Edit Case in the SQLite preview. They preserve tasks, deadlines, events, notes, documents, and audit history. Entra authorization is planned for a later deployment stage.
+
+## Management dashboard
+
+The Division Overview summarizes upcoming events, needs-attention cases, pipeline matters, unassigned pipeline matters, and open tracts across the management scope. Open tracts include pipeline and filed work and exclude resolved/closed, legacy closed/complete, and Triage cases. The open-tract display provides pipeline, filed, unassigned, and needs-attention context.
+
+The manager dashboard does not show a permanent Awaiting Triage card. Triage is surfaced conditionally in the attorney workflow only when triage cases exist.
+
+## County and publication references
+
+County Officials are county-linked reference data. The compact card is collapsible and retains copy actions for individual officials and the combined reference block. Circuit clerks, assessors, collectors, newspapers, addresses, phones, and emails are stored separately from the case record.
+
+## Templates and merge tags
+
+Document templates are stored in the application and generated as drafts for user review. Merge tags use `{{Token}}` syntax. The catalog is exposed through `/api/template-tags` and resolved by `DocumentGenerationEngine`.
+
+Known and unknown missing values do not block generation. They produce a `[MISSING: Token]` marker and are reported to the caller. Existing legacy tokens remain available for compatibility while newer hierarchical tokens are added and tested.
+
+Basic full-style construction uses:
+
+```text
+Arkansas State Highway Commission v. <party names>
 ```
 
-Then open:
+Stored `CaseStyle` remains authoritative when present. Multi-party output should use party entities rather than assuming a single landowner or opposing-counsel field.
 
-- `http://127.0.0.1:5188`
-- `http://127.0.0.1:5188/api/diagnostics`
-- `http://127.0.0.1:5188/api/health`
+## Checklist and deadline rules
 
-SQL Server migration tooling:
+Work-item templates use broad case statuses and optional stage groupings. The legacy database field `phase` is retained for compatibility and does not imply a finely divided workflow.
 
-```powershell
-$env:CASEPLANNER_SQLSERVER_CONNECTION_STRING = "Server=localhost;Database=CasePlanner;Integrated Security=True;Encrypt=True;TrustServerCertificate=True"
-dotnet run --project server\CasePlanner.DatabaseMigrator -- --sqlite data\case_planner_web.sqlite
-```
+Supported deadline anchors include filing date, jury trial date, date opened, date of taking, service perfected date, answer filed date, and closed date. Missing anchors skip calculation rather than inventing a date. Generated items retain source provenance and manual changes.
 
-Use a fresh target database. Full setup, safety notes, and the remaining cutover work are documented in
-`docs/sql-server-migration.md`. Connection strings are intentionally blank in committed settings; use
-environment variables, .NET user-secrets, or the deployment platform's secret store.
+## Testing expectations
 
-## Import status
+Important coverage includes conditional triage rendering, management totals, pipeline sign-off, Close/Reopen retention, Events navigation, jury-trial/header behavior, County Officials collapse behavior, merge-tag resolver completeness, missing-tag warnings, checklist/deadline anchors, and portable package startup.
 
-- Excel import (.xlsx/.xlsm) is implemented via ClosedXML (pure local file parsing; no Excel automation/COM).
-  It reads the Open, Closed, and Discovery sheets of the condemnation case list workbook and upserts
-  cases by case number (or job + tract). Re-import updates rather than duplicates.
-- CSV import is implemented.
-- Separate SQL Server pilot CSV and Excel import endpoints are available when
-  `Database__SqlServerPilotWritesEnabled=true`. The SQL Excel pilot currently imports only the Open and
-  Closed case sheets. It reports the Discovery sheet as a cutover blocker instead of silently skipping it.
-- `import_samples/case_import_template.csv` is included for testing.
-- No Excel automation is used.
+## Deferred work
 
-Import notes:
+- Entra authentication and final manager/admin authorization
+- Trial-event source-of-truth migration; `cases.trial_date` remains authoritative
+- Weighted workload scoring
+- Final confidential settlement/authority tag policy
+- Production deployment and network-share storage policy
 
-- You may open the CSV template in Excel if desired, then save it as CSV.
-- Do not rename columns unless explicit mapping is added later.
-- Blank dates are allowed.
-- Use `YYYY-MM-DD` for dates when possible.
-- `1900-01-01` is treated as blank.
-- Deposit amount may include commas or dollar signs.
-
-## Current guardrails
-
-- No cloud or external API calls by the application runtime
-- No email/calendar integration
-- No Microsoft Word automation
-- No Microsoft Excel automation
-- No production database access
-- Blank dates stay blank and `1900-01-01` is treated as blank
-- Theme preference stays in local browser storage only
-
-## Database status
-
-SQLite remains the active runtime provider. A provider-neutral data project, SQL Server connection probe,
-and SQLite-to-SQL Server schema/data migrator are included. The application will not silently switch
-providers merely because a SQL Server connection string is present.
-
-Case list/search and case saves now run through a shared case-catalog contract. A SQL Server pilot reader,
-reconciliation endpoint, and concurrency-protected pilot writer are implemented, but normal routes still
-resolve to SQLite. SQL Server deletion is implemented as an audited soft delete. Pilot writes are disabled
-by default; see `docs/sql-server-migration.md`.
-
-Deadline, checklist, discovery-tracking, case-note, hearing, witness, exhibit, trial-motion, valuation,
-comparable-sale, publication-entry, activity-log, document-export, risk-analysis, risk-history, and risk-offer stores are also extracted, with SQL Server read reconciliation,
-optimistic concurrency, and audited soft deletion where deletion is supported. Deadline/checklist handling
-also preserves completion transitions and deadline history. Normal application and work-queue routes still
-resolve to SQLite until the complete workspace cutover is ready.
-
-The activity and document SQL Server pilots now also support gated writes, `rowversion` conflict detection,
-activity edit history, document QA updates, audited document soft deletion, and centralized text-document
-generation. `Database__SqlServerPilotWritesEnabled` remains `false` by default.
-
-Normal document-export listing, content, download, QA, edited-preview persistence, and basic Case Summary /
-Case Review Memo generation now use a provider-neutral generated-document service. SQL generation writes the
-file through the configured central storage provider before inserting SQL metadata and removes the file if
-metadata persistence fails.
-
-The risk-analysis pilot preserves one current ledger per case and creates an immutable history snapshot for
-every successful save. Current ledgers, snapshot deletion, and offer-log edits use SQL Server `rowversion`
-tokens, actor-aware audit events, and non-destructive soft deletion. All 58 home-development cases reconcile
-for current risk results, saved history, and offer logs. Normal risk ledger, history, offer, preview, save,
-delete, and Excel-export routes now use a provider-neutral risk service. Manual risk narrative generation
-remains SQLite-coupled because it also assembles valuation context through the monolithic repository.
-
-Checklist work templates, checklist-template items, and deadline templates now also have SQL Server pilot
-stores. Catalog edits use `rowversion`, global actor-aware audit events, and soft deletion; deleting a
-checklist template also retires its child items in the same transaction. The migration normalizes older SQL
-workflow labels to the current case-status vocabulary. The home-development catalog reconciles at 35
-checklist templates and 6 deadline templates.
-
-Normal deadline refresh, checklist refresh, candidate preview, and reviewed template-selection routes now use
-a provider-neutral workflow-generation service. SQL generation reads the same case status, track, issue tags,
-template catalogs, and duplicate rules, then writes through the concurrency- and audit-aware SQL work-item
-stores. Candidate sets, duplicate flags, and calculated dates reconcile for all 58 development cases.
-
-Issue-tag catalog reads and per-case assignments now use a provider-neutral store. SQL assignments add
-authenticated audit events, use `rowversion`, soft-delete on removal, reject duplicates, and preserve the
-existing behavior that applies or retires issue-triggered checklist tasks.
-
-The old per-kind text templates, the standalone Custom Templates upload screen, and the Discovery Content
-bulk-text editor (discovery base documents, issue-tag discovery blocks, and discovery-generation snapshots)
-are retired, along with every SQLite and SQL Server code path that read or wrote them (migrations 025-026;
-see `docs/sql-server-migration.md`). They're replaced by one unified document platform: templates, versions,
-section/loop content, runtime inputs, and generation history are all DB-backed
-(`document_templates`, `document_template_versions`, `document_template_sections`,
-`document_section_overlaps`, `document_runtime_inputs`, `document_generations`) and merged natively into
-uploaded `.docx` files with no third-party templating dependency. This platform is currently SQLite-only;
-its SQL Server implementation (`IDocumentPlatformService`) is a deliberate not-yet-built stub pending SQL
-Server sandbox access — see `docs/it-deployment-handoff.md`.
-
-Staff Directory (attorneys/legal assistants), Circuit Clerk, Assessor, and Tax Collector reference
-data are now provider-selected like every other feature, rather than calling the SQLite repository
-directly regardless of `Database:ActiveProvider`. Staff Directory entries also carry an optional
-admin-set `linked_user_id` so TaskAssigned/TaskCompleted/DeadlineReminder notifications can resolve a
-case's Attorney/Legal Assistant name to a real account without auto-matching by name or email.
-Checklist/deadline template catalogs now seed on the SQL Server side as well (previously only
-SQLite reseeded on startup, so a real SQL Server deployment would only ever get template content from
-the one-time cutover migration and go stale on every later content update).
-
-`CaseAccessService.IsUnrestricted` now also covers any user flagged `is_manager` or holding a
-`manager_tier` of Chief Counsel or Deputy Chief Counsel (`app_users`, SQL Server/Entra-enabled mode
-only — same as `is_manager` before it), not just Administrator — the Manager/Administrator
-Dashboard's whole premise is division-wide visibility, so a manager drilling into a case must see it
-fully, not hit an assignment check a second time. This is a broad change: every existing
-assignment-aware endpoint (case list, case workspace, exports, attorney dashboard) is affected, not
-just the new dashboard. The Settlement Authority decide action is a deliberate exception to this
-same-as-Administrator pattern — it is gated to Chief Counsel exclusively, with no Administrator
-override, since that decision was made explicitly for this feature and is stricter than every other
-admin-gated action in the app.
-
-Organization-wide document defaults now also have a SQL Server singleton record. Attorney/contact/address
-and leadership values retain the same document-token behavior while adding `rowversion` conflict detection,
-authenticated updater attribution, and global audit events. The SQL record is initialized automatically
-from the migrated SQLite `org_defaults_json` value.
-
-SQL Server can now compose the complete current case-workspace response from the migrated case, deadline,
-checklist, discovery, publication, issue-tag, note, hearing, activity, and document stores. The standard
-dashboard, service queue, and upcoming-work queue also have assignment-filterable SQL pilot queries using
-the same shared service-status rules as SQLite. Normal workspace, dashboard, attorney-dashboard,
-service-queue, and upcoming-work routes now use a provider-neutral operational-query contract. They currently
-resolve to SQLite because SQLite remains the guarded active provider.
-
-Pilot verification routes:
-
-- `/api/database/sqlserver-pilot/workspace/{caseId}`
-- `/api/database/sqlserver-pilot/dashboard`
-- `/api/database/sqlserver-pilot/service-queue`
-- `/api/database/sqlserver-pilot/upcoming-work`
-- `/api/database/reconciliation/workspace-dashboard/{caseId}`
-
-The home-development `CasePlannerDev` verification reconciled all 58 case workspaces without a mismatch.
-
-The attorney dashboard now uses a provider-neutral composer shared by SQLite and SQL Server. Its summary
-cards, action queue, discovery control, momentum review, filing pipeline, trial watch, upcoming decisions,
-project watch, and docket summary are available from
-`/api/database/sqlserver-pilot/dashboard/attorney`. SQL Server applies the visible-case assignment set before
-composition. Unfiltered and representative county, priority, holder, trial-track, matter-type, momentum, and
-search filters reconcile through `/api/database/reconciliation/dashboard-attorney`.
-
-New activity, document-generation, document-QA, discovery, deadline, checklist, and publication audit values
-now use the authenticated Entra user ID and display label. Local development uses the explicit
-`Local development user` label; imported historical rows are not rewritten.
-
-Microsoft Entra authentication is scaffolded and disabled by default. Configuration requires separate API
-and SPA app registrations; see `docs/microsoft-entra-setup.md`. Do not enable it for broad access until
-case-assignment authorization covers all API routes. Assigned case workspaces, both dashboards, case lists,
-global work queues, migrated child saves/deletes, document downloads/QA, and risk-offer records now enforce
-assignment roles. Dashboard counts are computed only from assigned cases. Unclassified routes remain closed
-by default, while required organization-wide catalogs are read-only for ordinary users. The current
-Entra-enabled mode retains an administrator-only pilot gate pending IT security testing and final cutover.
-
-Production resources are intentionally separate from the home development SQL Server. The environment
-template and IT-owned deployment checklist are in `server/CasePlanner.Web.Server/appsettings.Production.example.json`
-and `docs/it-deployment-handoff.md`; neither contains production credentials.
-
-## Cutover administration
-
-Use these endpoints from a restricted migration environment:
-
-- `GET /api/database/administration-capabilities` describes which administrative operations belong to the
-  application and which belong to IT/DBA.
-- `GET /api/database/cutover-readiness` runs the aggregate SQLite/SQL Server reconciliation report and returns
-  the remaining runtime and operational blockers.
-- `POST /api/database/sqlserver-pilot/import/cases-csv` imports a multipart `file` directly into the SQL Server
-  case catalog.
-- `POST /api/database/sqlserver-pilot/import/cases-xlsx` imports the Open and Closed sheets directly into the
-  SQL Server case catalog.
-
-SQL Server pilot imports are disabled by default and must never be enabled for ordinary users while SQLite is
-the active runtime. `Database:ActiveProvider=SqlServer` remains intentionally rejected at startup. The
-migrated case, child-record, operational-query, risk, and document-composition interfaces now select their
-implementation from that setting. Risk narratives have a SQL Server implementation. Template/settings
-administration, import, and database maintenance were the next cutover surfaces; organization-default,
-checklist, and deadline template administration are now provider-selected with SQL concurrency tokens.
-Case quick actions
-(next action, waiting, deferment, holder, priority, trial track, and short note) are also provider-selected and
-require the case concurrency token in SQL Server. Discovery posture, pipeline handoffs, and activity history
-are now provider-selected with SQL concurrency tokens and authenticated actor attribution. The canonical
-publication summary is also provider-selected and concurrency protected. Child-record authorization lookups
-are now provider-selected as well. Case-notes export now uses the provider-neutral workspace and shared
-document storage. Normal CSV/XLSX imports now select the active provider, and the reference library is
-editable through Settings while remaining file-based in the configured shared template/reference folder.
-Diagnostics and database
-maintenance remain SQLite-local; production SQL Server diagnostics, backup, restore, and reset belong to
-IT/DBA procedures.
-
-SQLite file backup, restore, sample-data deletion, and full reset remain valid only for the local SQLite
-runtime. In a central SQL Server deployment, IT/DBA must own database backup, restore, point-in-time recovery,
-retention, disaster recovery, and controlled test-data cleanup. The application must not expose a production
-database reset button.
-
-## Runtime / deployment note
-
-- The test build runs a local ASP.NET Core web server bound to `http://127.0.0.1:5188`.
-- The built React frontend is served by the ASP.NET Core backend.
-- Case add/edit workflows now use in-page modal editors instead of permanently expanded forms on the page.
-- Development data, backups, templates, logs, and import samples remain local to the release folder.
-- Backups occur before writes.
-- Generated documents use the configured filesystem provider. Development defaults to local `exports`; a
-  shared deployment requires an IT-managed central path.
-- Logs write to the local `logs` folder.
-- Node.js/npm are required for development and build work, but not necessarily for a prebuilt self-contained runtime package.
-
-## Current IT review summary
-
-- Current runtime is a local prototype web app for ARDOT Legal Division.
-- The runtime still launches on localhost; network hosting is intentionally deferred until identity and authorization are implemented.
-- SQLite is the current source database; SQL Server is an explicit migration target with a guarded transfer utility.
-- SQL Server connectivity is the only newly introduced external database connection.
-- Local file import/export only.
-- No Microsoft Word automation.
-- No Microsoft Excel automation.
-- No email/calendar integration.
-- Database creation, SQL Server permissions, TLS, backup policy, and deployment hosting require IT/DBA coordination.
+When behavior changes, update this README and the IT handoff documentation in the same change.

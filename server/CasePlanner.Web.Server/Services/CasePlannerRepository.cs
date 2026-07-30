@@ -7415,7 +7415,16 @@ public sealed partial class CasePlannerRepository
         foreach (var template in await GetDeadlineTemplatesAsync())
         {
             if (!template.Active) continue;
-            var anchor = template.TriggerField switch { "filing_date"=>ParseDate(ws.Case.FilingDate), "trial_date"=>ParseDate(ws.Case.TrialDate), "service_perfected_date"=>ParseDate(ws.Case.ServicePerfectedDate), _=>null };
+            var anchor = template.TriggerField switch {
+                "filing_date"=>ParseDate(ws.Case.FilingDate),
+                "trial_date"=>ParseDate(ws.Case.TrialDate),
+                "date_opened"=>ParseDate(ws.Case.DateOpened),
+                "date_of_taking"=>ParseDate(ws.Case.DateOfTaking),
+                "closed_date"=>ParseDate(ws.Case.ClosedDate),
+                "service_perfected_date"=>ParseDate(ws.Case.ServicePerfectedDate),
+                "answer_filed_date"=>ParseDate(ws.Case.AnswerFiledDate),
+                _=>null
+            };
             var duplicate=ws.Deadlines.FirstOrDefault(x=>x.SourceTemplateId==template.Id.ToString() || x.Title.Equals(template.Title,StringComparison.OrdinalIgnoreCase));
             result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Severity=template.Severity,
                 DueDate=anchor?.AddDays(template.OffsetDays).ToString("yyyy-MM-dd"),IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} deadline: {duplicate.Title}" });
@@ -8413,15 +8422,20 @@ public sealed partial class CasePlannerRepository
         var caseCmd = connection.CreateCommand();
         caseCmd.Transaction = tx;
         caseCmd.CommandText = """
-            SELECT filing_date, trial_date, service_perfected, service_perfected_date,
+            SELECT filing_date, trial_date, date_opened, date_of_taking, closed_date,
+                   service_perfected, service_perfected_date, answer_filed_date,
                    COALESCE(status,''), COALESCE(stage,'')
             FROM cases WHERE id=@id
             """;
         caseCmd.Parameters.AddWithValue("@id", caseId);
         DateOnly? filingDate;
         DateOnly? trialDate;
+        DateOnly? dateOpened;
+        DateOnly? dateOfTaking;
+        DateOnly? closedDate;
         bool servicePerfected;
         DateOnly? servicePerfectedDate;
+        DateOnly? answerFiledDate;
         string caseStatus;
         string caseStage;
         await using (var caseReader = await caseCmd.ExecuteReaderAsync())
@@ -8433,10 +8447,14 @@ public sealed partial class CasePlannerRepository
 
             filingDate = ParseDate(caseReader.IsDBNull(0) ? null : caseReader.GetString(0));
             trialDate = ParseDate(caseReader.IsDBNull(1) ? null : caseReader.GetString(1));
-            servicePerfected = !caseReader.IsDBNull(2) && caseReader.GetInt64(2) == 1;
-            servicePerfectedDate = ParseDate(caseReader.IsDBNull(3) ? null : caseReader.GetString(3));
-            caseStatus = caseReader.GetString(4);
-            caseStage = caseReader.GetString(5);
+            dateOpened = ParseDate(caseReader.IsDBNull(2) ? null : caseReader.GetString(2));
+            dateOfTaking = ParseDate(caseReader.IsDBNull(3) ? null : caseReader.GetString(3));
+            closedDate = ParseDate(caseReader.IsDBNull(4) ? null : caseReader.GetString(4));
+            servicePerfected = !caseReader.IsDBNull(5) && caseReader.GetInt64(5) == 1;
+            servicePerfectedDate = ParseDate(caseReader.IsDBNull(6) ? null : caseReader.GetString(6));
+            answerFiledDate = ParseDate(caseReader.IsDBNull(7) ? null : caseReader.GetString(7));
+            caseStatus = caseReader.GetString(8);
+            caseStage = caseReader.GetString(9);
         }
 
         // Triage cases (freshly imported, not yet confirmed through the triage wizard) generate
@@ -8495,7 +8513,11 @@ public sealed partial class CasePlannerRepository
             {
                 "filing_date" => filingDate,
                 "trial_date" => trialDate,
+                "date_opened" => dateOpened,
+                "date_of_taking" => dateOfTaking,
+                "closed_date" => closedDate,
                 "service_perfected_date" => servicePerfectedDate,
+                "answer_filed_date" => answerFiledDate,
                 _ => null
             };
             if (anchor is null)

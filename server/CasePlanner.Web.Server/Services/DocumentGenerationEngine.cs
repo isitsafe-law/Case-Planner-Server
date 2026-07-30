@@ -30,12 +30,22 @@ public static partial class DocumentGenerationEngine
     [
         new() { Key = "County", Label = "County", Category = "Case", Description = "Case county." },
         new() { Key = "CaseNumber", Label = "Case Number", Category = "Case", Description = "Case number from the case header." },
+        new() { Key = "Case.Status", Label = "Case Status", Category = "Case", Description = "Current consolidated case status." },
+        new() { Key = "Case.FullStyle", Label = "Full Case Style", Category = "Case", Description = "Stored full style or a basic Arkansas State Highway Commission style." },
+        new() { Key = "Case.ShortStyle", Label = "Short Case Style", Category = "Case", Description = "Short working style for the matter." },
+        new() { Key = "Case.Caption", Label = "Case Caption", Category = "Case", Description = "Basic caption text without case number." },
+        new() { Key = "Case.CaptionWithNumber", Label = "Case Caption with Number", Category = "Case", Description = "Basic caption text with case number." },
         new() { Key = "JobNumber", Label = "Job Number", Category = "Case", Description = "Job number from the case record." },
         new() { Key = "Tract", Label = "Tract", Category = "Case", Description = "Tract identifier." },
         new() { Key = "ProjectName", Label = "Project Name", Category = "Case", Description = "Project name from the case record." },
         new() { Key = "DefendantNames", Label = "Defendant / Landowner Names", Category = "Case", Description = "Landowner if present, otherwise owner." },
         new() { Key = "DepositAmount", Label = "Deposit Amount", Category = "Case", Description = "Initial deposit amount." },
         new() { Key = "FilingDate", Label = "Filing Date", Category = "Case", Description = "Formatted filing date." },
+        new() { Key = "Case.DateOfTaking", Label = "Date of Taking", Category = "Case", Description = "Formatted date of taking." },
+        new() { Key = "Case.TrialDate", Label = "Jury Trial Date", Category = "Events and Deadlines", Description = "Controlling jury trial start date." },
+        new() { Key = "Case.TrialEndDate", Label = "Jury Trial End Date", Category = "Events and Deadlines", Description = "Optional jury trial end date." },
+        new() { Key = "Workflow.NextAction", Label = "Next Action", Category = "Events and Deadlines", Description = "Current next action." },
+        new() { Key = "Workflow.FollowUpDate", Label = "Follow-up Date", Category = "Events and Deadlines", Description = "Current follow-up/review date." },
         new() { Key = "DateOpened", Label = "Date Opened", Category = "Case Lifecycle", Description = "Date the matter was opened." },
         new() { Key = "DateClosed", Label = "Date Closed", Category = "Case Lifecycle", Description = "Date the matter was formally closed." },
         new() { Key = "CaseAgeDays", Label = "Case Age (Days)", Category = "Case Lifecycle", Description = "Current age for open cases, or duration for closed cases." },
@@ -43,6 +53,15 @@ public static partial class DocumentGenerationEngine
         new() { Key = "WholePropertyAcres", Label = "Whole Property Acres", Category = "Case", Description = "Whole property acreage." },
         new() { Key = "AcquisitionAcres", Label = "Acquisition Acres", Category = "Case", Description = "Acquisition acreage." },
         new() { Key = "TaxAmount", Label = "Tax Amount", Category = "Case", Description = "Tax amount owed from the case record." },
+        new() { Key = "Project.FapNumber", Label = "FAP Number", Category = "Project and Tract", Description = "Federal Aid Project number." },
+        new() { Key = "Project.ParcelNumber", Label = "Parcel Number", Category = "Project and Tract", Description = "Parcel identifier." },
+        new() { Key = "Court.Judge", Label = "Judge", Category = "Court", Description = "Assigned judge." },
+        new() { Key = "Court.Division", Label = "Court Division", Category = "Court", Description = "Court division." },
+        new() { Key = "AssignedAttorney", Label = "Assigned Attorney", Category = "Counsel", Description = "Attorney assigned to the case." },
+        new() { Key = "OpposingCounsel", Label = "Opposing Counsel", Category = "Counsel", Description = "Legacy primary opposing counsel field." },
+        new() { Key = "OpposingCounselContact", Label = "Opposing Counsel Contact", Category = "Counsel", Description = "Opposing counsel contact block." },
+        new() { Key = "Service.Status", Label = "Service Status", Category = "Service and Publication", Description = "Current service status." },
+        new() { Key = "Service.PerfectedDate", Label = "Service Perfected Date", Category = "Service and Publication", Description = "Formatted service perfected date." },
         new() { Key = "AttorneyName", Label = "Attorney Name", Category = "Organization", Description = "Attorney name from document defaults." },
         new() { Key = "BarNumber", Label = "Bar Number", Category = "Organization", Description = "Attorney bar number from document defaults." },
         new() { Key = "AttorneyPhone", Label = "Attorney Phone", Category = "Organization", Description = "Attorney phone from document defaults." },
@@ -56,6 +75,11 @@ public static partial class DocumentGenerationEngine
 
     public static Dictionary<string, string> BuildTokens(CaseRecord c, OrgDefaults org, Dictionary<string, string> manualInputs, IEnumerable<DocumentTemplateField>? manualFieldDefs = null)
     {
+        var defendantNames = !string.IsNullOrWhiteSpace(c.Landowner) ? c.Landowner! : (c.Owner ?? "");
+        var fullStyle = string.IsNullOrWhiteSpace(c.CaseStyle)
+            ? (string.IsNullOrWhiteSpace(defendantNames) ? "" : $"Arkansas State Highway Commission v. {defendantNames}")
+            : c.CaseStyle!;
+        var shortStyle = !string.IsNullOrWhiteSpace(defendantNames) ? defendantNames : fullStyle;
         var tokens = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["County"] = c.County ?? "",
@@ -63,9 +87,19 @@ public static partial class DocumentGenerationEngine
             ["JobNumber"] = c.JobNumber ?? "",
             ["Tract"] = c.Tract ?? "",
             ["ProjectName"] = c.ProjectName ?? "",
-            ["DefendantNames"] = !string.IsNullOrWhiteSpace(c.Landowner) ? c.Landowner! : (c.Owner ?? ""),
+            ["DefendantNames"] = defendantNames,
+            ["Case.Status"] = c.CaseStatus ?? "",
+            ["Case.FullStyle"] = fullStyle,
+            ["Case.ShortStyle"] = shortStyle,
+            ["Case.Caption"] = fullStyle,
+            ["Case.CaptionWithNumber"] = string.IsNullOrWhiteSpace(c.CaseNumber) ? fullStyle : $"{fullStyle} · Case No. {c.CaseNumber}",
             ["DepositAmount"] = c.DepositAmount?.ToString("N2", CultureInfo.InvariantCulture) ?? "",
             ["FilingDate"] = FormatReadableDate(c.FilingDate),
+            ["Case.DateOfTaking"] = FormatReadableDate(c.DateOfTaking),
+            ["Case.TrialDate"] = FormatReadableDate(c.TrialDate),
+            ["Case.TrialEndDate"] = FormatReadableDate(c.TrialEndDate),
+            ["Workflow.NextAction"] = c.NextAction ?? "",
+            ["Workflow.FollowUpDate"] = FormatReadableDate(c.NextActionDue),
             ["DateOpened"] = FormatReadableDate(c.DateOpened),
             ["DateClosed"] = FormatReadableDate(c.ClosedDate),
             ["CaseAgeDays"] = LifecycleDays(c.DateOpened, c.ClosedDate)?.ToString(CultureInfo.InvariantCulture) ?? "",
@@ -73,6 +107,15 @@ public static partial class DocumentGenerationEngine
             ["WholePropertyAcres"] = c.WholePropertyAcres?.ToString("0.##", CultureInfo.InvariantCulture) ?? "",
             ["AcquisitionAcres"] = c.AcquisitionAcres?.ToString("0.##", CultureInfo.InvariantCulture) ?? "",
             ["TaxAmount"] = c.TaxOwedAmount?.ToString("N2", CultureInfo.InvariantCulture) ?? "",
+            ["Project.FapNumber"] = c.FapNumber ?? "",
+            ["Project.ParcelNumber"] = c.ParcelNumber ?? "",
+            ["Court.Judge"] = c.Judge ?? "",
+            ["Court.Division"] = c.Division ?? "",
+            ["AssignedAttorney"] = c.AssignedAttorney ?? "",
+            ["OpposingCounsel"] = c.OpposingCounsel ?? "",
+            ["OpposingCounselContact"] = c.OpposingCounselContact ?? "",
+            ["Service.Status"] = c.ServiceStatus ?? "",
+            ["Service.PerfectedDate"] = FormatReadableDate(c.ServicePerfectedDate),
 
             ["AttorneyName"] = org.AttorneyName,
             ["BarNumber"] = org.BarNumber,
@@ -298,6 +341,6 @@ public static partial class DocumentGenerationEngine
         }
     }
 
-    [GeneratedRegex(@"\{\{(\w+)\}\}")]
+    [GeneratedRegex(@"\{\{([A-Za-z0-9_.]+)\}\}")]
     private static partial Regex TokenRegex();
 }

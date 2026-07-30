@@ -61,7 +61,12 @@ export function ManagerDashboard({
   const needsAttentionCount = useMemo(() => allCases.filter(needsAttention).length, [allCases])
   const pipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [allCases])
   const unassignedPipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline' && !record.assignedAttorney).length, [allCases])
-  const totalOpenCount = useMemo(() => allCases.filter(isOpenForDivision).length, [allCases])
+  const openCases = useMemo(() => allCases.filter(isOpenForDivision), [allCases])
+  const totalOpenCount = openCases.length
+  const openPipelineCount = useMemo(() => openCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [openCases])
+  const openFiledCount = totalOpenCount - openPipelineCount
+  const openUnassignedCount = useMemo(() => openCases.filter((record) => !record.assignedAttorney).length, [openCases])
+  const openNeedsAttentionCount = useMemo(() => openCases.filter(needsAttention).length, [openCases])
 
   function goToCalendar(nextHorizon?: CalendarHorizon) {
     setActiveTab('calendar')
@@ -97,7 +102,10 @@ export function ManagerDashboard({
         />
         <MetricTile label="Tracts in Pipeline" value={pipelineCount} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
         <MetricTile label="Unassigned Pipeline" value={unassignedPipelineCount} tone={unassignedPipelineCount > 0 ? 'warn' : 'default'} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
-        <MetricTile label="Total open tracts" value={totalOpenCount} onClick={() => goToCalendar()} />
+        <MetricTile label="Open tracts · division" value={totalOpenCount} />
+      </div>
+      <div className="helper-text management-workload-summary" aria-label="Open tract workload summary">
+        {openPipelineCount} pipeline · {openFiledCount} filed · {openUnassignedCount} unassigned · {openNeedsAttentionCount} need attention
       </div>
 
       <div className="segmented-tabs">

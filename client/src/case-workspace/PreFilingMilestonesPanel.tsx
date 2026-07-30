@@ -240,7 +240,7 @@ export function PreFilingMilestonesPanel({
                     ) : (
                       <button
                         type="button"
-                        className="link-button top-gap-small"
+                        className="compact-action-button top-gap-small"
                         onClick={() => { setUnmarkOpenFor(milestone); setUnmarkReason('') }}
                       >
                         Unmark…

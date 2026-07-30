@@ -1,34 +1,56 @@
-# Case Planner IT Review Build
+# IT Handoff — Case Planner
 
-This package is for IT/security/database review and controlled testing. It is not approved for shared
-production use. It contains no production credentials and no development SQLite database.
+## Current build
 
-## Included
+Case Planner currently has a portable SQLite test build for Windows. Extract the release ZIP to a writable directory and run `CasePlanner.Web.Server.exe`. The application creates `data`, `backups`, `exports`, `logs`, and template folders beside the executable.
 
-- Self-contained Windows x64 ASP.NET Core server and built React client
-- SQL Server migration scripts under sql/
-- Production configuration checklist under config/
-- IT deployment, Entra, and SQL migration documentation under docs/
-- The unified document platform's built-in `.docx` templates (Interrogatories, Requests for
-  Admission, Judgment, Settlement Justification) and import samples
+This is a test/preview deployment. Entra authentication and manager-only authorization are not yet enabled.
 
-## Local smoke test
+## First-machine checklist
 
-Run CasePlanner.Web.Server.exe from this folder. The build starts in guarded SQLite mode and binds to the
-configured local URL. The local data folder is intentionally empty; initialize it only for a disposable test.
+1. Confirm the folder is writable.
+2. Start the executable and open its local HTTP address.
+3. Confirm health, the document-template catalog, and sample DOCX generation.
+4. Create a backup before importing, resetting, or restoring data.
+5. Do not copy a developer database into a handoff package.
+6. Establish the future backup location and retention policy.
 
-## IT review requirements
+## Data locations
 
-Before any SQL Server or Entra test:
+- `data/`: SQLite database
+- `backups/`: database backups
+- `exports/`: generated documents and reports
+- `logs/`: runtime logs
+- `templates/`: document and reference templates
 
-1. Read docs/it-deployment-handoff.md, docs/microsoft-entra-setup.md, and docs/sql-server-migration.md.
-2. Supply ConnectionStrings__CasePlannerSqlServer through the deployment secret store.
-3. Keep Database__ActiveProvider=Sqlite until IT completes reconciliation and approves the remaining gates.
-4. Do not expose SQLite backup/reset endpoints in a production deployment.
-5. Provide an approved central document/reference share; the editable Reference Library writes text files and
-   .reference-library.json metadata there.
+## Workflow notes
 
-The current release gates are diagnostics/provider status, IT-owned SQL backup/restore/recovery procedures,
-Entra authorization testing, Discovery worksheet import, the unified document platform's SQL Server
-implementation (currently a deliberate not-yet-built stub - see "Unified document platform" in
-docs/it-deployment-handoff.md), and final provider activation.
+Pipeline review and pre-filing sign-off are managed together in the consolidated blue Pre-filing Workflow card near the case header. It contains holder/context, waiting-on, next action, follow-up date, filing-gate state, milestone marking/unmarking, and review notes. Work contains deadlines and tasks. Events contains hearings, trials, depositions, mediation, meetings, inspections, and other scheduled proceedings. `cases.trial_date` remains the controlling jury-trial date and is displayed prominently.
+
+Close/Reopen remains broadly available in the SQLite preview for testing. It preserves related work and audit history. Add Entra-based authorization before production use.
+
+## Document generation
+
+Templates use `{{Token}}` merge tags. The server catalog and resolver are maintained together. Missing or unknown values produce a missing marker/warning and do not block draft generation. Users must review generated drafts before they are passed along or filed.
+
+## Verification
+
+```powershell
+cd client
+npm test -- --run
+npm run build
+
+cd ..
+dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-restore
+.\scripts\local-package-smoke.ps1 -PackagePath '<portable-package>' -Port 5300
+```
+
+## Known deferred items
+
+- Entra authentication and final permissions
+- Trial-event source-of-truth migration
+- Weighted workload scoring
+- Final policy for confidential settlement/authority merge tags
+- Production deployment and network-share storage policy
+
+Keep this file synchronized with `README.md` when release, workflow, or storage behavior changes.

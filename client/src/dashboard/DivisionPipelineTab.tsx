@@ -3,7 +3,7 @@ import type { CaseRecord } from '../App'
 import { Btn } from '../ui/Btn'
 import { EmptyState } from './EmptyState'
 import { downloadCsv } from '../ui/csvExport'
-import type { PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
+import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 import { computePreFilingStallInfo } from './preFilingStallDetection'
 
 type SortKey = 'job' | 'tract' | 'holder' | 'stage' | 'nextAction' | 'followUp' | 'activity'
@@ -18,11 +18,13 @@ function daysSince(value?: string | null): number | null {
 export function DivisionPipelineTab({
   allCases,
   preFilingMilestones,
+  preFilingMilestonesAging,
   reviewNotes,
   onOpenCase,
 }: {
   allCases: CaseRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
+  preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
   reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
 }) {
@@ -86,6 +88,11 @@ export function DivisionPipelineTab({
         <Btn onClick={exportFiltered} disabled={rows.length === 0}>Export CSV</Btn>
       </div>
       <div className="pipeline-results-summary">{rows.length} of {pipeline.length} pipeline matter{pipeline.length === 1 ? '' : 's'} shown</div>
+      {preFilingMilestonesAging && <div className="pipeline-holder-summary" aria-label="Pre-filing milestone summary">
+        <div className="pipeline-holder-summary-item"><span>No milestone recorded</span><strong>{preFilingMilestonesAging.buckets.find((bucket) => bucket.milestone === 'None')?.count ?? 0}</strong></div>
+        <div className="pipeline-holder-summary-item"><span>Over 30 days at step</span><strong>{preFilingMilestonesAging.cases.filter((row) => (row.daysSinceMarked ?? 0) > 30).length}</strong></div>
+        <div className="pipeline-holder-summary-item"><span>Pipeline with history</span><strong>{preFilingMilestonesAging.cases.filter((row) => row.furthestMilestone !== 'None').length}</strong></div>
+      </div>}
       {rows.length === 0 ? <EmptyState title={pipeline.length === 0 ? 'No pre-filing matters right now.' : 'No pipeline matters match these filters.'} description="Adjust the filters or search terms to broaden the result." /> : (
         <div className="division-pipeline-list">
           {rows.map((record) => {

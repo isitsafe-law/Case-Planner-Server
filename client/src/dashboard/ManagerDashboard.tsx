@@ -5,16 +5,14 @@ import { MetricTile } from '../ui/MetricTile'
 import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
 import { DivisionPipelineTab } from './DivisionPipelineTab'
-import { FilingStatusSection } from './FilingStatusSection'
 import { ByAttorneyTab } from './ByAttorneyTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
 
-type ManagerDashboardTab = 'calendar' | 'pipeline' | 'filingStatus' | 'byAttorney' | 'needsAttention'
+type ManagerDashboardTab = 'calendar' | 'pipeline' | 'byAttorney' | 'needsAttention'
 
 const MANAGER_DASHBOARD_TABS: { key: ManagerDashboardTab; label: string }[] = [
   { key: 'calendar', label: 'Calendar' },
   { key: 'pipeline', label: 'Pipeline' },
-  { key: 'filingStatus', label: 'Filing Status' },
   { key: 'byAttorney', label: 'By Attorney' },
   { key: 'needsAttention', label: 'Needs Attention' },
 ]
@@ -127,15 +125,10 @@ export function ManagerDashboard({
 
         {activeTab === 'pipeline' && (
           <Panel title="Division Pipeline">
-            <DivisionPipelineTab allCases={allCases} preFilingMilestones={preFilingMilestones} reviewNotes={reviewNotes} onOpenCase={onOpenCase} />
+            <DivisionPipelineTab allCases={allCases} preFilingMilestones={preFilingMilestones} preFilingMilestonesAging={preFilingMilestonesAging} reviewNotes={reviewNotes} onOpenCase={onOpenCase} />
           </Panel>
         )}
 
-        {activeTab === 'filingStatus' && (
-          <Panel title="Filing Status">
-            <FilingStatusSection aging={preFilingMilestonesAging} onOpenCase={onOpenCase} />
-          </Panel>
-        )}
         {activeTab === 'byAttorney' && (
           <Panel title="By Attorney">
             <ByAttorneyTab allCases={allCases} hearings={hearings} onOpenCase={onOpenCase} />

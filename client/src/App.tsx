@@ -41,7 +41,7 @@ type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadl
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
-type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender'
+type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender' | 'deep-navy' | 'forest' | 'slate' | 'sunset' | 'rose'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
@@ -1513,8 +1513,8 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'diagnostics', label: 'Diagnostics' },
   { key: 'storage', label: 'Storage / Paths' },
   { key: 'documentDefaults', label: 'Document Defaults' },
-  { key: 'checklistTemplates', label: 'Checklist Templates' },
-  { key: 'deadlineTemplates', label: 'Deadline Templates' },
+  { key: 'checklistTemplates', label: 'Work-Item Templates' },
+  { key: 'deadlineTemplates', label: 'Deadline Rules' },
   { key: 'documentPlatformTemplates', label: 'Document Templates' },
   { key: 'issueTags', label: 'Issue Tags' },
   { key: 'referenceLibrary', label: 'Reference Library' },
@@ -1530,7 +1530,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
 const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = [
   { label: 'Appearance', sections: ['appearance'] },
   { label: 'Case Workflow', sections: ['documentDefaults', 'referenceLibrary'] },
-  { label: 'Tasks and Deadlines', sections: ['checklistTemplates', 'deadlineTemplates'] },
+  { label: 'Work Planning', sections: ['checklistTemplates', 'deadlineTemplates'] },
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
   { label: 'Staff', sections: ['staff', 'notifications'] },
@@ -2196,7 +2196,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'light'
     const stored = window.localStorage.getItem(themeStorageKey)
-    return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender'].includes(stored || '') ? stored as ThemeMode : 'light'
+    return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender', 'deep-navy', 'forest', 'slate', 'sunset', 'rose'].includes(stored || '') ? stored as ThemeMode : 'light'
   })
   const [page, setPage] = useState<PageKey>('dashboard')
   const [shutdownBusy, setShutdownBusy] = useState(false)
@@ -7682,7 +7682,8 @@ function App() {
                 const allText = [clerkText, assessorText, collectorText, newspapersText].filter(Boolean).join('\n\n')
                 return (
                   <>
-                    <div className="record-section">
+                    <div className="county-official-grid">
+                    <div className="county-official-card">
                       <div className="record-section-header">
                         <h4>Circuit Clerk</h4>
                       </div>
@@ -7701,7 +7702,7 @@ function App() {
                       )}
                     </div>
 
-                    <div className="record-section">
+                    <div className="county-official-card">
                       <div className="record-section-header">
                         <h4>Assessor</h4>
                       </div>
@@ -7720,7 +7721,7 @@ function App() {
                       )}
                     </div>
 
-                    <div className="record-section">
+                    <div className="county-official-card">
                       <div className="record-section-header">
                         <h4>Tax Collector</h4>
                       </div>
@@ -7739,7 +7740,7 @@ function App() {
                       )}
                     </div>
 
-                    <div className="record-section">
+                    <div className="county-official-card">
                       <div className="record-section-header">
                         <h4>Newspapers</h4>
                       </div>
@@ -7757,6 +7758,7 @@ function App() {
                       )}
                     </div>
 
+                    </div>
                     {(clerk || assessor || collector || countyNewspapers.length > 0) && (
                       <div className="button-row compact-actions top-gap-small">
                         <Btn size="sm" onClick={() => void navigator.clipboard.writeText(allText)}>Copy All County Officials</Btn>
@@ -9783,7 +9785,7 @@ function App() {
                 {modalFieldErrors.task && <small className="field-error">{modalFieldErrors.task}</small>}
               </label>
               <label>
-                <span>Phase</span>
+                <span>Stage grouping</span>
                 <select value={checklistDraft.phase || 'General'} onChange={(event) => patchChecklistDraft({ phase: event.target.value })}>
                   <option value="General">General</option>
                   {caseStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
@@ -10023,7 +10025,7 @@ function App() {
       )}
 
       {workTemplatePicker && (
-        <ModalShell title="Review Task and Deadline Templates" onClose={() => setWorkTemplatePicker(null)}>
+        <ModalShell title="Review Work Items to Add" onClose={() => setWorkTemplatePicker(null)}>
           {(() => {
             const scoped = workTemplatePicker.items.filter((x) => workTemplatePicker.kind === 'All' || x.kind === workTemplatePicker.kind)
             const visible = scoped.filter((x) => workTemplateFilter === 'all' || (workTemplateFilter === 'recommended' && !x.isDuplicate) || (workTemplateFilter === 'duplicates' && x.isDuplicate) || (workTemplateFilter === 'tasks' && x.kind === 'Task') || (workTemplateFilter === 'deadlines' && x.kind === 'Deadline'))
@@ -10131,7 +10133,7 @@ function App() {
           <div className="form-grid modal-form">
             <label className="full-span"><span>Name</span><input value={templateDraft.name} onChange={(event) => setTemplateDraft({ ...templateDraft, name: event.target.value })} placeholder="Template name" /></label>
             <label>
-              <span>Trigger Type</span>
+                  <span>Applies by</span>
               <select value={templateDraft.triggerType} onChange={(event) => setTemplateDraft({ ...templateDraft, triggerType: event.target.value })}>
                 <option value="Stage">Stage</option>
                 <option value="IssueTag">Issue Tag</option>
@@ -10139,9 +10141,9 @@ function App() {
             </label>
             {templateDraft.triggerType === 'Stage' ? (
               <label>
-                <span>Workflow Status</span>
+                  <span>Case status</span>
                 <select value={templateDraft.stage || ''} onChange={(event) => setTemplateDraft({ ...templateDraft, stage: event.target.value })}>
-                  <option value="">Select status</option>
+                    <option value="">Select case status</option>
                   {checklistWorkflowStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
               </label>
@@ -10155,7 +10157,7 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  <span>Workflow Status (optional filter)</span>
+                  <span>Case status (optional filter)</span>
                   <select value={templateDraft.stage || ''} onChange={(event) => setTemplateDraft({ ...templateDraft, stage: event.target.value })}>
                     <option value="">Any status</option>
                     {checklistWorkflowStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -10176,7 +10178,7 @@ function App() {
         <ModalShell title={templateItemDraft.id === 0 ? 'Add Template Item' : 'Edit Template Item'} onClose={() => setTemplateItemDraft(null)}>
           <div className="form-grid modal-form">
             <label className="full-span"><span>Task</span><input value={templateItemDraft.task} onChange={(event) => setTemplateItemDraft({ ...templateItemDraft, task: event.target.value })} placeholder="Task text" /></label>
-            <label><span>Phase</span><input value={templateItemDraft.phase || ''} onChange={(event) => setTemplateItemDraft({ ...templateItemDraft, phase: event.target.value })} placeholder="Phase label" /></label>
+            <label><span>Stage grouping (optional)</span><input value={templateItemDraft.phase || ''} onChange={(event) => setTemplateItemDraft({ ...templateItemDraft, phase: event.target.value })} placeholder="Optional broad stage label" /></label>
             <label><span>Sort Order</span><input type="number" value={templateItemDraft.sortOrder} onChange={(event) => setTemplateItemDraft({ ...templateItemDraft, sortOrder: Number(event.target.value) || 0 })} /></label>
             <label><span>Due Offset (days from generation)</span><input type="number" value={templateItemDraft.dueOffsetDays ?? ''} onChange={(event) => setTemplateItemDraft({ ...templateItemDraft, dueOffsetDays: event.target.value === '' ? null : Number(event.target.value) })} placeholder="e.g. 14" /></label>
           </div>
@@ -11099,10 +11101,15 @@ function App() {
                     <option value="pastel-blue">Pastel Blue</option>
                     <option value="pastel-sage">Pastel Sage</option>
                     <option value="pastel-lavender">Pastel Lavender</option>
+                    <option value="deep-navy">Deep Navy</option>
+                    <option value="forest">Forest</option>
+                    <option value="slate">Slate</option>
+                    <option value="sunset">Sunset</option>
+                    <option value="rose">Rose</option>
                   </select>
                 </label>
               </div>
-              <p className="helper-text top-gap-small">Theme preference is stored locally in this browser. High-contrast themes push text and control contrast beyond the standard AA level for stronger accessibility.</p>
+              <p className="helper-text top-gap-small">Theme preference is stored locally in this browser. High-contrast themes push text and control contrast beyond the standard AA level; the other themes are visual variants using the same semantic status colors.</p>
             </Panel>
           )}
 
@@ -11280,7 +11287,7 @@ function App() {
           )}
 
           {settingsSection === 'checklistTemplates' && (
-            <Panel title="Checklist Templates">
+            <Panel title="Work-Item Templates">
               <p className="helper-text">These templates drive the tasks and deadlines a case can pull in. Nothing is generated automatically on save anymore — use this to (re)apply templates to a specific case, e.g. after editing a template or fixing a case's stage.</p>
               <div className="compact-info-grid top-gap-small">
                 <label>
@@ -11306,7 +11313,7 @@ function App() {
                     </div>
                     <div className="panel-body">
                       <p className="helper-text">
-                        {template.triggerType === 'Stage' ? `Workflow Status: ${template.stage || '—'}` : `Issue Tag: ${template.issueTagName || '—'}${template.stage ? ` | Status filter: ${template.stage}` : ''}`}
+                        {template.triggerType === 'Stage' ? `Case status: ${template.stage || '—'}` : `Issue Tag: ${template.issueTagName || '—'}${template.stage ? ` | Status filter: ${template.stage}` : ''}`}
                         {' | '}{template.items.length} item{template.items.length === 1 ? '' : 's'}
                       </p>
                       <div className="button-row compact-actions">
@@ -11321,7 +11328,7 @@ function App() {
                           <div className="table-wrap">
                             <table className="ui-table">
                               <thead>
-                                <tr><th>Order</th><th>Task</th><th>Workflow Status</th><th>Due Offset (days)</th><th>Actions</th></tr>
+                                <tr><th>Order</th><th>Task</th><th>Stage grouping</th><th>Due Offset (days)</th><th>Actions</th></tr>
                               </thead>
                               <tbody>
                                 {template.items.length === 0 ? <tr><td colSpan={5}>No items yet.</td></tr> : template.items.map((item) => (
@@ -11624,9 +11631,9 @@ function App() {
           )}
 
           {settingsSection === 'deadlineTemplates' && (
-            <Panel title="Deadline Templates">
-              <p className="helper-text">Configure calculated deadlines by anchor, offset, and severity. Generated deadlines retain structured source provenance and manual overrides.</p>
-              <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',active:true})}>Add Deadline Template</button>
+            <Panel title="Deadline Rules">
+              <p className="helper-text">Configure calculated deadlines by case-date anchor, offset, and severity. Generated deadlines retain structured source provenance and manual overrides. Only supported anchors are offered.</p>
+              <button className="primary" onClick={() => setDeadlineTemplateDraft({id:0,name:'',triggerField:'filing_date',offsetDays:0,title:'',severity:'normal',active:true})}>Add Deadline Rule</button>
               {deadlineTemplateDraft && <div className="form-grid top-gap-small"><label><span>Name</span><input value={deadlineTemplateDraft.name} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,name:e.target.value})}/></label><label><span>Title</span><input value={deadlineTemplateDraft.title} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,title:e.target.value})}/></label><label><span>Anchor</span><select value={deadlineTemplateDraft.triggerField} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,triggerField:e.target.value})}><option value="filing_date">Filing date</option><option value="trial_date">Trial date</option><option value="service_perfected_date">Service perfected date</option></select></label><label><span>Offset days</span><input type="number" value={deadlineTemplateDraft.offsetDays} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,offsetDays:Number(e.target.value)})}/></label><label><span>Severity</span><select value={deadlineTemplateDraft.severity} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,severity:e.target.value})}>{deadlineSeverities.map(x=><option key={x}>{x}</option>)}</select></label><label className="toggle-inline"><span>Active</span><input type="checkbox" checked={deadlineTemplateDraft.active} onChange={e=>setDeadlineTemplateDraft({...deadlineTemplateDraft,active:e.target.checked})}/></label><div className="button-row full-span"><button className="primary" onClick={()=>void saveDeadlineTemplate()}>Save</button><button onClick={()=>setDeadlineTemplateDraft(null)}>Cancel</button></div></div>}
               <div className="table-wrap top-gap-small"><table className="ui-table"><thead><tr><th>Name</th><th>Title</th><th>Calculation</th><th>Actions</th></tr></thead><tbody>{deadlineTemplates.map(t=><tr key={t.id}><td>{t.name}</td><td>{t.title}</td><td className="ui-data">{t.triggerField} {t.offsetDays>=0?'+':''}{t.offsetDays} days</td><td><button onClick={()=>setDeadlineTemplateDraft({...t})}>Edit</button></td></tr>)}</tbody></table></div>
             </Panel>

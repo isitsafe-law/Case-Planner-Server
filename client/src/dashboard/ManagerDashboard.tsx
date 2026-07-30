@@ -4,15 +4,16 @@ import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
 import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
-import { IncomingPipelinePanel } from './IncomingPipelinePanel'
+import { DivisionPipelineTab } from './DivisionPipelineTab'
 import { FilingStatusSection } from './FilingStatusSection'
 import { ByAttorneyTab } from './ByAttorneyTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
 
-type ManagerDashboardTab = 'calendar' | 'filingStatus' | 'byAttorney' | 'needsAttention'
+type ManagerDashboardTab = 'calendar' | 'pipeline' | 'filingStatus' | 'byAttorney' | 'needsAttention'
 
 const MANAGER_DASHBOARD_TABS: { key: ManagerDashboardTab; label: string }[] = [
   { key: 'calendar', label: 'Calendar' },
+  { key: 'pipeline', label: 'Pipeline' },
   { key: 'filingStatus', label: 'Filing Status' },
   { key: 'byAttorney', label: 'By Attorney' },
   { key: 'needsAttention', label: 'Needs Attention' },
@@ -46,7 +47,6 @@ export function ManagerDashboard({
   preFilingMilestonesAging,
   reviewNotes,
   onOpenCase,
-  onMilestonesMutated,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
@@ -54,9 +54,6 @@ export function ManagerDashboard({
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
   reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
-  // Final implementation, item 1: re-fetches preFilingMilestones/preFilingMilestonesAging after an
-  // inline mark from the Incoming Pipeline panel - see App.tsx's refreshPreFilingMilestones.
-  onMilestonesMutated: () => Promise<void>
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
   const [horizon, setHorizon] = useState<CalendarHorizon>(30)
@@ -65,6 +62,7 @@ export function ManagerDashboard({
   const eventsNext30 = useMemo(() => countEventsInWindow(allCases, hearings, 30), [allCases, hearings])
   const needsAttentionCount = useMemo(() => allCases.filter(needsAttention).length, [allCases])
   const pipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [allCases])
+  const unassignedPipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline' && !record.assignedAttorney).length, [allCases])
   const totalOpenCount = useMemo(() => allCases.filter(isOpenForDivision).length, [allCases])
 
   function goToCalendar(nextHorizon?: CalendarHorizon) {
@@ -76,7 +74,7 @@ export function ManagerDashboard({
     <main className="page">
       <div className="dash-hd">
         <h2>Division Overview</h2>
-        <span className="dash-date">A 30,000-foot view across every tract in the division.</span>
+        <span className="dash-date">A 30,000-foot view across every tract in the division. Local SQLite preview; manager-only enforcement begins with Entra.</span>
       </div>
 
       <div className="ui-tiles" style={{ marginBottom: '1rem', flexWrap: 'wrap' }}>
@@ -99,7 +97,8 @@ export function ManagerDashboard({
           active={activeTab === 'needsAttention'}
           onClick={() => setActiveTab('needsAttention')}
         />
-        <MetricTile label="Tracts in Pipeline" value={pipelineCount} onClick={() => goToCalendar()} />
+        <MetricTile label="Tracts in Pipeline" value={pipelineCount} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
+        <MetricTile label="Unassigned Pipeline" value={unassignedPipelineCount} tone={unassignedPipelineCount > 0 ? 'warn' : 'default'} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
         <MetricTile label="Total open tracts" value={totalOpenCount} onClick={() => goToCalendar()} />
       </div>
 
@@ -123,10 +122,13 @@ export function ManagerDashboard({
                 onOpenCase={onOpenCase}
               />
             </Panel>
-            <Panel title="Incoming Pipeline">
-              <IncomingPipelinePanel allCases={allCases} preFilingMilestones={preFilingMilestones} reviewNotes={reviewNotes} onOpenCase={onOpenCase} onMutated={onMilestonesMutated} />
-            </Panel>
           </div>
+        )}
+
+        {activeTab === 'pipeline' && (
+          <Panel title="Division Pipeline">
+            <DivisionPipelineTab allCases={allCases} preFilingMilestones={preFilingMilestones} reviewNotes={reviewNotes} onOpenCase={onOpenCase} />
+          </Panel>
         )}
 
         {activeTab === 'filingStatus' && (

@@ -125,10 +125,21 @@ export function PreFilingMilestonesPanel({
     setBusyMilestone(milestone)
     try {
       setErrorMessage('')
-      await api(`/api/cases/${caseId}/prefiling-milestones/${milestone}/mark`, {
-        method: 'POST',
-        body: JSON.stringify({ occurredDate: draft.occurredDate, note: draft.note.trim() || undefined }),
-      })
+      if (milestone === 'DirectorSignatureReceived') {
+        await api(`/api/cases/${caseId}/prefiling-review`, {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'DirectorSignature',
+            occurredAt: draft.occurredDate,
+            note: draft.note.trim() || undefined,
+          }),
+        })
+      } else {
+        await api(`/api/cases/${caseId}/prefiling-milestones/${milestone}/mark`, {
+          method: 'POST',
+          body: JSON.stringify({ occurredDate: draft.occurredDate, note: draft.note.trim() || undefined }),
+        })
+      }
       setMarkDrafts((current) => {
         const next = { ...current }
         delete next[milestone]

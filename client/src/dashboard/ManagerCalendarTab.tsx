@@ -5,7 +5,7 @@ import { EmptyState } from '../ui/EmptyState'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
 
-export const CALENDAR_HORIZONS = [7, 30, 60, 90] as const
+export const CALENDAR_HORIZONS = [7, 30, 60, 90, 120, 180, 'all'] as const
 export type CalendarHorizon = typeof CALENDAR_HORIZONS[number]
 
 // The synthetic event type for a case's trialDate/trialEndDate - never render generic "Trial" per
@@ -80,7 +80,8 @@ export function ManagerCalendarTab({
 
   const caseById = useMemo(() => new Map(allCases.map((c) => [c.id, c])), [allCases])
   const today = todayEpochDay()
-  const windowEnd = today + horizon
+  const windowEnd = horizon === 'all' ? null : today + horizon
+  const isActiveCase = (record?: CaseRecord) => Boolean(record) && (record!.caseStatus || 'Pipeline') !== 'Resolved / Closed' && record!.status !== 'Closed' && record!.status !== 'Complete'
 
   // Forward-looking events inside the selected horizon: hearings joined against allCases for
   // display columns, plus a synthetic Jury Trial event per case with a trialDate in the window.
@@ -88,8 +89,9 @@ export function ManagerCalendarTab({
     const events: CalendarEvent[] = []
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
-      if (day == null || day < today || day > windowEnd) continue
+      if (day == null || day < today || (windowEnd != null && day > windowEnd)) continue
       const record = caseById.get(hearing.caseId)
+      if (!isActiveCase(record) || ['Completed', 'Canceled', 'Cancelled'].includes(hearing.status || '')) continue
       events.push({
         key: `hearing-${hearing.id}`,
         caseId: hearing.caseId,
@@ -104,7 +106,7 @@ export function ManagerCalendarTab({
     }
     for (const record of allCases) {
       const day = toEpochDay(record.trialDate)
-      if (day == null || day < today || day > windowEnd) continue
+      if (day == null || day < today || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
       events.push({
         key: `trial-${record.id}`,
         caseId: record.id,
@@ -132,6 +134,7 @@ export function ManagerCalendarTab({
       if (day == null || day >= today) continue
       if ((hearing.status || 'Scheduled') !== 'Scheduled') continue
       const record = caseById.get(hearing.caseId)
+      if (!isActiveCase(record)) continue
       events.push({
         key: `pastdue-${hearing.id}`,
         caseId: hearing.caseId,
@@ -209,7 +212,7 @@ export function ManagerCalendarTab({
       'Case Status': event.caseStatus,
       Flag: pastDueKeySet.has(event.key) ? 'Past due' : imminentKeys.has(event.key) ? 'Imminent' : '',
     }))
-    downloadCsv(`Division_Calendar_${horizon}day_${new Date().toISOString().slice(0, 10)}.csv`, rows)
+    downloadCsv(`Division_Calendar_${horizon === 'all' ? 'all' : `${horizon}day`}_${new Date().toISOString().slice(0, 10)}.csv`, rows)
   }
 
   function renderRow(event: CalendarEvent) {
@@ -234,7 +237,7 @@ export function ManagerCalendarTab({
         <div className="segmented-tabs compact-segments" style={{ maxWidth: 260 }}>
           {CALENDAR_HORIZONS.map((h) => (
             <button key={h} className={h === horizon ? 'segment active' : 'segment'} onClick={() => onHorizonChange(h)}>
-              {h} days
+              {h === 'all' ? 'See All' : `${h} days`}
             </button>
           ))}
         </div>
@@ -254,7 +257,7 @@ export function ManagerCalendarTab({
       </div>
 
       {totalVisible === 0 ? (
-        <EmptyState title={`No events in the next ${horizon} days.`} />
+        <EmptyState title={horizon === 'all' ? 'No future events for active cases.' : `No events in the next ${horizon} days.`} />
       ) : (
         <div className="table-wrap">
           <table className="ui-table compact-table">

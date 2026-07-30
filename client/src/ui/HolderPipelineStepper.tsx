@@ -24,9 +24,11 @@ export function holderStepState(stepIndex: number, currentIndex: number): Holder
 export function HolderPipelineStepper({
   currentHolder,
   onSelect,
+  readOnly = false,
 }: {
   currentHolder: string | null | undefined
-  onSelect: (holder: string) => void
+  onSelect?: (holder: string) => void
+  readOnly?: boolean
 }) {
   const currentIndex = holderStepIndex(currentHolder)
   const isOtherActive = currentIndex === -1 && !!currentHolder
@@ -48,7 +50,8 @@ export function HolderPipelineStepper({
                 type="button"
                 className={`holder-step holder-step-${state}`}
                 aria-current={state === 'current' ? 'step' : undefined}
-                onClick={() => onSelect(step)}
+                disabled={readOnly}
+                onClick={() => onSelect?.(step)}
               >
                 {step}
               </button>
@@ -60,7 +63,8 @@ export function HolderPipelineStepper({
         type="button"
         className={`holder-step holder-step-other ${isOtherActive ? 'holder-step-current' : 'holder-step-upcoming'}`}
         aria-current={isOtherActive ? 'step' : undefined}
-        onClick={() => onSelect(OTHER_HOLDER)}
+        disabled={readOnly}
+        onClick={() => onSelect?.(OTHER_HOLDER)}
       >
         {OTHER_HOLDER}
       </button>

@@ -41,7 +41,7 @@ type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadl
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
 type CasesViewKey = 'list' | 'workspace'
-type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light'
+type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-light' | 'pastel-blue' | 'pastel-sage' | 'pastel-lavender'
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
@@ -2196,7 +2196,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'light'
     const stored = window.localStorage.getItem(themeStorageKey)
-    return stored === 'dark' || stored === 'system' || stored === 'high-contrast' || stored === 'high-contrast-light' ? stored : 'light'
+    return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender'].includes(stored || '') ? stored as ThemeMode : 'light'
   })
   const [page, setPage] = useState<PageKey>('dashboard')
   const [shutdownBusy, setShutdownBusy] = useState(false)
@@ -2284,6 +2284,8 @@ function App() {
   const [newLegalAssistantAttorneyIds, setNewLegalAssistantAttorneyIds] = useState<number[]>([])
   const [newNewspaperCounty, setNewNewspaperCounty] = useState('')
   const [newNewspaperName, setNewNewspaperName] = useState('')
+  const [newNewspaperAddress, setNewNewspaperAddress] = useState('')
+  const [newNewspaperEmail, setNewNewspaperEmail] = useState('')
   const [caseAssignments, setCaseAssignments] = useState<CaseAssignmentRecord[]>([])
   const [newAssignmentDraft, setNewAssignmentDraft] = useState({ userId: '', caseRole: 'Attorney' as CaseRoleValue, assignmentRole: 'Collaborator' as AssignmentRoleValue })
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null)
@@ -2932,23 +2934,6 @@ function App() {
     }
   }
 
-  // Final implementation, item 1: re-fetches after an inline mark from the Incoming Pipeline panel -
-  // both the raw per-case milestone list (drives IncomingPipelinePanel/NeedsAttentionTab's shared
-  // stall detector) and the server's pre-aggregated aging view (Filing Status section), same
-  // "refetch exactly what changed" convention as saveCircuitClerk's own re-fetch-after-save pattern.
-  async function refreshPreFilingMilestones() {
-    try {
-      const [milestonesData, agingData] = await Promise.all([
-        api<PreFilingMilestoneRecord[]>('/api/prefiling-milestones'),
-        api<PreFilingMilestoneAgingSummary>('/api/prefiling-milestones/aging'),
-      ])
-      setPreFilingMilestones(milestonesData)
-      setPreFilingMilestonesAging(agingData)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to refresh pre-filing milestones.')
-    }
-  }
-
   function toggleCaseSort(column: CaseSortColumn) {
     if (caseSortColumn === column) {
       setCaseSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
@@ -3202,6 +3187,9 @@ function App() {
   async function saveNewspaper(model: NewspaperRecord) {
     try {
       setErrorMessage('')
+      if (!model.county.trim() || !model.name.trim()) throw new Error('County and newspaper name are required.')
+      if (model.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(model.email.trim())) throw new Error('Enter a valid newspaper email address.')
+      if (model.id === 0 && newspapers.some((row) => row.isActive && row.county.trim().toLocaleLowerCase() === model.county.trim().toLocaleLowerCase() && row.name.trim().toLocaleLowerCase() === model.name.trim().toLocaleLowerCase())) throw new Error('That newspaper already exists for this county.')
       await api('/api/newspapers', { method: 'POST', body: JSON.stringify(model) })
       setNewspapers(await api<NewspaperRecord[]>('/api/newspapers'))
     } catch (error) {
@@ -3226,10 +3214,14 @@ function App() {
       county: newNewspaperCounty.trim(),
       name: newNewspaperName.trim(),
       isGeneralCirculation: false,
+      address: newNewspaperAddress.trim() || null,
+      email: newNewspaperEmail.trim() || null,
       isActive: true,
     })
     setNewNewspaperCounty('')
     setNewNewspaperName('')
+    setNewNewspaperAddress('')
+    setNewNewspaperEmail('')
   }
 
   async function loadCaseAssignments(caseId: number) {
@@ -4922,21 +4914,6 @@ function App() {
     }
   }
 
-  async function setCurrentHolderFromStepper(holder: string) {
-    const caseId = selectedCaseId ?? caseDraft.id
-    // Clicking the already-active step is a no-op by design - skip the write so it doesn't add a
-    // redundant self-to-self entry to pipeline_handoffs.
-    if (!caseId || holder === (selectedCase.currentHolder || '')) return
-    try {
-      const result = await api<{ rowVersion?: string | null }>(`/api/cases/${caseId}/holder`, { method: 'POST', body: JSON.stringify({ rowVersion: selectedCase.rowVersion, currentHolder: holder }) })
-      applyCaseRowVersion(caseId, result.rowVersion)
-      await refreshAll(caseId)
-      setMessage('Holder updated.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the holder.')
-    }
-  }
-
   // Most recent pipeline_holder_approvals row for a given gated role, or 'Pending' when none
   // exists yet - "no row" already means pending, so Pending is never itself stored server-side.
   function pipelineApprovalStatusFor(role: string): 'Approved' | 'Returned' | 'Pending' {
@@ -4956,31 +4933,25 @@ function App() {
     return index > 0 ? HOLDER_STEPS[index - 1] : undefined
   }
 
-  // Approve / Return for Revision (POST /api/cases/{id}/pipeline-approvals). Approve is combined
-  // with the stepper's own holder-advance action here - in practice a review being approved and
-  // the file moving to the next role happen together almost every time, even though the holder
-  // chain is now pure history (Manager Dashboard sign-off consolidation, item 1) and nothing
-  // blocks the advance if Approve is skipped. setCurrentHolderFromStepper only runs after the
-  // approval POST below resolves, so a failed approve never attempts the advance. Chief Counsel
-  // has no next stepper role - approving there instead auto-populates the case's Waiting On the
-  // Director of Highways and Transportation signature (handled entirely server-side), so no
-  // advance call is made.
+  // Approve / Return for Revision now use the unified pre-filing review workflow. One server
+  // transaction records the history event, compatibility approval row, handoff, and active
+  // holder/stage update. Chief Counsel approval moves the case to the external Director-signature
+  // prerequisite; it does not create an in-system Director reviewer.
   async function recordPipelineHolderApproval(role: string, status: 'Approved' | 'Returned', note: string) {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId) return
     try {
       setErrorMessage('')
-      await api(`/api/cases/${caseId}/pipeline-approvals`, {
+      const action = status === 'Returned'
+        ? 'ReturnForRevision'
+        : role === 'Chief Counsel' ? 'ChiefCounselApprove' : 'Advance'
+      await api(`/api/cases/${caseId}/prefiling-review`, {
         method: 'POST',
-        body: JSON.stringify({ holderRole: role, status, note: note.trim() || undefined }),
+        body: JSON.stringify({ action, note: note.trim() || undefined }),
       })
       const advanceTo = status === 'Approved' ? nextHolderStep(role) : undefined
-      if (advanceTo) {
-        await setCurrentHolderFromStepper(advanceTo)
-      } else {
-        await refreshAll(caseId)
-      }
-      setMessage(status === 'Approved' ? (advanceTo ? `Approved and sent to ${advanceTo}.` : 'Approved.') : 'Returned for revision.')
+      await refreshAll(caseId)
+      setMessage(status === 'Approved' ? (advanceTo ? `Approved and sent to ${advanceTo}.` : 'Approved.') : 'Returned for revision to the submitting holder.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to record the pipeline review.')
     }
@@ -7279,7 +7250,7 @@ function App() {
           {!isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
             <div className="workspace-holder-row top-gap-small">
               <span className="workspace-holder-row-label">Holder</span>
-              <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} onSelect={(holder) => void setCurrentHolderFromStepper(holder)} />
+              <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} readOnly />
             </div>
           )}
           {/* Pipeline review history (office pilot): each gated role's most recent review status, plus
@@ -7433,6 +7404,23 @@ function App() {
                 <div className="warning-banner-text">
                   {overviewWarnings.map((warning) => <span key={warning}>{warning}</span>)}
                 </div>
+              </div>
+            )}
+
+            {(selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
+              <div className="prefiling-overview-card">
+                <div>
+                  <span className="eyebrow">Pre-filing workflow</span>
+                  <h3>{selectedCase.pipelineStage || selectedCase.stage || 'Pipeline stage not set'}</h3>
+                  <p>{selectedCase.currentHolder || 'Unassigned'} currently has responsibility for moving this matter forward.</p>
+                </div>
+                <div className="prefiling-overview-facts">
+                  <span><strong>Waiting on</strong>{selectedCase.shortPostureSummary || selectedCase.currentHolder || 'Not specified'}</span>
+                  <span><strong>Next action</strong>{selectedCase.nextAction || 'Not set'}</span>
+                  <span><strong>Follow-up</strong>{selectedCase.nextReviewDate ? displayDate(selectedCase.nextReviewDate) : 'Not set'}</span>
+                  <span><strong>Readiness</strong>{selectedCase.filingGateOverrideReason ? 'Override recorded' : 'Director signature gate applies'}</span>
+                </div>
+                <button className="link-button" onClick={() => scrollToCaseEditorSection('preFilingSignOff')}>Open pre-filing review</button>
               </div>
             )}
 
@@ -10513,7 +10501,6 @@ function App() {
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
-          onMilestonesMutated={refreshPreFilingMilestones}
         />
       )}
 
@@ -11109,6 +11096,9 @@ function App() {
                     <option value="system">Use System Setting</option>
                     <option value="high-contrast">High Contrast (Dark)</option>
                     <option value="high-contrast-light">High Contrast (Light)</option>
+                    <option value="pastel-blue">Pastel Blue</option>
+                    <option value="pastel-sage">Pastel Sage</option>
+                    <option value="pastel-lavender">Pastel Lavender</option>
                   </select>
                 </label>
               </div>
@@ -11817,6 +11807,12 @@ function App() {
           )}
 
           {settingsSection === 'countyReference' && (
+            <>
+            <nav className="reference-section-nav" aria-label="County reference sections">
+              <a href="#county-officials-reference" onClick={(event) => { event.preventDefault(); const target = document.getElementById('county-officials-reference'); target?.focus(); target?.scrollIntoView({ behavior: 'smooth' }) }}>County Officials</a>
+              <a href="#newspapers-reference" onClick={(event) => { event.preventDefault(); const target = document.getElementById('newspapers-reference'); target?.focus(); target?.scrollIntoView({ behavior: 'smooth' }) }}>Newspapers</a>
+            </nav>
+            <div id="county-officials-reference" tabIndex={-1}>
             <Panel title="Circuit Clerks">
               <p className="helper-text">Reference lookup for each county's circuit clerk, shown read-only on a case's Service &amp; Publication tab. Correct here any time an election or office move changes the details.</p>
               <div className="table-wrap top-gap-small">
@@ -11848,6 +11844,8 @@ function App() {
                 </table>
               </div>
             </Panel>
+            </div>
+            </>
           )}
 
           {settingsSection === 'countyReference' && (
@@ -11919,8 +11917,15 @@ function App() {
           )}
 
           {settingsSection === 'countyReference' && (
+            <div id="newspapers-reference" tabIndex={-1}>
             <Panel title="Newspapers" className="top-gap">
               <p className="helper-text">Newspapers of general circulation used for publication service, cross-linked from a case's Service &amp; Publication tab by county. Unlike Circuit Clerk/Assessor/Collector, a county can have more than one newspaper — add each one as its own row.</p>
+              <div className="reference-card-list">
+                {newspapers.filter((paper) => paper.isActive).map((paper) => <div className="reference-card" key={`summary-${paper.id}`}><strong>{paper.name}</strong><span>{paper.county} County</span><span style={{ whiteSpace: 'pre-wrap' }}>{paper.address || 'Address not recorded'}</span><span>{paper.email || 'Email not recorded'}</span></div>)}
+                {newspapers.filter((paper) => paper.isActive).length === 0 && <p className="helper-text">No active newspapers yet.</p>}
+              </div>
+              <details className="top-gap-small">
+                <summary>Advanced newspaper fields and existing records</summary>
               <div className="table-wrap top-gap-small">
                 <table className="compact-table">
                   <thead><tr><th>County</th><th>Name</th><th>General Circulation</th><th>Frequency</th><th>Submission Deadline</th><th>Contact</th><th>Billing / Affidavit Contact</th><th>Typical Cost</th><th>Notes</th><th>Active</th></tr></thead>
@@ -11974,6 +11979,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
+              </details>
               {(!currentUser || currentUser.isAdmin || currentUser.isManager) && (
                 <div className="form-grid top-gap-small">
                   <label>
@@ -11984,10 +11990,13 @@ function App() {
                     </select>
                   </label>
                   <label><span>Newspaper Name</span><input value={newNewspaperName} onChange={(event) => setNewNewspaperName(event.target.value)} placeholder="Newspaper name" /></label>
+                  <label className="full-span"><span>Address</span><textarea rows={2} value={newNewspaperAddress} onChange={(event) => setNewNewspaperAddress(event.target.value)} placeholder={'Street address\nCity, AR ZIP'} /></label>
+                  <label><span>Email</span><input type="email" value={newNewspaperEmail} onChange={(event) => setNewNewspaperEmail(event.target.value)} placeholder="publication@example.org" /></label>
                   <div className="button-row full-span"><button className="primary" onClick={() => void addNewspaper()}>Add Newspaper</button></div>
                 </div>
               )}
             </Panel>
+            </div>
           )}
 
           {settingsSection === 'notifications' && (

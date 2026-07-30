@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CaseRecord } from '../App'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
@@ -233,6 +233,33 @@ export function NeedsAttentionTab({
 }) {
   const [activityThresholdDays, setActivityThresholdDays] = useState(DEFAULT_ACTIVITY_THRESHOLD_DAYS)
   const [preFilingStallThresholdDays, setPreFilingStallThresholdDays] = useState(DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS)
+  const [settingsMessage, setSettingsMessage] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void fetch('/api/prefiling-review/settings')
+      .then((response) => response.ok ? response.json() as Promise<{ defaultStagnationDays?: number }> : Promise.reject(new Error('Unable to load saved dashboard settings.')))
+      .then((settings) => {
+        if (!cancelled && Number.isFinite(settings.defaultStagnationDays)) setPreFilingStallThresholdDays(Math.max(1, settings.defaultStagnationDays || DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS))
+      })
+      .catch(() => { /* local preview may be running against an older server */ })
+    return () => { cancelled = true }
+  }, [])
+
+  async function saveDashboardSettings() {
+    setSettingsMessage('')
+    try {
+      const response = await fetch('/api/prefiling-review/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultStagnationDays: preFilingStallThresholdDays, caseWeight: 1, stageWeight: 1, eventWeight: 1, urgencyWeight: 1 }),
+      })
+      if (!response.ok) throw new Error('Unable to save dashboard settings.')
+      setSettingsMessage('Saved division-wide pre-filing threshold.')
+    } catch (error) {
+      setSettingsMessage(error instanceof Error ? error.message : 'Unable to save dashboard settings.')
+    }
+  }
 
   const rows = useMemo(
     () => buildNeedsAttentionRows(
@@ -263,11 +290,13 @@ export function NeedsAttentionTab({
             onChange={(event) => setActivityThresholdDays(Math.max(1, Number(event.target.value) || 1))}
           />
         </label>
+        <Btn onClick={() => void saveDashboardSettings()}>Save threshold</Btn>
         <Btn onClick={() => exportCsv(rows)} disabled={rows.length === 0}>Export CSV</Btn>
       </div>
       <p className="helper-text" style={{ marginBottom: '0.6rem' }}>
-        Both thresholds apply only to this view for this session - they are not saved anywhere.
+        The pre-filing threshold is saved as the division-wide default. The activity threshold remains a view-only setting.
       </p>
+      {settingsMessage && <p className="helper-text" role="status">{settingsMessage}</p>}
 
       {rows.length === 0 ? (
         <EmptyState title="Nothing needs attention right now." description="No case currently trips the pre-filing stall, service, activity, or fee-shift checks below the thresholds above." />

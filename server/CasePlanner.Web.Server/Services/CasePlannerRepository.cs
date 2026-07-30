@@ -3782,6 +3782,240 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task<List<PrefilingReviewEventRecord>> GetPrefilingReviewEventsAsync(long? caseId)
+    {
+        var list = new List<PrefilingReviewEventRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, event_type, prior_holder, new_holder, prior_stage, new_stage,
+                   submitted_by_holder, submitted_by_display, recorded_by_display, occurred_at,
+                   recorded_at, note, override_reason
+            FROM case_prefiling_review_events
+            WHERE (@caseId IS NULL OR case_id=@caseId)
+            ORDER BY id DESC
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) list.Add(ReadPrefilingReviewEvent(reader));
+        return list;
+    }
+
+    private static PrefilingReviewEventRecord ReadPrefilingReviewEvent(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt64(0),
+        CaseId = reader.GetInt64(1),
+        EventType = reader.GetString(2),
+        PriorHolder = reader.IsDBNull(3) ? null : reader.GetString(3),
+        NewHolder = reader.IsDBNull(4) ? null : reader.GetString(4),
+        PriorStage = reader.IsDBNull(5) ? null : reader.GetString(5),
+        NewStage = reader.IsDBNull(6) ? null : reader.GetString(6),
+        SubmittedByHolder = reader.IsDBNull(7) ? null : reader.GetString(7),
+        SubmittedByDisplay = reader.IsDBNull(8) ? null : reader.GetString(8),
+        RecordedByDisplay = reader.IsDBNull(9) ? null : reader.GetString(9),
+        OccurredAt = reader.GetString(10),
+        RecordedAt = reader.GetString(11),
+        Note = reader.IsDBNull(12) ? null : reader.GetString(12),
+        OverrideReason = reader.IsDBNull(13) ? null : reader.GetString(13),
+    };
+
+    public async Task<PrefilingReviewEventRecord> RecordPrefilingReviewActionAsync(long caseId, PrefilingReviewActionRequest request)
+    {
+        var action = request.Action.Trim();
+        if (action is not ("Advance" or "ReturnForRevision" or "ChiefCounselApprove" or "DirectorSignature" or "OverrideAdvance"))
+            throw new ArgumentException("Unsupported pre-filing review action.");
+        if (action == "OverrideAdvance" && string.IsNullOrWhiteSpace(request.OverrideReason))
+            throw new ArgumentException("An override reason is required.");
+
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var occurredAt = string.IsNullOrWhiteSpace(request.OccurredAt) ? now : request.OccurredAt!;
+            string? currentHolder = null, currentStage = null, currentDate = null;
+            var caseCmd = connection.CreateCommand();
+            caseCmd.Transaction = tx;
+            caseCmd.CommandText = "SELECT current_holder, pipeline_stage, date_sent_to_current_holder FROM cases WHERE id=@id";
+            caseCmd.Parameters.AddWithValue("@id", caseId);
+            await using (var reader = await caseCmd.ExecuteReaderAsync())
+            {
+                if (!await reader.ReadAsync()) throw new InvalidOperationException("Case not found.");
+                currentHolder = reader.IsDBNull(0) ? "Legal Assistant" : reader.GetString(0);
+                currentStage = reader.IsDBNull(1) ? "With Legal Assistant" : reader.GetString(1);
+                currentDate = reader.IsDBNull(2) ? null : reader.GetString(2);
+            }
+
+            var priorHolder = currentHolder;
+            var priorStage = currentStage;
+            var newHolder = currentHolder;
+            var newStage = currentStage;
+            var eventType = action;
+            string? submittedByHolder = null;
+            string? submittedByDisplay = null;
+
+            var chain = new[] { "Legal Assistant", "Attorney", "Deputy Chief Counsel", "Chief Counsel" };
+            var index = Array.IndexOf(chain, currentHolder);
+            if (action is "Advance" or "OverrideAdvance")
+            {
+                if (index < 0 || index == chain.Length - 1) throw new InvalidOperationException("This review stage cannot advance without Chief Counsel approval.");
+                newHolder = chain[index + 1];
+                newStage = $"With {newHolder}";
+            }
+            else if (action == "ReturnForRevision")
+            {
+                var submitterCmd = connection.CreateCommand();
+                submitterCmd.Transaction = tx;
+                submitterCmd.CommandText = """
+                    SELECT submitted_by_holder, submitted_by_display
+                    FROM case_prefiling_review_events
+                    WHERE case_id=@case_id AND new_holder=@holder
+                      AND event_type IN ('Advance', 'OverrideAdvance')
+                      AND submitted_by_holder IS NOT NULL
+                    ORDER BY id DESC LIMIT 1
+                    """;
+                submitterCmd.Parameters.AddWithValue("@case_id", caseId);
+                submitterCmd.Parameters.AddWithValue("@holder", currentHolder ?? "");
+                await using var submitterReader = await submitterCmd.ExecuteReaderAsync();
+                if (!await submitterReader.ReadAsync())
+                    throw new InvalidOperationException("No submitting holder was recorded for this review.");
+                submittedByHolder = submitterReader.IsDBNull(0) ? null : submitterReader.GetString(0);
+                submittedByDisplay = submitterReader.IsDBNull(1) ? null : submitterReader.GetString(1);
+                newHolder = submittedByHolder;
+                newStage = $"With {newHolder}";
+                eventType = "ReturnedForRevision";
+            }
+            else if (action == "ChiefCounselApprove")
+            {
+                if (!string.Equals(currentHolder, "Chief Counsel", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Chief Counsel approval is only available when the case is with Chief Counsel.");
+                newHolder = "Filing Staff";
+                newStage = "Approved for Filing";
+                eventType = "ChiefCounselApproved";
+            }
+            else if (action == "DirectorSignature")
+            {
+                newHolder = "Filing Staff";
+                newStage = "Approved for Filing";
+                eventType = "DirectorSignatureRecorded";
+            }
+
+            var update = connection.CreateCommand();
+            update.Transaction = tx;
+            update.CommandText = """
+                UPDATE cases SET current_holder=@new_holder, pipeline_stage=@new_stage,
+                    date_sent_to_current_holder=@date_sent, next_review_date=NULL,
+                    waiting_on=CASE WHEN @event_type='ChiefCounselApproved' THEN 'Director of Highways and Transportation — Declaration of Taking signature' ELSE NULL END,
+                    waiting_started_date=CASE WHEN @event_type='ChiefCounselApproved' THEN @date_sent ELSE NULL END,
+                    updated_at=@now
+                WHERE id=@id
+                """;
+            update.Parameters.AddWithValue("@new_holder", DbValue(newHolder));
+            update.Parameters.AddWithValue("@new_stage", DbValue(newStage));
+            update.Parameters.AddWithValue("@date_sent", occurredAt[..Math.Min(10, occurredAt.Length)]);
+            update.Parameters.AddWithValue("@event_type", eventType);
+            update.Parameters.AddWithValue("@now", now);
+            update.Parameters.AddWithValue("@id", caseId);
+            await update.ExecuteNonQueryAsync();
+
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO case_prefiling_review_events
+                    (case_id,event_type,prior_holder,new_holder,prior_stage,new_stage,
+                     submitted_by_holder,submitted_by_display,recorded_by_display,occurred_at,
+                     recorded_at,note,override_reason)
+                VALUES
+                    (@case_id,@event_type,@prior_holder,@new_holder,@prior_stage,@new_stage,
+                     @submitted_by_holder,@submitted_by_display,@recorded_by_display,@occurred_at,
+                     @recorded_at,@note,@override_reason);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@case_id", caseId);
+            insert.Parameters.AddWithValue("@event_type", eventType);
+            insert.Parameters.AddWithValue("@prior_holder", DbValue(priorHolder));
+            insert.Parameters.AddWithValue("@new_holder", DbValue(newHolder));
+            insert.Parameters.AddWithValue("@prior_stage", DbValue(priorStage));
+            insert.Parameters.AddWithValue("@new_stage", DbValue(newStage));
+            insert.Parameters.AddWithValue("@submitted_by_holder", DbValue(currentHolder));
+            insert.Parameters.AddWithValue("@submitted_by_display", DbValue(_actor.AuditLabel));
+            insert.Parameters.AddWithValue("@recorded_by_display", DbValue(_actor.AuditLabel));
+            insert.Parameters.AddWithValue("@occurred_at", occurredAt);
+            insert.Parameters.AddWithValue("@recorded_at", now);
+            insert.Parameters.AddWithValue("@note", DbValue(request.Note));
+            insert.Parameters.AddWithValue("@override_reason", DbValue(request.OverrideReason));
+            var eventId = Convert.ToInt64(await insert.ExecuteScalarAsync());
+
+            if (action is "Advance" or "OverrideAdvance" or "ReturnForRevision" or "ChiefCounselApprove")
+            {
+                var legacy = connection.CreateCommand();
+                legacy.Transaction = tx;
+                legacy.CommandText = """
+                    INSERT INTO pipeline_holder_approvals
+                        (case_id,holder_role,status,note,set_at,set_by_display_name)
+                    VALUES (@case_id,@holder_role,@status,@note,@set_at,@set_by_display_name)
+                    """;
+                legacy.Parameters.AddWithValue("@case_id", caseId);
+                legacy.Parameters.AddWithValue("@holder_role", currentHolder ?? "");
+                legacy.Parameters.AddWithValue("@status", action == "ReturnForRevision" ? "Returned" : "Approved");
+                legacy.Parameters.AddWithValue("@note", DbValue(request.Note ?? request.OverrideReason));
+                legacy.Parameters.AddWithValue("@set_at", now);
+                legacy.Parameters.AddWithValue("@set_by_display_name", _actor.AuditLabel);
+                await legacy.ExecuteNonQueryAsync();
+            }
+
+            if ((priorHolder ?? "") != (newHolder ?? "") || (priorStage ?? "") != (newStage ?? ""))
+            {
+                var handoff = connection.CreateCommand();
+                handoff.Transaction = tx;
+                handoff.CommandText = """
+                    INSERT INTO pipeline_handoffs
+                        (case_id,previous_holder,new_holder,previous_stage,new_stage,handoff_date,next_review_date,note,created_at)
+                    VALUES (@case_id,@previous_holder,@new_holder,@previous_stage,@new_stage,@handoff_date,NULL,@note,@created_at)
+                    """;
+                handoff.Parameters.AddWithValue("@case_id", caseId);
+                handoff.Parameters.AddWithValue("@previous_holder", DbValue(priorHolder));
+                handoff.Parameters.AddWithValue("@new_holder", DbValue(newHolder));
+                handoff.Parameters.AddWithValue("@previous_stage", DbValue(priorStage));
+                handoff.Parameters.AddWithValue("@new_stage", DbValue(newStage));
+                handoff.Parameters.AddWithValue("@handoff_date", occurredAt[..Math.Min(10, occurredAt.Length)]);
+                handoff.Parameters.AddWithValue("@note", DbValue(request.Note));
+                handoff.Parameters.AddWithValue("@created_at", now);
+                await handoff.ExecuteNonQueryAsync();
+            }
+
+            if (action == "DirectorSignature")
+            {
+                var milestone = connection.CreateCommand();
+                milestone.Transaction = tx;
+                milestone.CommandText = """
+                    INSERT INTO case_prefiling_milestones
+                        (case_id,milestone,is_marked,occurred_date,marked_at,marked_by_display,marked_by_role,note)
+                    VALUES (@case_id,'DirectorSignatureReceived',1,@occurred_date,@marked_at,@marked_by_display,@marked_by_role,@note)
+                    ON CONFLICT(case_id,milestone) DO UPDATE SET is_marked=1,occurred_date=excluded.occurred_date,
+                        marked_at=excluded.marked_at,marked_by_display=excluded.marked_by_display,
+                        marked_by_role=excluded.marked_by_role,note=excluded.note
+                    """;
+                milestone.Parameters.AddWithValue("@case_id", caseId);
+                milestone.Parameters.AddWithValue("@occurred_date", occurredAt[..Math.Min(10, occurredAt.Length)]);
+                milestone.Parameters.AddWithValue("@marked_at", now);
+                milestone.Parameters.AddWithValue("@marked_by_display", _actor.AuditLabel);
+                milestone.Parameters.AddWithValue("@marked_by_role", _actor.Role);
+                milestone.Parameters.AddWithValue("@note", DbValue(request.Note));
+                await milestone.ExecuteNonQueryAsync();
+            }
+
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Recorded pre-filing review action for case {caseId} at {DateTime.Now:G}");
+            return new PrefilingReviewEventRecord
+            {
+                Id = eventId, CaseId = caseId, EventType = eventType, PriorHolder = priorHolder,
+                NewHolder = newHolder, PriorStage = priorStage, NewStage = newStage,
+                SubmittedByHolder = currentHolder, SubmittedByDisplay = _actor.AuditLabel,
+                RecordedByDisplay = _actor.AuditLabel, OccurredAt = occurredAt, RecordedAt = now,
+                Note = request.Note, OverrideReason = request.OverrideReason,
+            };
+        });
+    }
+
     // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - pure
     // record-keeping since Manager Dashboard sign-off consolidation item 4 (see DecideAsync's doc
     // comment). Unlike pipeline_holder_approvals above (append-only), settlement_authority_requests
@@ -9248,6 +9482,37 @@ public sealed partial class CasePlannerRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<PrefilingReviewSettings> GetPrefilingReviewSettingsAsync()
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var json = await GetAppSettingAsync(connection, "prefiling_review_settings_v1");
+        if (string.IsNullOrWhiteSpace(json)) return new PrefilingReviewSettings();
+        try { return JsonSerializer.Deserialize<PrefilingReviewSettings>(json) ?? new PrefilingReviewSettings(); }
+        catch (JsonException) { return new PrefilingReviewSettings(); }
+    }
+
+    public async Task<PrefilingReviewSettings> SavePrefilingReviewSettingsAsync(SavePrefilingReviewSettingsRequest request)
+    {
+        if (request.DefaultStagnationDays < 1) throw new ArgumentException("Default stagnation days must be at least 1.");
+        if (request.CaseWeight < 0 || request.StageWeight < 0 || request.EventWeight < 0 || request.UrgencyWeight < 0)
+            throw new ArgumentException("Workload weights cannot be negative.");
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var settings = new PrefilingReviewSettings
+            {
+                DefaultStagnationDays = request.DefaultStagnationDays,
+                CaseWeight = request.CaseWeight,
+                StageWeight = request.StageWeight,
+                EventWeight = request.EventWeight,
+                UrgencyWeight = request.UrgencyWeight,
+                UpdatedAt = DateTime.UtcNow.ToString("O"),
+            };
+            await SetAppSettingAsync(connection, tx, "prefiling_review_settings_v1", JsonSerializer.Serialize(settings));
+            return settings;
+        });
+    }
+
     private static async Task ExecuteAsync(SqliteConnection connection, string sql)
     {
         var cmd = connection.CreateCommand();
@@ -9573,6 +9838,23 @@ public sealed partial class CasePlannerRepository
             set_by_display_name TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_pipeline_holder_approvals_case_role ON pipeline_holder_approvals(case_id, holder_role, id);
+        CREATE TABLE IF NOT EXISTS case_prefiling_review_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            prior_holder TEXT,
+            new_holder TEXT,
+            prior_stage TEXT,
+            new_stage TEXT,
+            submitted_by_holder TEXT,
+            submitted_by_display TEXT,
+            recorded_by_display TEXT,
+            occurred_at TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            note TEXT,
+            override_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_case_prefiling_review_events_case_id ON case_prefiling_review_events(case_id, id);
         CREATE TABLE IF NOT EXISTS witnesses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,

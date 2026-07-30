@@ -700,6 +700,50 @@ public sealed class RecordPipelineHolderApprovalRequest
     public string? SetByDisplayName { get; set; }
 }
 
+// Authoritative SQLite review history for the pre-filing workflow. The older
+// pipeline_holder_approvals/pipeline_handoffs tables remain readable for compatibility, but new
+// review actions record one event and update the active case state in the same transaction.
+public sealed class PrefilingReviewEventRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public string EventType { get; set; } = "Advanced";
+    public string? PriorHolder { get; set; }
+    public string? NewHolder { get; set; }
+    public string? PriorStage { get; set; }
+    public string? NewStage { get; set; }
+    public string? SubmittedByHolder { get; set; }
+    public string? SubmittedByDisplay { get; set; }
+    public string? RecordedByDisplay { get; set; }
+    public string OccurredAt { get; set; } = "";
+    public string RecordedAt { get; set; } = "";
+    public string? Note { get; set; }
+    public string? OverrideReason { get; set; }
+}
+
+public sealed class PrefilingReviewActionRequest
+{
+    // Advance | ReturnForRevision | ChiefCounselApprove | DirectorSignature | OverrideAdvance
+    public string Action { get; set; } = "Advance";
+    public string? Note { get; set; }
+    public string? OccurredAt { get; set; }
+    public string? OverrideReason { get; set; }
+}
+
+public class PrefilingReviewSettings
+{
+    public int DefaultStagnationDays { get; set; } = 7;
+    public decimal CaseWeight { get; set; } = 1m;
+    public decimal StageWeight { get; set; } = 1m;
+    public decimal EventWeight { get; set; } = 1m;
+    public decimal UrgencyWeight { get; set; } = 1m;
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class SavePrefilingReviewSettingsRequest : PrefilingReviewSettings
+{
+}
+
 public sealed class UpcomingWorkItemRecord
 {
     public string Key { get; set; } = "";

@@ -277,6 +277,9 @@ builder.Services.AddSingleton<IReviewNoteStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerReviewNoteStore>()
         : services.GetRequiredService<SqliteReviewNoteStore>());
+builder.Services.AddSingleton<SqlitePrefilingReviewStore>();
+builder.Services.AddSingleton<IPrefilingReviewStore>(services =>
+    services.GetRequiredService<SqlitePrefilingReviewStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -736,6 +739,23 @@ app.MapPost("/api/cases/{caseId:long}/review-notes", async (long caseId, CreateR
 // use.
 app.MapGet("/api/review-notes", async (long? caseId, IReviewNoteStore notes, CancellationToken token) =>
     Results.Ok(await notes.GetAsync(caseId, token)));
+
+app.MapGet("/api/cases/{caseId:long}/prefiling-review/events", async (long caseId, IPrefilingReviewStore review, CancellationToken token) =>
+    Results.Ok(await review.GetEventsAsync(caseId, token)));
+app.MapPost("/api/cases/{caseId:long}/prefiling-review", async (long caseId, PrefilingReviewActionRequest request, IPrefilingReviewStore review, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
+    try { return Results.Ok(await review.RecordAsync(caseId, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapGet("/api/prefiling-review/settings", async (IPrefilingReviewStore review, CancellationToken token) =>
+    Results.Ok(await review.GetSettingsAsync(token)));
+app.MapPut("/api/prefiling-review/settings", async (SavePrefilingReviewSettingsRequest request, IPrefilingReviewStore review, CancellationToken token) =>
+{
+    try { return Results.Ok(await review.SaveSettingsAsync(request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());

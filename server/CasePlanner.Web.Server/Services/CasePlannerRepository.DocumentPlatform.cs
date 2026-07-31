@@ -462,6 +462,7 @@ public sealed partial class CasePlannerRepository
                 insert.Parameters.AddWithValue("@inputs", JsonSerializer.Serialize(runtimeInputValues));
                 insert.Parameters.AddWithValue("@missing", JsonSerializer.Serialize(missing));
                 var id = Convert.ToInt64(await insert.ExecuteScalarAsync());
+                await SetAppSettingAsync(connection, tx, "last_document_generation_failure", "");
 
                 return new DocumentGenerationResult
                 {

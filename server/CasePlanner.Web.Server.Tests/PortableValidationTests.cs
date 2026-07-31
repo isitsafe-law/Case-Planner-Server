@@ -48,5 +48,10 @@ public sealed class PortableValidationTests : IAsyncLifetime
         Assert.NotNull(diagnostics.LastDocumentGenerationFailure);
         Assert.Equal("request-123", diagnostics.LastDocumentGenerationFailure!.RequestId);
         Assert.Contains("Template could not be opened", diagnostics.LastDocumentGenerationFailure.Message);
+
+        await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(1, "interrogatories_platform", [], new Dictionary<string, string>(), null);
+
+        diagnostics = await _fixture.Repository.GetDiagnosticsAsync();
+        Assert.Null(diagnostics.LastDocumentGenerationFailure);
     }
 }

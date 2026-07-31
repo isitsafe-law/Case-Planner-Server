@@ -145,6 +145,8 @@ custom-template metadata, generated files, and audit records before retirement.
 - Ordered SQL scripts require DBA execution discipline.
 - The solution is now `CasePlanner.slnx`; clean-machine restore still depends on NuGet access or a complete
   internal package mirror.
+- A backward-compatible `GET /api/cases/paged` endpoint now exposes bounded case pages and a total count for
+  large-docket consumers. Existing screens still use the original array response until their pagination UX is ready.
 
 ## Recommended first milestone
 

@@ -40,4 +40,17 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         activity = await _fixture.Repository.GetActivityLogAsync(caseRecord.Id);
         Assert.Contains(activity, entry => entry.ActivityType == "AttorneyAssignmentRemoved" && entry.PreviousValue!.Contains("Supporting Attorney", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task DataQualityReportsDuplicateAttorneyAssignments()
+    {
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski" });
+        await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = "Same Attorney", Role = "Supporting" });
+        await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = " same attorney ", Role = "Supporting" });
+
+        var report = await _fixture.Repository.GetDataQualityReportAsync();
+        var issue = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-duplicate");
+        Assert.True(issue.Count >= 1);
+        Assert.Contains(caseRecord.Id, issue.SampleCaseIds);
+    }
 }

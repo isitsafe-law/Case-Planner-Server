@@ -169,6 +169,8 @@ Attorney assignment changes are recorded in the existing case activity stream as
 
 The SQL Server attorney-assignment store now follows the provider pattern used by other case child records: reads, inserts, updates with row-version concurrency, soft deletes, and audit events are implemented. The SQLite path remains the portable test-build source.
 
+Data-quality reporting now flags orphaned or duplicate attorney assignments and invalid Service Log-to-defendant references. These findings are review-only; no automatic backfill or deletion is performed.
+
 Event reconciliation is observational: data-quality checks flag a case-level jury-trial date with no matching calendar event, a Jury Trial event with no case-level date, and conflicting dates. The case-level `trial_date` remains authoritative until a deliberate source-of-truth migration is approved.
 
 When behavior changes, update this README and the IT handoff documentation in the same change.

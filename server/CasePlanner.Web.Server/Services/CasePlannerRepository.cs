@@ -9873,6 +9873,27 @@ public sealed partial class CasePlannerRepository
             "SELECT COUNT(*) FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10);",
             "SELECT c.id FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10) ORDER BY c.id LIMIT 20;"));
 
+        report.Issues.Add(await Issue(
+            "attorney-assignment-orphan", "Warning", "Attorney assignments without a case",
+            "Attorney-assignment rows whose case_id does not resolve to an existing case.",
+            "Review the assignment row before any provider migration; do not backfill or delete it automatically.",
+            "SELECT COUNT(*) FROM case_attorney_assignments a LEFT JOIN cases c ON c.id=a.case_id WHERE c.id IS NULL;",
+            "SELECT a.case_id FROM case_attorney_assignments a LEFT JOIN cases c ON c.id=a.case_id WHERE c.id IS NULL ORDER BY a.case_id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "attorney-assignment-duplicate", "Info", "Duplicate attorney assignments on a case",
+            "A case has more than one active assignment row for the same normalized attorney name.",
+            "Keep the intended role/order and remove only the duplicate after review.",
+            "SELECT COUNT(*) FROM (SELECT case_id, lower(trim(name)) FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1);",
+            "SELECT case_id FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1 ORDER BY case_id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "service-log-party-reference-mismatch", "Warning", "Service entries with invalid canonical party references",
+            "Service Log rows whose optional case_defendant_id is missing or belongs to another case.",
+            "Review the canonical party link; preserve the party-name snapshot when the historical entry cannot be safely matched.",
+            "SELECT COUNT(*) FROM service_log_entries s LEFT JOIN case_defendants d ON d.id=s.case_defendant_id AND d.case_id=s.case_id WHERE s.case_defendant_id IS NOT NULL AND d.id IS NULL;",
+            "SELECT s.case_id FROM service_log_entries s LEFT JOIN case_defendants d ON d.id=s.case_defendant_id AND d.case_id=s.case_id WHERE s.case_defendant_id IS NOT NULL AND d.id IS NULL ORDER BY s.case_id LIMIT 20;"));
+
         var templateIssue = new DataQualityIssue
         {
             Key = "missing-template-files", Severity = "Critical", Label = "Active document templates with missing files",

@@ -101,3 +101,4 @@ Keep this file synchronized with `README.md` when release, workflow, or storage 
 - Calendar attorney filtering now matches supporting assignments on SQLite while retaining the primary attorney as the displayed case owner. SQL Server remains primary-only until its assignment runtime store is implemented.
 - Attorney assignment additions/changes/removals are recorded in the existing activity log with assignment name/role and actor metadata. This is the audit source for the current SQLite implementation.
 - SQL Server attorney-assignment storage now has a provider implementation with row-version concurrency, soft delete, and audit-event writes. It still requires deployment validation against an actual SQL Server environment.
+- Data-quality reporting flags orphaned/duplicate attorney assignments and invalid Service Log canonical-party links for review without modifying data.

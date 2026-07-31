@@ -58,7 +58,7 @@ public class RiskAnalysisExcelExportServiceTests : IAsyncLifetime
         var analysis = await _fixture.Repository.GetRiskAnalysisAsync(c.Id);
         var offerLog = await _fixture.Repository.GetOfferLogAsync(c.Id);
 
-        var bytes = RiskAnalysisExcelExportService.BuildWorkbook(c, analysis, offerLog);
+        var bytes = RiskAnalysisExcelExportService.BuildWorkbook(c, analysis, offerLog, new DateOnly(2026, 7, 31));
 
         Assert.NotEmpty(bytes);
 
@@ -78,6 +78,9 @@ public class RiskAnalysisExcelExportServiceTests : IAsyncLifetime
 
         Assert.Equal("Fixture Landowner et al.", ws.Cell("B1").GetString());
         Assert.Equal("12CV-26-1", ws.Cell("B2").GetString());
+        Assert.Equal(new DateTime(2026, 1, 15), ws.Cell("B4").GetDateTime().Date);
+        Assert.Equal(new DateTime(2026, 7, 31), ws.Cell("B6").GetDateTime().Date);
+        Assert.Equal("M/d/yyyy", ws.Cell("B4").Style.DateFormat.Format);
         Assert.Equal("ASHC FIRST OFFER", ws.Cell("A17").GetString());
         Assert.True(ws.Cell("C14").HasFormula);
         Assert.True(ws.Cell("B18").HasFormula);

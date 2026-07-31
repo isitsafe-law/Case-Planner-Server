@@ -19,19 +19,20 @@ public static class RiskAnalysisExcelExportService
     private static readonly string[] HourlyFeeOptions =
         ["20000", "25000", "30000", "35000", "40000", "45000", "50000", "55000", "60000", "65000", "70000", "75000", "80000", "85000", "90000"];
 
-    public static byte[] BuildWorkbook(CaseRecord c, RiskAnalysisResult analysis, IReadOnlyList<RiskAnalysisOfferLogEntry> offerLog)
+    public static byte[] BuildWorkbook(CaseRecord c, RiskAnalysisResult analysis, IReadOnlyList<RiskAnalysisOfferLogEntry> offerLog, DateOnly? exportDate = null)
     {
         using var workbook = new XLWorkbook();
         var ws = workbook.Worksheets.Add("Risk Analysis");
         ws.Style.Font.FontName = "Calibri";
         ws.Style.Font.FontSize = 11;
+        var exportedOn = exportDate ?? DateOnly.FromDateTime(DateTime.Today);
 
         // GetRiskAnalysisAsync returns primary rows plus their computed "Split" rows in the same
         // flat list - only the primary (non-split) rows carry the raw inputs this export needs,
         // since the 3 split rows here are always rebuilt from formulas, not from saved data.
         var rowsByKey = analysis.Rows.Where(r => !r.IsSplit).ToDictionary(r => r.RowKey, r => r);
 
-        WriteHeaderBlock(ws, c, analysis);
+        WriteHeaderBlock(ws, c, exportedOn);
         WriteDepositRows(ws, c);
         WriteTableHeader(ws);
 
@@ -48,6 +49,7 @@ public static class RiskAnalysisExcelExportService
         WriteOldOffers(ws, offerLog);
         ApplySummaryAlignment(ws);
         ApplyRowBanding(ws);
+        ApplySourceWorkbookFormatting(ws);
         ApplyColumnWidths(ws);
 
         using var stream = new MemoryStream();
@@ -74,7 +76,47 @@ public static class RiskAnalysisExcelExportService
         }
     }
 
-    private static void WriteHeaderBlock(IXLWorksheet ws, CaseRecord c, RiskAnalysisResult analysis)
+    private static void ApplySourceWorkbookFormatting(IXLWorksheet ws)
+    {
+        var navy = XLColor.FromHtml("#1F4E78");
+        var lightBlue = XLColor.FromHtml("#D9EAF7");
+        var inputGray = XLColor.FromHtml("#F2F2F2");
+        var border = XLColor.FromHtml("#9EADBA");
+
+        ws.Range("A1:K1").Style.Fill.BackgroundColor = navy;
+        ws.Range("A1:K1").Style.Font.FontColor = XLColor.White;
+        ws.Range("A1:K1").Style.Font.Bold = true;
+        ws.Range("A1:K1").Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+        ws.Row(1).Height = 27;
+
+        ws.Range("A2:D8").Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range("A2:D8").Style.Border.OutsideBorderColor = border;
+        ws.Range("A2:D8").Style.Border.InsideBorder = XLBorderStyleValues.Hair;
+        ws.Range("A2:D8").Style.Border.InsideBorderColor = border;
+        ws.Range("B1:B8").Style.Fill.BackgroundColor = inputGray;
+        ws.Range("D2:D7").Style.Fill.BackgroundColor = inputGray;
+        ws.Range("A9:K9").Style.Fill.BackgroundColor = navy;
+        ws.Range("A9:K9").Style.Font.FontColor = XLColor.White;
+        ws.Range("A9:K9").Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+        ws.Range("A9:K9").Style.Border.OutsideBorderColor = navy;
+        ws.Range("A10:K24").Style.Border.BottomBorder = XLBorderStyleValues.Hair;
+        ws.Range("A10:K24").Style.Border.BottomBorderColor = border;
+        ws.Range("A10:K24").Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range("A10:K24").Style.Border.OutsideBorderColor = border;
+        ws.Range("A25:K25").Style.Fill.BackgroundColor = lightBlue;
+        ws.Range("A27:C28").Style.Fill.BackgroundColor = lightBlue;
+        ws.Range("A27:C28").Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range("A27:C28").Style.Border.OutsideBorderColor = border;
+
+        ws.Cell("B4").AddConditionalFormat().WhenIsBlank().Fill.SetBackgroundColor(XLColor.LightYellow);
+        ws.Cell("B6").AddConditionalFormat().WhenIsBlank().Fill.SetBackgroundColor(XLColor.LightYellow);
+        foreach (var row in new[] { 14, 15, 17, 18, 20, 21, 23, 24 })
+        {
+            ws.Cell(row, 4).AddConditionalFormat().WhenContains("Add File").Fill.SetBackgroundColor(XLColor.LightYellow);
+        }
+    }
+
+    private static void WriteHeaderBlock(IXLWorksheet ws, CaseRecord c, DateOnly exportDate)
     {
         void Label(string addr, string text)
         {
@@ -109,7 +151,7 @@ public static class RiskAnalysisExcelExportService
         ws.Cell("D5").Value = c.LandownerAppraiserName;
 
         Label("A6", "TODAY'S DATE:");
-        SetDateCell(ws.Cell("B6"), analysis.AnalysisDate);
+        SetDateCell(ws.Cell("B6"), exportDate);
         Label("C6", "APPRAISER (ASHC):");
         ws.Cell("D6").Value = c.Appraiser;
 
@@ -235,8 +277,8 @@ public static class RiskAnalysisExcelExportService
         var dCell = ws.Cell(row, 4);
         var rate = analysis.InterestRate.ToString(CultureInfo.InvariantCulture);
         var contingency = analysis.ContingencyFeePercent.ToString(CultureInfo.InvariantCulture);
-        dCell.FormulaA1 = $"(MAX(B{row}-$B$10,0)*{rate}*(MAX(MIN(IF(AND($B$11<>\"\",$D$7<>\"\"),$D$7,$B$6),$B$6)-$B$4,0))/365)" +
-            $"+(IF(AND($B$11<>\"\",$D$7<>\"\"),MAX(B{row}-$B$10-$B$11,0)*{rate}*(MAX($B$6-$D$7,0))/365,0))";
+        dCell.FormulaA1 = $"IF(OR($B$4=\"\",$B$6=\"\"),\"Add File and/or Today's Date\",(MAX(B{row}-$B$10,0)*{rate}*(MAX(MIN(IF(AND($B$11<>\"\",$D$7<>\"\"),$D$7,$B$6),$B$6)-$B$4,0))/365)" +
+            $"+(IF(AND($B$11<>\"\",$D$7<>\"\"),MAX(B{row}-$B$10-$B$11,0)*{rate}*(MAX($B$6-$D$7,0))/365,0)))";
         ApplyCurrencyFormat(dCell);
 
         var eCell = ws.Cell(row, 5);
@@ -325,9 +367,14 @@ public static class RiskAnalysisExcelExportService
     {
         if (DateTime.TryParse(isoDate, out var date))
         {
-            cell.Value = date;
-            cell.Style.DateFormat.Format = DateFormat;
+            SetDateCell(cell, DateOnly.FromDateTime(date));
         }
+    }
+
+    private static void SetDateCell(IXLCell cell, DateOnly date)
+    {
+        cell.Value = date.ToDateTime(TimeOnly.MinValue);
+        cell.Style.DateFormat.Format = DateFormat;
     }
 
     // ClosedXML writes formula strings with no cached value, so Excel shows blanks/zeros until a

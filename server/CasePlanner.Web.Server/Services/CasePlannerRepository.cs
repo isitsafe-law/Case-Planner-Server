@@ -9274,6 +9274,10 @@ public sealed partial class CasePlannerRepository
             });
 
             SqliteConnection.ClearAllPools();
+            // Treat restore as an upgrade boundary too. A backup from an older portable build
+            // must be opened through the same additive schema-upgrade path as a normal startup
+            // before the operation is reported as successful.
+            await InitializeAsync();
             await LogAsync($"Database restored from backup: {fileName}");
             return new RestoreBackupResult
             {

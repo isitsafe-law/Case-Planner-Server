@@ -33,5 +33,9 @@ public sealed class PortableValidationTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(result.SafetyBackupFileName));
         Assert.NotEqual(result.RestoredFileName, result.SafetyBackupFileName);
         Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(_fixture.DatabasePath)!, "..", "backups", result.SafetyBackupFileName)));
+
+        var diagnostics = await _fixture.Repository.GetDiagnosticsAsync();
+        Assert.True(diagnostics.WriteSafetyOk, diagnostics.WriteSafetyMessage);
+        Assert.True(diagnostics.CaseCount >= 4);
     }
 }

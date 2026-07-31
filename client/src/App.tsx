@@ -3957,8 +3957,8 @@ function App() {
   function startNewJuryTrial() {
     const caseId = selectedCaseId ?? selectedCase.id
     if (!caseId) return
-    setHearingDraft({ ...emptyHearing(caseId), eventType: 'Jury Trial', title: 'Jury Trial' })
     openModal('event', 'create')
+    setHearingDraft({ ...emptyHearing(caseId), eventType: 'Jury Trial', title: 'Jury Trial' })
   }
 
   function startEditHearing(hearing: Hearing) {
@@ -6090,6 +6090,7 @@ function App() {
     try {
       const saved = await api<CaseAttorneyAssignment>(`/api/cases/${next.caseId}/attorney-assignments`, { method: 'POST', body: JSON.stringify(next) })
       setCaseAttorneyAssignments((prev) => prev.map((item, i) => i === index ? saved : item))
+      await refreshAll(next.caseId)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save attorney assignment.')
     }
@@ -6099,7 +6100,7 @@ function App() {
     const row = caseAttorneyAssignments[index]
     setCaseAttorneyAssignments((prev) => prev.filter((_, i) => i !== index))
     if (row.id) {
-      try { await api(`/api/case-attorney-assignments/${row.id}`, { method: 'DELETE' }) }
+      try { await api(`/api/case-attorney-assignments/${row.id}`, { method: 'DELETE' }); await refreshAll(row.caseId) }
       catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to remove attorney assignment.') }
     }
   }
@@ -9710,21 +9711,23 @@ function App() {
                 </label>
                 <div className="full-span">
                   <span>Additional Attorneys</span>
-                  <p className="helper-text">The Assigned Attorney remains the primary compatibility field. Add supporting attorneys here without changing current dashboard ownership.</p>
-                  {caseAttorneyAssignments.map((row, index) => (
+                  <p className="helper-text">The Assigned Attorney is the primary attorney. Additional attorneys are recorded as 2nd chair. Changing the Assigned Attorney automatically swaps the primary and 2nd-chair roles when appropriate.</p>
+                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary' && row.name.trim() !== (caseDraft.assignedAttorney || '').trim()).map((row) => {
+                    const index = caseAttorneyAssignments.indexOf(row)
+                    return (
                     <div key={row.id || `new-attorney-${index}`} className="button-row compact-actions top-gap-small">
                       <select value={row.name} onChange={(event) => void changeCaseAttorneyAssignment(index, { name: event.target.value })}>
                         <option value="">Select attorney</option>
                         {attorneyOptions(attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), row.name).map((name) => <option key={name} value={name}>{name}</option>)}
                       </select>
                       <select value={row.role} onChange={(event) => void changeCaseAttorneyAssignment(index, { role: event.target.value })}>
-                        <option value="Supporting">Supporting</option>
-                        <option value="Primary">Primary (record only)</option>
+                        <option value="Supporting">2nd chair</option>
                       </select>
                       <button type="button" onClick={() => void removeCaseAttorneyAssignment(index)}>Remove</button>
                     </div>
-                  ))}
-                  {caseAttorneyAssignments.length === 0 && <p className="helper-text top-gap-small">No additional attorneys recorded.</p>}
+                    )
+                  })}
+                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary' && row.name.trim() !== (caseDraft.assignedAttorney || '').trim()).length === 0 && <p className="helper-text top-gap-small">No 2nd chair attorney recorded.</p>}
                   <button type="button" className="top-gap-small" onClick={addCaseAttorneyAssignmentRow}>+ Add Attorney</button>
                 </div>
                 <div className="full-span">
@@ -10219,7 +10222,7 @@ function App() {
                   value={(eventTypes as readonly string[]).includes(hearingDraft.eventType || '') && hearingDraft.eventType !== 'Jury Trial' ? hearingDraft.eventType ?? '' : '__custom'}
                   onChange={(event) => setHearingDraft({ ...hearingDraft, eventType: event.target.value === '__custom' ? '' : event.target.value })}
                 >
-                  {eventTypes.filter((type) => type !== 'Jury Trial').map((type) => <option key={type} value={type}>{type}</option>)}
+                  {eventTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                   <option value="__custom">Custom…</option>
                 </select>
               </label>}

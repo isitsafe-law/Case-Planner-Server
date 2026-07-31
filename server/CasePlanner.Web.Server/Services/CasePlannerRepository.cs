@@ -1348,6 +1348,7 @@ public sealed partial class CasePlannerRepository
         var overrideApplied = await WithWriteAsync(async (connection, tx) =>
         {
             var applied = await SaveCaseInternalAsync(connection, tx, model);
+            await SyncPrimaryAttorneyAssignmentAsync(connection, tx, model.Id, model.AssignedAttorney);
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved case {model.CaseNumber} at {DateTime.Now:G}");
             return applied;
         });
@@ -3787,6 +3788,66 @@ public sealed partial class CasePlannerRepository
         return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 
+    private static async Task SyncPrimaryAttorneyAssignmentAsync(SqliteConnection connection, SqliteTransaction tx, long caseId, string? assignedAttorney)
+    {
+        var desired = assignedAttorney?.Trim();
+        if (string.IsNullOrWhiteSpace(desired)) return;
+
+        var rows = new List<(long Id, string Name, string Role, int SortOrder)>();
+        await using (var read = connection.CreateCommand())
+        {
+            read.Transaction = tx;
+            read.CommandText = "SELECT id, name, role, sort_order FROM case_attorney_assignments WHERE case_id=@caseId ORDER BY sort_order, id";
+            read.Parameters.AddWithValue("@caseId", caseId);
+            await using var reader = await read.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                rows.Add((reader.GetInt64(0), reader.IsDBNull(1) ? "" : reader.GetString(1), reader.IsDBNull(2) ? "Supporting" : reader.GetString(2), reader.IsDBNull(3) ? 0 : reader.GetInt32(3)));
+        }
+
+        var primary = rows.FirstOrDefault(row => string.Equals(row.Role, "Primary", StringComparison.OrdinalIgnoreCase));
+        var selected = rows.FirstOrDefault(row => string.Equals(row.Name.Trim(), desired, StringComparison.OrdinalIgnoreCase));
+        var selectedId = selected.Id;
+
+        if (selectedId != 0)
+        {
+            await using var promote = connection.CreateCommand();
+            promote.Transaction = tx;
+            promote.CommandText = "UPDATE case_attorney_assignments SET role='Primary', sort_order=0, updated_at=@now WHERE id=@id";
+            promote.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+            promote.Parameters.AddWithValue("@id", selectedId);
+            await promote.ExecuteNonQueryAsync();
+
+            foreach (var row in rows.Where(row => row.Id != selectedId && string.Equals(row.Role, "Primary", StringComparison.OrdinalIgnoreCase)))
+            {
+                await using var demote = connection.CreateCommand();
+                demote.Transaction = tx;
+                demote.CommandText = "UPDATE case_attorney_assignments SET role='Supporting', sort_order=1, updated_at=@now WHERE id=@id";
+                demote.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+                demote.Parameters.AddWithValue("@id", row.Id);
+                await demote.ExecuteNonQueryAsync();
+            }
+            return;
+        }
+
+        if (primary.Id != 0)
+        {
+            await using var demote = connection.CreateCommand();
+            demote.Transaction = tx;
+            demote.CommandText = "UPDATE case_attorney_assignments SET role='Supporting', sort_order=1, updated_at=@now WHERE id=@id";
+            demote.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+            demote.Parameters.AddWithValue("@id", primary.Id);
+            await demote.ExecuteNonQueryAsync();
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.Transaction = tx;
+        insert.CommandText = "INSERT INTO case_attorney_assignments (case_id, name, role, sort_order, created_at, updated_at) VALUES (@caseId,@name,'Primary',0,@now,@now)";
+        insert.Parameters.AddWithValue("@caseId", caseId);
+        insert.Parameters.AddWithValue("@name", desired);
+        insert.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+        await insert.ExecuteNonQueryAsync();
+    }
+
     public async Task<CaseAttorneyAssignmentRecord> SaveCaseAttorneyAssignmentAsync(CaseAttorneyAssignmentRecord model)
     {
         if (string.IsNullOrWhiteSpace(model.Name)) throw new InvalidOperationException("Attorney name is required.");
@@ -3824,6 +3885,16 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@sortOrder", model.SortOrder);
             cmd.Parameters.AddWithValue("@now", now);
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            if (string.Equals(model.Role, "Primary", StringComparison.OrdinalIgnoreCase))
+            {
+                await SyncPrimaryAttorneyAssignmentAsync(connection, tx, model.CaseId, model.Name);
+                var primary = connection.CreateCommand();
+                primary.Transaction = tx;
+                primary.CommandText = "UPDATE cases SET assigned_attorney=@name WHERE id=@caseId";
+                primary.Parameters.AddWithValue("@name", model.Name.Trim());
+                primary.Parameters.AddWithValue("@caseId", model.CaseId);
+                await primary.ExecuteNonQueryAsync();
+            }
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved case attorney {model.Name} at {DateTime.Now:G}");
             return model;
         });
@@ -3856,6 +3927,22 @@ public sealed partial class CasePlannerRepository
             cmd.CommandText = "DELETE FROM case_attorney_assignments WHERE id=@id";
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
+            if (caseId != 0 && string.Equals(role, "Primary", StringComparison.OrdinalIgnoreCase))
+            {
+                var next = connection.CreateCommand();
+                next.Transaction = tx;
+                next.CommandText = "SELECT name FROM case_attorney_assignments WHERE case_id=@caseId ORDER BY sort_order, id LIMIT 1";
+                next.Parameters.AddWithValue("@caseId", caseId);
+                var nextName = Convert.ToString(await next.ExecuteScalarAsync());
+                var replacement = connection.CreateCommand();
+                replacement.Transaction = tx;
+                replacement.CommandText = "UPDATE cases SET assigned_attorney=@name WHERE id=@caseId";
+                replacement.Parameters.AddWithValue("@name", string.IsNullOrWhiteSpace(nextName) ? DBNull.Value : nextName);
+                replacement.Parameters.AddWithValue("@caseId", caseId);
+                await replacement.ExecuteNonQueryAsync();
+                if (!string.IsNullOrWhiteSpace(nextName))
+                    await SyncPrimaryAttorneyAssignmentAsync(connection, tx, caseId, nextName);
+            }
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted case attorney {id} at {DateTime.Now:G}");
             return (caseId, name, role);
         });

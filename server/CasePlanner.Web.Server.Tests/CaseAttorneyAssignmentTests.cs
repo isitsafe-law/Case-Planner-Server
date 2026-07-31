@@ -27,9 +27,9 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         });
 
         var assignments = await _fixture.Repository.GetCaseAttorneyAssignmentsAsync(caseRecord.Id);
-        var assignment = Assert.Single(assignments);
-        Assert.Equal(saved.Id, assignment.Id);
+        var assignment = Assert.Single(assignments, row => row.Id == saved.Id);
         Assert.Equal("Supporting", assignment.Role);
+        Assert.Contains(assignments, row => row.Name == "Primary Attorney" && row.Role == "Primary");
         var reloaded = Assert.Single(await _fixture.Repository.GetCasesAsync("ASSIGNMENT-1", "", "", "", true));
         Assert.Equal("Primary Attorney", reloaded.AssignedAttorney);
 
@@ -39,6 +39,34 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         await _fixture.Repository.DeleteCaseAttorneyAssignmentAsync(saved.Id);
         activity = await _fixture.Repository.GetActivityLogAsync(caseRecord.Id);
         Assert.Contains(activity, entry => entry.ActivityType == "AttorneyAssignmentRemoved" && entry.PreviousValue!.Contains("Supporting Attorney", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ChangingAssignedAttorneyToSecondChairSwapsPrimaryProjection()
+    {
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Assignment Swap Case",
+            CaseNumber = "ASSIGNMENT-SWAP-1",
+            County = "Pulaski",
+            AssignedAttorney = "First Chair",
+        });
+
+        await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord
+        {
+            CaseId = caseRecord.Id,
+            Name = "Second Chair",
+            Role = "Supporting",
+        });
+
+        caseRecord.AssignedAttorney = "Second Chair";
+        await _fixture.Repository.SaveCaseAsync(caseRecord);
+
+        var reloaded = Assert.Single(await _fixture.Repository.GetCasesAsync("ASSIGNMENT-SWAP-1", "", "", "", true));
+        Assert.Equal("Second Chair", reloaded.AssignedAttorney);
+        var assignments = await _fixture.Repository.GetCaseAttorneyAssignmentsAsync(caseRecord.Id);
+        Assert.Contains(assignments, row => row.Name == "Second Chair" && row.Role == "Primary");
+        Assert.Contains(assignments, row => row.Name == "First Chair" && row.Role == "Supporting");
     }
 
     [Fact]
@@ -65,7 +93,7 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
     [Fact]
     public async Task DataQualityReportsDuplicateAttorneyAssignments()
     {
-        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski", AssignedAttorney = "Legacy Drift Attorney" });
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski" });
         await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = "Same Attorney", Role = "Supporting" });
         await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = " same attorney ", Role = "Supporting" });
 
@@ -76,8 +104,5 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         var directoryIssue = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-not-in-directory");
         Assert.True(directoryIssue.Count >= 2);
         Assert.Contains(caseRecord.Id, directoryIssue.SampleCaseIds);
-        var missingPrimary = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-primary-missing");
-        Assert.True(missingPrimary.Count >= 1);
-        Assert.Contains(caseRecord.Id, missingPrimary.SampleCaseIds);
     }
 }

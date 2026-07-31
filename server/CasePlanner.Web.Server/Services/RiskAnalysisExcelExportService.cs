@@ -93,7 +93,7 @@ public static class RiskAnalysisExcelExportService
         ws.Range("A2:D8").Style.Border.OutsideBorderColor = border;
         ws.Range("A2:D8").Style.Border.InsideBorder = XLBorderStyleValues.Hair;
         ws.Range("A2:D8").Style.Border.InsideBorderColor = border;
-        ws.Range("B1:B8").Style.Fill.BackgroundColor = inputGray;
+        ws.Range("B2:B8").Style.Fill.BackgroundColor = inputGray;
         ws.Range("D2:D7").Style.Fill.BackgroundColor = inputGray;
         ws.Range("A9:K9").Style.Fill.BackgroundColor = navy;
         ws.Range("A9:K9").Style.Font.FontColor = XLColor.White;
@@ -108,11 +108,28 @@ public static class RiskAnalysisExcelExportService
         ws.Range("A27:C28").Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         ws.Range("A27:C28").Style.Border.OutsideBorderColor = border;
 
-        ws.Cell("B4").AddConditionalFormat().WhenIsBlank().Fill.SetBackgroundColor(XLColor.LightYellow);
-        ws.Cell("B6").AddConditionalFormat().WhenIsBlank().Fill.SetBackgroundColor(XLColor.LightYellow);
+        AddWarningRule(ws.Cell("B4"), "ISBLANK($B$4)");
+        AddWarningRule(ws.Cell("B6"), "ISBLANK($B$6)");
+        AddWarningRule(ws.Cell("D7"), "AND($B$11=\"\",$D$7<>\"\")");
+        AddWarningRule(ws.Cell("D7"), "AND($B$11<>\"\",$D$7=\"\")");
+        AddWarningRule(ws.Cell("E7"), "AND($B$11<>\"\",$D$7=\"\")");
+
+        foreach (var row in new[] { 14, 15, 17, 20, 23 })
+        {
+            AddWarningRule(ws.Cell(row, 4), $"LEFT(D{row},LEN(\"Add File\"))=\"Add File\"");
+        }
+
         foreach (var row in new[] { 14, 15, 17, 18, 20, 21, 23, 24 })
         {
-            ws.Cell(row, 4).AddConditionalFormat().WhenContains("Add File").Fill.SetBackgroundColor(XLColor.LightYellow);
+            AddWarningRule(ws.Cell(row, 10), $"J{row}>MIN($J${row},$K${row})");
+            AddWarningRule(ws.Cell(row, 11), $"K{row}>MIN($J${row},$K${row})");
+        }
+
+        static void AddWarningRule(IXLCell cell, string formula)
+        {
+            var format = cell.AddConditionalFormat().WhenIsTrue(formula);
+            format.Fill.SetBackgroundColor(XLColor.FromHtml("#FFFF00"));
+            format.Font.SetFontColor(XLColor.FromHtml("#FFC00000"));
         }
     }
 

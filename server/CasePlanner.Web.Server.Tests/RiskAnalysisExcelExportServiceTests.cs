@@ -81,6 +81,7 @@ public class RiskAnalysisExcelExportServiceTests : IAsyncLifetime
         Assert.Equal(new DateTime(2026, 1, 15), ws.Cell("B4").GetDateTime().Date);
         Assert.Equal(new DateTime(2026, 7, 31), ws.Cell("B6").GetDateTime().Date);
         Assert.Equal("M/d/yyyy", ws.Cell("B4").Style.DateFormat.Format);
+        Assert.True(ws.ConditionalFormats.Any());
         Assert.Equal("ASHC FIRST OFFER", ws.Cell("A17").GetString());
         Assert.True(ws.Cell("C14").HasFormula);
         Assert.True(ws.Cell("B18").HasFormula);

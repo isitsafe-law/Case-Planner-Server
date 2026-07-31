@@ -9988,6 +9988,41 @@ public sealed partial class CasePlannerRepository
             }
         }
         report.Issues.Add(templateIssue);
+
+        var unknownTagIssue = new DataQualityIssue
+        {
+            Key = "unknown-document-template-tags", Severity = "Warning", Label = "Active document templates with unknown merge tags",
+            Definition = "Active document templates containing merge tags that are neither in the canonical registry nor declared runtime inputs.",
+            SuggestedAction = "Open the template completeness report and replace the tag with a canonical field or declare the intended runtime input.",
+        };
+        var activeTemplateVersions = new List<(long VersionId, string StoragePath)>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, storage_path FROM document_template_versions WHERE is_active=1";
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                activeTemplateVersions.Add((reader.GetInt64(0), reader.GetString(1)));
+            }
+        }
+        foreach (var version in activeTemplateVersions)
+        {
+            var path = ResolveTemplateStoragePath(version.StoragePath);
+            if (path is null) continue;
+            try
+            {
+                var discovered = DocumentGenerationEngine.ExtractTokensFromDocx(await File.ReadAllBytesAsync(path));
+                var runtimeKeys = (await GetRuntimeInputsAsync(connection, version.VersionId)).Select(input => input.FieldKey);
+                var audit = DocumentGenerationEngine.AuditTemplateTags(discovered, new Dictionary<string, string>(StringComparer.Ordinal), runtimeKeys);
+                if (audit.UnknownTags.Count > 0) unknownTagIssue.Count++;
+            }
+            catch
+            {
+                // Missing or malformed files are reported by the template-file check or the
+                // generation request itself; do not turn diagnostics into a second failure.
+            }
+        }
+        report.Issues.Add(unknownTagIssue);
         return report;
     }
 

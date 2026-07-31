@@ -183,6 +183,8 @@ Document-generation tests now audit every active built-in template for unknown m
 
 If document generation fails unexpectedly, the portable server retains the latest failure message, operation, request ID, and log path in Diagnostics. This makes a reported 500 actionable without server access; the full exception remains in the local log.
 
+Data Quality also flags active document templates that contain unknown merge tags, so template drift is visible before a user attempts generation.
+
 The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.
 
 Case list rows and open-case headers now show the primary attorney separately from supporting attorneys, keeping the view compact while making shared responsibility visible.

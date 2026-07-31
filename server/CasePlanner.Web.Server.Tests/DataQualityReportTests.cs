@@ -20,6 +20,7 @@ public sealed class DataQualityReportTests : IAsyncLifetime
         Assert.Contains(report.Issues, issue => issue.Key == "jury-trial-event-no-case-date");
         Assert.Contains(report.Issues, issue => issue.Key == "missing-template-files");
         Assert.Equal(0, report.Issues.Single(issue => issue.Key == "missing-template-files").Count);
+        Assert.Equal(0, report.Issues.Single(issue => issue.Key == "unknown-document-template-tags").Count);
         Assert.All(report.Issues, issue => Assert.Equal(Math.Max(0, issue.Count - issue.SampleCaseIds.Count), issue.AdditionalCaseCount));
     }
 }

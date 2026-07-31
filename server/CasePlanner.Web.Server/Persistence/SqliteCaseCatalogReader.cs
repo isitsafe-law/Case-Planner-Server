@@ -10,6 +10,9 @@ public sealed class SqliteCaseCatalogReader(CasePlannerRepository repository) : 
     public Task<List<CaseRecord>> GetCasesAsync(CaseCatalogQuery query, CancellationToken cancellationToken = default) =>
         repository.GetCasesAsync(query.Search, query.Status, query.County, query.Stage, query.IncludeClosed, query.Track, query.CaseStatus, query.DateOpenedFrom, query.DateOpenedTo, query.DateClosedFrom, query.DateClosedTo);
 
+    public Task<CaseCatalogPage> GetCasesPageAsync(CaseCatalogQuery query, int limit, int offset, CancellationToken cancellationToken = default) =>
+        repository.GetCasesPageAsync(query.Search, query.Status, query.County, query.Stage, query.IncludeClosed, query.Track, query.CaseStatus, query.DateOpenedFrom, query.DateOpenedTo, query.DateClosedFrom, query.DateClosedTo, limit, offset);
+
     public Task<CaseRecord> SaveCaseAsync(CaseRecord model, CancellationToken cancellationToken = default) =>
         repository.SaveCaseAsync(model);
 

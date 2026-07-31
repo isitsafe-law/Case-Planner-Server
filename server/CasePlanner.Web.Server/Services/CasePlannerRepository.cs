@@ -1078,7 +1078,19 @@ public sealed partial class CasePlannerRepository
         return rows;
     }
 
-    public async Task<List<CaseRecord>> GetCasesAsync(string search, string status, string county, string stage, bool includeClosed, string track = "", string caseStatus = "", string dateOpenedFrom = "", string dateOpenedTo = "", string dateClosedFrom = "", string dateClosedTo = "")
+    public Task<List<CaseRecord>> GetCasesAsync(string search, string status, string county, string stage, bool includeClosed, string track = "", string caseStatus = "", string dateOpenedFrom = "", string dateOpenedTo = "", string dateClosedFrom = "", string dateClosedTo = "") =>
+        GetCasesAsync(search, status, county, stage, includeClosed, track, caseStatus, dateOpenedFrom, dateOpenedTo, dateClosedFrom, dateClosedTo, null, null);
+
+    public async Task<CaseCatalogPage> GetCasesPageAsync(string search, string status, string county, string stage, bool includeClosed, string track = "", string caseStatus = "", string dateOpenedFrom = "", string dateOpenedTo = "", string dateClosedFrom = "", string dateClosedTo = "", int limit = 100, int offset = 0)
+    {
+        var pageSize = Math.Clamp(limit, 1, 500);
+        var pageOffset = Math.Max(offset, 0);
+        var total = await CountCasesAsync(search, status, county, stage, includeClosed, track, caseStatus, dateOpenedFrom, dateOpenedTo, dateClosedFrom, dateClosedTo);
+        var items = await GetCasesAsync(search, status, county, stage, includeClosed, track, caseStatus, dateOpenedFrom, dateOpenedTo, dateClosedFrom, dateClosedTo, pageSize, pageOffset);
+        return new CaseCatalogPage(total, pageSize, pageOffset, items);
+    }
+
+    private async Task<List<CaseRecord>> GetCasesAsync(string search, string status, string county, string stage, bool includeClosed, string track, string caseStatus, string dateOpenedFrom, string dateOpenedTo, string dateClosedFrom, string dateClosedTo, int? limit, int? offset)
     {
         var list = new List<CaseRecord>();
         await using var connection = new SqliteConnection(ConnectionString);
@@ -1124,7 +1136,7 @@ public sealed partial class CasePlannerRepository
               AND (@dateClosedFrom = '' OR closed_date >= @dateClosedFrom)
               AND (@dateClosedTo = '' OR closed_date <= @dateClosedTo)
             ORDER BY case_name
-            """;
+            """ + (limit.HasValue ? "\nLIMIT @limit OFFSET @offset" : "");
         cmd.Parameters.AddWithValue("@includeClosed", includeClosed ? 1 : 0);
         cmd.Parameters.AddWithValue("@search", search);
         cmd.Parameters.AddWithValue("@like", $"%{search}%");
@@ -1137,6 +1149,11 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@dateOpenedTo", dateOpenedTo);
         cmd.Parameters.AddWithValue("@dateClosedFrom", dateClosedFrom);
         cmd.Parameters.AddWithValue("@dateClosedTo", dateClosedTo);
+        if (limit.HasValue)
+        {
+            cmd.Parameters.AddWithValue("@limit", limit.Value);
+            cmd.Parameters.AddWithValue("@offset", offset ?? 0);
+        }
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
@@ -3734,6 +3751,40 @@ public sealed partial class CasePlannerRepository
             });
         }
         return list;
+    }
+
+    private async Task<int> CountCasesAsync(string search, string status, string county, string stage, bool includeClosed, string track, string caseStatus, string dateOpenedFrom, string dateOpenedTo, string dateClosedFrom, string dateClosedTo)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM cases
+            WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
+              AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
+              AND (@status = '' OR status = @status)
+              AND (@county = '' OR county = @county)
+              AND (@stage = '' OR stage = @stage)
+              AND (@track = '' OR track = @track)
+              AND (@caseStatus = '' OR COALESCE(case_status, 'Pipeline') = @caseStatus)
+              AND (@dateOpenedFrom = '' OR date_opened >= @dateOpenedFrom)
+              AND (@dateOpenedTo = '' OR date_opened <= @dateOpenedTo)
+              AND (@dateClosedFrom = '' OR closed_date >= @dateClosedFrom)
+              AND (@dateClosedTo = '' OR closed_date <= @dateClosedTo)
+            """;
+        cmd.Parameters.AddWithValue("@includeClosed", includeClosed ? 1 : 0);
+        cmd.Parameters.AddWithValue("@search", search);
+        cmd.Parameters.AddWithValue("@like", $"%{search}%");
+        cmd.Parameters.AddWithValue("@status", status);
+        cmd.Parameters.AddWithValue("@county", county);
+        cmd.Parameters.AddWithValue("@stage", stage);
+        cmd.Parameters.AddWithValue("@track", track);
+        cmd.Parameters.AddWithValue("@caseStatus", caseStatus);
+        cmd.Parameters.AddWithValue("@dateOpenedFrom", dateOpenedFrom);
+        cmd.Parameters.AddWithValue("@dateOpenedTo", dateOpenedTo);
+        cmd.Parameters.AddWithValue("@dateClosedFrom", dateClosedFrom);
+        cmd.Parameters.AddWithValue("@dateClosedTo", dateClosedTo);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
     }
 
     public async Task<CaseAttorneyAssignmentRecord> SaveCaseAttorneyAssignmentAsync(CaseAttorneyAssignmentRecord model)

@@ -15,10 +15,13 @@ public sealed record CaseCatalogQuery(
     string DateClosedFrom = "",
     string DateClosedTo = "");
 
+public sealed record CaseCatalogPage(int Total, int Limit, int Offset, IReadOnlyList<CaseRecord> Items);
+
 public interface ICaseCatalogReader
 {
     string Provider { get; }
     Task<List<CaseRecord>> GetCasesAsync(CaseCatalogQuery query, CancellationToken cancellationToken = default);
+    Task<CaseCatalogPage> GetCasesPageAsync(CaseCatalogQuery query, int limit, int offset, CancellationToken cancellationToken = default);
 }
 
 public interface ICaseCatalogStore : ICaseCatalogReader

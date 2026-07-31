@@ -193,7 +193,7 @@ It also distinguishes missing template files from files that exist but are not v
 
 The latest recorded generation failure is cleared automatically after a successful generation, keeping Diagnostics focused on unresolved problems.
 
-For larger dockets, `GET /api/cases/paged` provides bounded case pages with `total`, `limit`, `offset`, and `items`; the existing `/api/cases` response remains available for current screens during the gradual pagination rollout.
+For larger dockets, `GET /api/cases/paged` provides database-level bounded case pages with `total`, `limit`, `offset`, and `items`; the existing `/api/cases` response remains available for current screens during the gradual pagination rollout. SQLite uses SQL `LIMIT/OFFSET` plus a separate filtered count, and SQL Server uses `OFFSET/FETCH` with a windowed total.
 
 The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.
 

@@ -36,6 +36,41 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         return list;
     }
 
+    public async Task<CaseCatalogPage> GetCasesPageAsync(CaseCatalogQuery query, int limit, int offset, CancellationToken cancellationToken = default)
+    {
+        var pageSize = Math.Clamp(limit, 1, 500);
+        var pageOffset = Math.Max(offset, 0);
+        var list = new List<CaseRecord>();
+        var total = 0;
+        await using var connection = connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = SelectSql.Replace("        FROM cases", "               , COUNT(*) OVER() AS total_count\n        FROM cases", StringComparison.Ordinal)
+            .Replace("        ORDER BY case_name", "        ORDER BY case_name OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY", StringComparison.Ordinal);
+        command.Parameters.Add(new SqlParameter("@includeClosed", query.IncludeClosed));
+        command.Parameters.Add(new SqlParameter("@search", query.Search));
+        command.Parameters.Add(new SqlParameter("@like", $"%{query.Search}%"));
+        command.Parameters.Add(new SqlParameter("@status", query.Status));
+        command.Parameters.Add(new SqlParameter("@county", query.County));
+        command.Parameters.Add(new SqlParameter("@stage", query.Stage));
+        command.Parameters.Add(new SqlParameter("@track", query.Track));
+        command.Parameters.Add(new SqlParameter("@caseStatus", query.CaseStatus));
+        command.Parameters.Add(new SqlParameter("@dateOpenedFrom", query.DateOpenedFrom));
+        command.Parameters.Add(new SqlParameter("@dateOpenedTo", query.DateOpenedTo));
+        command.Parameters.Add(new SqlParameter("@dateClosedFrom", query.DateClosedFrom));
+        command.Parameters.Add(new SqlParameter("@dateClosedTo", query.DateClosedTo));
+        command.Parameters.Add(new SqlParameter("@offset", pageOffset));
+        command.Parameters.Add(new SqlParameter("@limit", pageSize));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(CaseRecordDataMapper.Read(reader));
+            total = reader.IsDBNull(reader.FieldCount - 1) ? total : reader.GetInt32(reader.FieldCount - 1);
+        }
+
+        return new CaseCatalogPage(total, pageSize, pageOffset, list);
+    }
+
     public async Task<CaseRecord> SaveCaseAsync(CaseRecord model, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(model.CaseName)) throw new ArgumentException("Case name is required.");

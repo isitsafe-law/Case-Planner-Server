@@ -983,12 +983,16 @@ app.MapGet("/api/cases", async (string? search, string? status, string? county, 
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/paged", async (string? search, string? status, string? county, string? stage, bool? includeClosed, string? track, string? caseStatus, string? dateOpenedFrom, string? dateOpenedTo, string? dateClosedFrom, string? dateClosedTo, int? limit, int? offset, ICaseCatalogReader cases, CaseAccessService access, CancellationToken token) =>
 {
-    var result=await cases.GetCasesAsync(new(search??"",status??"",county??"",stage??"",includeClosed??false,track??"",caseStatus??"",dateOpenedFrom??"",dateOpenedTo??"",dateClosedFrom??"",dateClosedTo??""),token);
-    var visible=await access.GetVisibleCaseIdsAsync(token);
-    var filtered=(visible is null?result:result.Where(c=>visible.Contains(c.Id))).ToList();
+    var query = new CaseCatalogQuery(search??"",status??"",county??"",stage??"",includeClosed??false,track??"",caseStatus??"",dateOpenedFrom??"",dateOpenedTo??"",dateClosedFrom??"",dateClosedTo??"");
     var pageSize=Math.Clamp(limit??100,1,500);
     var pageOffset=Math.Max(offset??0,0);
-    return Results.Ok(new { total=filtered.Count, limit=pageSize, offset=pageOffset, items=filtered.Skip(pageOffset).Take(pageSize) });
+    var page=await cases.GetCasesPageAsync(query,pageSize,pageOffset,token);
+    var visible=await access.GetVisibleCaseIdsAsync(token);
+    if (visible is null) return Results.Ok(page);
+    // Until provider queries accept the Entra visible-case set as a predicate, calculate the
+    // authorized page from the already-filtered catalog so totals cannot expose inaccessible rows.
+    var authorized=(await cases.GetCasesAsync(query,token)).Where(c=>visible.Contains(c.Id)).ToList();
+    return Results.Ok(new CaseCatalogPage(authorized.Count, pageSize, pageOffset, authorized.Skip(pageOffset).Take(pageSize).ToList()));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/case-statuses", () => Results.Ok(new[] { "Pipeline", "Filed / Service Pending", "Active Litigation", "Settlement Pending", "Trial Preparation", "Resolved / Closed", "Triage" })).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/case-status-mapping-review", async (CaseAccessService access,CancellationToken token) =>

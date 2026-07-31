@@ -409,7 +409,25 @@ public sealed partial class CasePlannerRepository
             var tokens = DocumentGenerationEngine.BuildTokens(workspace.Case, org, runtimeInputValues, manualFieldDefs);
             var context = MergeContextBuilder.Build(tokens, selectedSectionKeys);
 
-            var templateBytes = await File.ReadAllBytesAsync(active.Version.StoragePath);
+            // Portable builds can be copied to a new folder while the SQLite database still
+            // contains an absolute template path from the previous folder. Recover by matching
+            // the stored file name inside this build's managed template directory, then repair
+            // the row so subsequent generations use the current portable location.
+            var templatePath = ResolveTemplateStoragePath(active.Version.StoragePath);
+            if (templatePath is null)
+            {
+                throw new InvalidOperationException($"The template file for '{active.Template.Title}' could not be found. Reload or re-upload the template.");
+            }
+            if (!string.Equals(templatePath, active.Version.StoragePath, StringComparison.OrdinalIgnoreCase))
+            {
+                var repair = connection.CreateCommand();
+                repair.Transaction = tx;
+                repair.CommandText = "UPDATE document_template_versions SET storage_path=@path WHERE id=@id";
+                repair.Parameters.AddWithValue("@path", templatePath);
+                repair.Parameters.AddWithValue("@id", active.Version.Id);
+                await repair.ExecuteNonQueryAsync();
+            }
+            var templateBytes = await File.ReadAllBytesAsync(templatePath);
             var merged = DocxSectionMerger.Render(templateBytes, context, out var missing);
 
             // Millisecond timestamp alone isn't enough - two generations of the same case/template
@@ -461,6 +479,16 @@ public sealed partial class CasePlannerRepository
                 throw;
             }
         });
+    }
+
+    private string? ResolveTemplateStoragePath(string storedPath)
+    {
+        if (!string.IsNullOrWhiteSpace(storedPath) && File.Exists(storedPath)) return storedPath;
+        var fileName = string.IsNullOrWhiteSpace(storedPath) ? null : Path.GetFileName(storedPath);
+        if (string.IsNullOrWhiteSpace(fileName)) return null;
+        var root = Path.Combine(_paths.Config.DocumentTemplatesFolder, "platform");
+        if (!Directory.Exists(root)) return null;
+        return Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories).FirstOrDefault();
     }
 
     public async Task<DocumentGenerationRecord?> GetDocumentGenerationByIdAsync(long id)

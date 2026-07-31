@@ -114,6 +114,35 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GenerationRepairsAnAbsoluteTemplatePathFromAnEarlierPortableFolder()
+    {
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_fixture.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE document_template_versions SET storage_path=@path WHERE is_active=1 AND template_id=(SELECT id FROM document_templates WHERE template_key='interrogatories_platform')";
+            command.Parameters.AddWithValue("@path", @"C:\\old-portable-build\\templates\\documents\\platform\\interrogatories_platform_v1.docx");
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Portable Path Case", CaseNumber = "23CV-997", County = "Pulaski", Status = "Active", Track = "Contested",
+        });
+
+        var result = await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(
+            caseRecord.Id, "interrogatories_platform", [], new Dictionary<string, string>(), null);
+
+        Assert.True(File.Exists(result.OutputPath));
+        await using var verify = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_fixture.DatabasePath}");
+        await verify.OpenAsync();
+        await using var verifyCommand = verify.CreateCommand();
+        verifyCommand.CommandText = "SELECT storage_path FROM document_template_versions WHERE is_active=1 AND template_id=(SELECT id FROM document_templates WHERE template_key='interrogatories_platform')";
+        var repairedPath = Convert.ToString(await verifyCommand.ExecuteScalarAsync());
+        Assert.StartsWith(_fixture.DocumentTemplatesPath, repairedPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task GenerationIsRecordedInHistoryEvenAcrossMultipleGenerationsForTheSameCase()
     {
         var caseRecord = await CreateCaseWithDrainageTagAsync();

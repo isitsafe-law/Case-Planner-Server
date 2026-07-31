@@ -52,7 +52,7 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
     [Fact]
     public async Task DataQualityReportsDuplicateAttorneyAssignments()
     {
-        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski" });
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski", AssignedAttorney = "Legacy Drift Attorney" });
         await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = "Same Attorney", Role = "Supporting" });
         await _fixture.Repository.SaveCaseAttorneyAssignmentAsync(new CaseAttorneyAssignmentRecord { CaseId = caseRecord.Id, Name = " same attorney ", Role = "Supporting" });
 
@@ -63,5 +63,8 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         var directoryIssue = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-not-in-directory");
         Assert.True(directoryIssue.Count >= 2);
         Assert.Contains(caseRecord.Id, directoryIssue.SampleCaseIds);
+        var missingPrimary = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-primary-missing");
+        Assert.True(missingPrimary.Count >= 1);
+        Assert.Contains(caseRecord.Id, missingPrimary.SampleCaseIds);
     }
 }

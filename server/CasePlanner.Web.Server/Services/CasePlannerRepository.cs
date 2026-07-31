@@ -9915,6 +9915,13 @@ public sealed partial class CasePlannerRepository
             "SELECT case_id FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1 ORDER BY case_id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
+            "attorney-assignment-primary-missing", "Warning", "Cases missing a Primary assignment row",
+            "Cases with a nonblank legacy assigned-attorney value but no matching Primary assignment row.",
+            "Review the case and add or reconcile its Primary assignment before relying on assignment-aware reports.",
+            "SELECT COUNT(*) FROM cases c WHERE COALESCE(trim(c.assigned_attorney),'')<>'' AND NOT EXISTS (SELECT 1 FROM case_attorney_assignments a WHERE a.case_id=c.id AND lower(trim(a.role))='primary');",
+            "SELECT c.id FROM cases c WHERE COALESCE(trim(c.assigned_attorney),'')<>'' AND NOT EXISTS (SELECT 1 FROM case_attorney_assignments a WHERE a.case_id=c.id AND lower(trim(a.role))='primary') ORDER BY c.id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
             "attorney-assignment-not-in-directory", "Warning", "Attorney assignments not in the active Staff Directory",
             "Assignment rows whose name does not match an active attorneys directory record.",
             "Confirm the person, update the assignment to the current directory name, or preserve it as a reviewed legacy assignment.",

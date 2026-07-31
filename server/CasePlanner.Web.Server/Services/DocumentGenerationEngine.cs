@@ -194,6 +194,31 @@ public static partial class DocumentGenerationEngine
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToList();
 
+    public static MergeTagAudit AuditTemplateTags(
+        IEnumerable<string> discoveredTags,
+        IReadOnlyDictionary<string, string> values,
+        IEnumerable<string>? additionalKnownTags = null)
+    {
+        var discovered = discoveredTags
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(tag => tag, StringComparer.Ordinal)
+            .ToList();
+        var known = GetAllTemplateTags().Select(tag => tag.Key)
+            .Concat(additionalKnownTags ?? [])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new MergeTagAudit
+        {
+            DiscoveredTags = discovered,
+            KnownTags = discovered.Where(known.Contains).ToList(),
+            UnknownTags = discovered.Where(tag => !known.Contains(tag)).ToList(),
+            BlankValues = discovered
+                .Where(tag => known.Contains(tag) && string.IsNullOrWhiteSpace(FindTokenValue(values, tag)))
+                .ToList(),
+        };
+    }
+
     private static readonly Regex TokenPattern = TokenRegex();
 
     public static string FillTemplate(string templateText, Dictionary<string, string> tokens, out List<string> missingTokens)
@@ -202,9 +227,9 @@ public static partial class DocumentGenerationEngine
         var result = TokenPattern.Replace(templateText, match =>
         {
             var name = match.Groups[1].Value;
-            if (tokens.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+            if (!string.IsNullOrWhiteSpace(FindTokenValue(tokens, name)))
             {
-                return value;
+                return FindTokenValue(tokens, name)!;
             }
 
             missing.Add(name);
@@ -303,9 +328,9 @@ public static partial class DocumentGenerationEngine
         var replaced = TokenPattern.Replace(combined, match =>
         {
             var name = match.Groups[1].Value;
-            if (tokens.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+            if (!string.IsNullOrWhiteSpace(FindTokenValue(tokens, name)))
             {
-                return value;
+                return FindTokenValue(tokens, name)!;
             }
 
             missing.Add(name);
@@ -323,6 +348,12 @@ public static partial class DocumentGenerationEngine
         {
             texts[i].Text = "";
         }
+    }
+
+    private static string? FindTokenValue(IReadOnlyDictionary<string, string> tokens, string name)
+    {
+        if (tokens.TryGetValue(name, out var exact)) return exact;
+        return tokens.FirstOrDefault(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
     }
 
     // Body + every header/footer part - anywhere text (and therefore a token) can live in a docx.

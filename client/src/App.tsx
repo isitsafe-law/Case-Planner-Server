@@ -593,6 +593,7 @@ type BackupInfo = {
   sizeBytes: number
   createdAt: string
 }
+type RestoreBackupResult = { restoredFileName: string; safetyBackupFileName: string; restoredAt: string }
 
 type AttentionItem = {
   kind: string
@@ -790,6 +791,15 @@ type DocumentTemplateAdminSummary = {
   overlaps: DocumentSectionOverlapPair[]
   runtimeInputs: DocumentRuntimeInput[]
   lintIssues: string[]
+}
+type DocumentTemplateCompletenessReport = {
+  templateKey: string
+  title: string
+  version: number
+  storagePath: string
+  audit: { discoveredTags: string[]; knownTags: string[]; unknownTags: string[]; blankValues: string[] }
+  runtimeInputTags: string[]
+  passed: boolean
 }
 type IssueTagUsage = { tagName: string; templateTitles: string[] }
 
@@ -2358,6 +2368,7 @@ function App() {
   const [platformUploadFile, setPlatformUploadFile] = useState<File | null>(null)
   const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
   const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
+  const [platformCompleteness, setPlatformCompleteness] = useState<DocumentTemplateCompletenessReport | null>(null)
   // Forces the Advanced disclosure below to mount fresh (see the CollapsiblePanel `key` at its
   // render site): incremented whenever navigation should open it automatically (the Issue Tags
   // "Used By" link), matched against platformAdvancedAutoOpenKey to decide defaultOpen for that
@@ -5093,6 +5104,16 @@ function App() {
   function selectPlatformTemplate(summary: DocumentTemplateAdminSummary) {
     setSelectedPlatformTemplateKey(summary.template.templateKey)
     setPlatformConfigDraft({ sections: summary.sections, overlaps: summary.overlaps, runtimeInputs: summary.runtimeInputs })
+    setPlatformCompleteness(null)
+  }
+
+  async function auditPlatformTemplate(templateKey: string) {
+    try {
+      setErrorMessage('')
+      setPlatformCompleteness(await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${templateKey}/completeness`))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit template merge tags.')
+    }
   }
 
   // Issue Tags' "Used By" column links a template title to its Advanced disclosure on the
@@ -5531,12 +5552,12 @@ function App() {
     }
     try {
       setErrorMessage('')
-      await api('/api/backups/restore', { method: 'POST', body: JSON.stringify({ fileName: backup.fileName }) })
+      const result = await api<RestoreBackupResult>('/api/backups/restore', { method: 'POST', body: JSON.stringify({ fileName: backup.fileName }) })
       setSelectedCaseId(null)
       setWorkspace(null)
       setPage('dashboard')
       await refreshAll(null)
-      setMessage('Database restored from backup.')
+      setMessage(`Database restored. Safety backup: ${result.safetyBackupFileName}.`)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to restore the backup.')
     }
@@ -11520,6 +11541,16 @@ function App() {
                     >
                     <div className="inline-message warn"><p>Technical settings; most templates never need changes here. Sections and merge fields are detected automatically on upload.</p></div>
                     <p className="helper-text">Template key: <code>{selected.template.templateKey}</code></p>
+                    <div className="button-row compact-actions top-gap-small">
+                      <button onClick={() => void auditPlatformTemplate(selected.template.templateKey)}>Audit Merge Tags</button>
+                      {platformCompleteness?.templateKey === selected.template.templateKey && <span className={platformCompleteness.passed ? 'pill pill-success' : 'pill pill-warning'}>{platformCompleteness.passed ? 'No unknown tags' : `${platformCompleteness.audit.unknownTags.length} unknown tag(s)`}</span>}
+                    </div>
+                    {platformCompleteness?.templateKey === selected.template.templateKey && (
+                      <div className={`inline-message ${platformCompleteness.passed ? 'success' : 'warn'}`}>
+                        <p><strong>Merge-tag audit:</strong> {platformCompleteness.audit.discoveredTags.length} discovered, {platformCompleteness.audit.knownTags.length} known, {platformCompleteness.runtimeInputTags.length} runtime input(s).</p>
+                        {platformCompleteness.audit.unknownTags.length > 0 && <p>Unknown: {platformCompleteness.audit.unknownTags.join(', ')}</p>}
+                      </div>
+                    )}
                     <p className="helper-text">A <strong>section</strong> is a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> block in the .docx; new versions detect these automatically, but you can rename a section's label or link it to an issue tag here (linking pre-checks it on the case Documents tab when the case carries that tag). A <strong>runtime input</strong> makes an existing <code>{'{{FieldKey}}'}</code> token prompt the attorney for a value at generation time instead of pulling it from the case record. An <strong>overlap warning</strong> just flags two sections that cover similar ground — it never blocks generation.</p>
                     {selected.lintIssues.length > 0 && (
                       <div className="inline-message warn">{selected.lintIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>

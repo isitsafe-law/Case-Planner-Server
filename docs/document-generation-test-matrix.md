@@ -10,6 +10,8 @@ This is the portable-first contract for document generation. The same cases shou
 | Optional input | Optional input is blank | Draft generates successfully |
 | Missing case value | A merge field has no source value | Draft generates with a missing marker and reports the field |
 | Unknown tag | Template contains an unregistered merge tag | Draft does not silently stop; the missing tag is reported |
+| Completeness audit | `GET /api/document-platform/templates/{key}/completeness` | Active template tags are classified as canonical, declared runtime inputs, or unknown before generation |
+| Legacy tag capitalization | Generate a template containing `{{COUNTY}}` when the canonical tag is `County` | The value resolves normally; no false missing field is recorded |
 | Sections | No optional sections selected | Base document generates without optional section text |
 | Sections | Issue-tag section selected | Section text appears once and numbering remains valid |
 | Review | Generated document is downloaded before filing | Output is stored as a draft and remains editable/reviewable by the user |

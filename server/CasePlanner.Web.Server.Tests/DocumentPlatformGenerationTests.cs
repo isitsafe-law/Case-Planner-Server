@@ -50,6 +50,18 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CompletenessReportIdentifiesActiveTemplateTagsAndUnknownTokens()
+    {
+        var report = await _fixture.Repository.GetDocumentTemplateCompletenessAsync("interrogatories_platform");
+
+        Assert.NotNull(report);
+        Assert.Equal("interrogatories_platform", report!.TemplateKey);
+        Assert.True(report.Version > 0);
+        Assert.DoesNotContain("CaseNumber", report.Audit.UnknownTags);
+        Assert.Empty(report.Audit.UnknownTags);
+    }
+
+    [Fact]
     public async Task DrainageSectionIsPreCheckedWhenCaseHasTheDrainageTag()
     {
         var caseRecord = await CreateCaseWithDrainageTagAsync();

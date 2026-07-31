@@ -1434,8 +1434,7 @@ app.MapGet("/api/backups", async () => Results.Ok(await repo.GetBackupsAsync()))
 app.MapPost("/api/backups", async () => Results.Ok(await repo.CreateBackupNowAsync()));
 app.MapPost("/api/backups/restore", async (RestoreBackupRequest request) =>
 {
-    await repo.RestoreBackupAsync(request.FileName);
-    return Results.Ok();
+    return Results.Ok(await repo.RestoreBackupAsync(request.FileName));
 });
 app.MapPost("/api/data-management/sample-data/delete", async () =>
 {
@@ -1525,6 +1524,11 @@ app.MapGet("/api/cases/{id:long}/document-platform/templates/{key}/checklist", a
     if(!await access.CanReadAsync(id,token))return Results.Forbid();
     var checklist=await platform.GetChecklistAsync(id,key,token);
     return checklist is null?Results.NotFound():Results.Ok(checklist);
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/document-platform/templates/{key}/completeness", async (string key, IDocumentPlatformService platform, CancellationToken token) =>
+{
+    var report = await platform.GetCompletenessAsync(key, token);
+    return report is null ? Results.NotFound() : Results.Ok(report);
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/cases/{id:long}/document-platform/templates/{key}/generate", async (long id,string key,DocumentGenerationRequest request,IDocumentPlatformService platform,CaseAccessService access,CancellationToken token) =>
 {

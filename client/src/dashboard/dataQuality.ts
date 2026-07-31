@@ -6,6 +6,7 @@ export type DataQualityIssue = {
   definition: string
   suggestedAction: string
   sampleCaseIds: number[]
+  additionalCaseCount: number
 }
 
 export type DataQualityReport = {

@@ -43,4 +43,34 @@ public sealed class MergeTagRegistryTests
         Assert.Contains("[MISSING: Case.FullStyle]", result);
         Assert.Contains("Case.TrialDate", missing);
     }
+
+    [Fact]
+    public void AuditSeparatesUnknownTagsFromKnownBlankValuesAndRuntimeInputs()
+    {
+        var audit = DocumentGenerationEngine.AuditTemplateTags(
+            ["CaseNumber", "Case.TrialDate", "Runtime.Deposit", "Legacy.Leftover"],
+            new Dictionary<string, string>
+            {
+                ["CaseNumber"] = "60CV-26-1234",
+                ["Case.TrialDate"] = "",
+                ["Runtime.Deposit"] = "1000",
+            },
+            ["Runtime.Deposit"]);
+
+        Assert.Equal(new[] { "Case.TrialDate", "CaseNumber", "Legacy.Leftover", "Runtime.Deposit" }.OrderBy(x => x), audit.DiscoveredTags);
+        Assert.Equal(new[] { "Case.TrialDate", "CaseNumber", "Runtime.Deposit" }.OrderBy(x => x), audit.KnownTags);
+        Assert.Equal(["Legacy.Leftover"], audit.UnknownTags);
+        Assert.Equal(["Case.TrialDate"], audit.BlankValues);
+    }
+
+    [Fact]
+    public void TemplateTagsAreResolvedWithoutCaseSensitiveFalseMissingValues()
+    {
+        var tokens = DocumentGenerationEngine.BuildTokens(new CaseRecord { County = "Pulaski" }, new OrgDefaults(), new Dictionary<string, string>());
+
+        var result = DocumentGenerationEngine.FillTemplate("{{COUNTY}}", tokens, out var missing);
+
+        Assert.Equal("Pulaski", result);
+        Assert.Empty(missing);
+    }
 }

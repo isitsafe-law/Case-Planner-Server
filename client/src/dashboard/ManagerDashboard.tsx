@@ -87,6 +87,7 @@ export function ManagerDashboard({
       Definition: issue.definition,
       SuggestedAction: issue.suggestedAction,
       SampleCaseIds: issue.sampleCaseIds.join('; '),
+      AdditionalCaseCount: issue.additionalCaseCount,
     })))
   }
 
@@ -111,7 +112,7 @@ export function ManagerDashboard({
         {dataQuality && (
           <div className="top-gap-small">
             <div className="button-row compact-actions"><strong>Data-quality checks</strong><button onClick={exportDataQuality} disabled={!dataQuality}>Export CSV</button></div>
-            {dataQuality.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text">No current issues detected.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>{dataQuality.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td className={`ui-data${issue.severity === 'Critical' ? ' ui-cell-danger' : ' ui-cell-warn'}`}>{issue.count}</td><td><div>{issue.suggestedAction}</div>{issue.sampleCaseIds.length > 0 && <div className="data-quality-case-links">{issue.sampleCaseIds.slice(0, 3).map((caseId) => { const record = caseById.get(caseId); return <Btn key={caseId} size="sm" onClick={() => onOpenCase(caseId)}>Open {record?.caseNumber || record?.caseName || `Case ${caseId}`}</Btn> })}{issue.sampleCaseIds.length > 3 && <span className="helper-text">+{issue.sampleCaseIds.length - 3} more</span>}</div>}</td></tr>)}</tbody></table></div>}
+            {dataQuality.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text">No current issues detected.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>{dataQuality.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td className={`ui-data${issue.severity === 'Critical' ? ' ui-cell-danger' : ' ui-cell-warn'}`}>{issue.count}</td><td><div>{issue.suggestedAction}</div>{issue.sampleCaseIds.length > 0 && <div className="data-quality-case-links">{issue.sampleCaseIds.slice(0, 3).map((caseId) => { const record = caseById.get(caseId); return <Btn key={caseId} size="sm" onClick={() => onOpenCase(caseId)}>Open {record?.caseNumber || record?.caseName || `Case ${caseId}`}</Btn> })}{issue.additionalCaseCount > 0 && <span className="helper-text">+{issue.additionalCaseCount} more</span>}</div>}</td></tr>)}</tbody></table></div>}
           </div>
         )}
       </details>

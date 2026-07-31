@@ -9,6 +9,7 @@ namespace CasePlanner.Web.Server.Persistence;
 public interface IDocumentPlatformService
 {
     Task<DocumentGenerationChecklist?> GetChecklistAsync(long caseId, string templateKey, CancellationToken token = default);
+    Task<DocumentTemplateCompletenessReport?> GetCompletenessAsync(string templateKey, CancellationToken token = default);
     Task<DocumentGenerationResult> GenerateAsync(long caseId, string templateKey, DocumentGenerationRequest request, CancellationToken token = default);
     Task<DocumentGenerationRecord?> GetGenerationByIdAsync(long id, CancellationToken token = default);
     Task<List<DocumentGenerationHistoryItem>> GetGenerationsForCaseAsync(long caseId, CancellationToken token = default);
@@ -28,6 +29,12 @@ public sealed class SqliteDocumentPlatformService(CasePlannerRepository reposito
     {
         token.ThrowIfCancellationRequested();
         return repository.GetDocumentGenerationChecklistAsync(caseId, templateKey);
+    }
+
+    public Task<DocumentTemplateCompletenessReport?> GetCompletenessAsync(string templateKey, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return repository.GetDocumentTemplateCompletenessAsync(templateKey);
     }
 
     public Task<DocumentGenerationResult> GenerateAsync(long caseId, string templateKey, DocumentGenerationRequest request, CancellationToken token = default)
@@ -95,6 +102,9 @@ public sealed class SqlServerDocumentPlatformService : IDocumentPlatformService
     private const string Message = "The unified document platform's SQL Server implementation is not built yet - see build-plan step 4 in docs/document-system-audit-and-plan.";
 
     public Task<DocumentGenerationChecklist?> GetChecklistAsync(long caseId, string templateKey, CancellationToken token = default) =>
+        throw new NotSupportedException(Message);
+
+    public Task<DocumentTemplateCompletenessReport?> GetCompletenessAsync(string templateKey, CancellationToken token = default) =>
         throw new NotSupportedException(Message);
 
     public Task<DocumentGenerationResult> GenerateAsync(long caseId, string templateKey, DocumentGenerationRequest request, CancellationToken token = default) =>

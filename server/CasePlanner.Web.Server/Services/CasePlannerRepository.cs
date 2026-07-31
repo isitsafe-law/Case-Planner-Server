@@ -8982,7 +8982,7 @@ public sealed partial class CasePlannerRepository
         }
     }
 
-    public async Task RestoreBackupAsync(string fileName)
+    public async Task<RestoreBackupResult> RestoreBackupAsync(string fileName)
     {
         // fileName must be a bare file name (no directory components) matching a real backup -
         // this is the only guard against path traversal since it flows straight into Path.Combine.
@@ -9025,6 +9025,12 @@ public sealed partial class CasePlannerRepository
 
             SqliteConnection.ClearAllPools();
             await LogAsync($"Database restored from backup: {fileName}");
+            return new RestoreBackupResult
+            {
+                RestoredFileName = fileName,
+                SafetyBackupFileName = Path.GetFileName(safetyBackupPath),
+                RestoredAt = DateTime.UtcNow.ToString("O"),
+            };
         }
         finally
         {
@@ -9599,7 +9605,7 @@ public sealed partial class CasePlannerRepository
             command.CommandText = sampleSql;
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync()) samples.Add(reader.GetInt64(0));
-            return new DataQualityIssue { Key = key, Severity = severity, Label = label, Count = count, Definition = definition, SuggestedAction = action, SampleCaseIds = samples };
+            return new DataQualityIssue { Key = key, Severity = severity, Label = label, Count = count, Definition = definition, SuggestedAction = action, SampleCaseIds = samples, AdditionalCaseCount = Math.Max(0, count - samples.Count) };
         }
 
         report.Issues.Add(await Issue(
@@ -9622,6 +9628,20 @@ public sealed partial class CasePlannerRepository
             "Add the known defendants/interest holders before generating captions or pleadings.",
             "SELECT COUNT(*) FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='';",
             "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='' ORDER BY c.id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "jury-trial-event-missing", "Info", "Cases with a jury-trial date but no jury-trial event",
+            "Open cases with the authoritative case-level trial_date but no matching Jury Trial event in the hearings catalog.",
+            "Add or reconcile the calendar event if the matter should appear in the shared calendar.",
+            "SELECT COUNT(*) FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(c.trial_date,'')<>'' AND NOT EXISTS (SELECT 1 FROM hearings h WHERE h.case_id=c.id AND h.event_type='Jury Trial');",
+            "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(c.trial_date,'')<>'' AND NOT EXISTS (SELECT 1 FROM hearings h WHERE h.case_id=c.id AND h.event_type='Jury Trial') ORDER BY c.id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "jury-trial-event-no-case-date", "Info", "Jury-trial events without a case-level trial date",
+            "Open Jury Trial events that have no authoritative cases.trial_date value.",
+            "Review the event and enter the case-level jury-trial date when it is actually set; the case-level date remains authoritative.",
+            "SELECT COUNT(*) FROM hearings h JOIN cases c ON c.id=h.case_id WHERE h.event_type='Jury Trial' AND COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(h.hearing_date,'')<>'' AND COALESCE(c.trial_date,'')='';",
+            "SELECT c.id FROM hearings h JOIN cases c ON c.id=h.case_id WHERE h.event_type='Jury Trial' AND COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(h.hearing_date,'')<>'' AND COALESCE(c.trial_date,'')='' ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
             "jury-trial-conflict", "Warning", "Conflicting jury-trial dates",

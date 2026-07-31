@@ -69,6 +69,8 @@ dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-re
 .\scripts\local-package-smoke.ps1 -PackagePath '<portable-package>' -Port 5300
 ```
 
+Document-generation diagnostics also expose `/api/document-platform/templates/{key}/completeness`. This checks the active template's discovered merge tags against the canonical registry and its declared runtime inputs. Unknown tags are reported for correction, while empty case values remain non-blocking and render as missing markers. Tag matching is case-insensitive for compatibility with older attorney-authored templates.
+
 ## Known deferred items
 
 - Entra authentication and final permissions
@@ -76,5 +78,11 @@ dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-re
 - Weighted workload scoring
 - Final policy for confidential settlement/authority merge tags
 - Production deployment and network-share storage policy
+
+An actual restore reports the selected backup and the automatically created pre-restore safety backup. Keep that safety backup until the restored database has been reviewed.
+
+Manager data-quality findings now distinguish the total affected-case count from the small sample of direct case links shown in the UI. This keeps the portable report actionable without loading every affected case into the dashboard at once.
+
+The report also flags incomplete jury-trial synchronization without changing dates automatically. `cases.trial_date` remains authoritative; the hearings catalog supplies shared calendar events until a future source-of-truth migration is deliberately approved.
 
 Keep this file synchronized with `README.md` when release, workflow, or storage behavior changes.

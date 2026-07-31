@@ -131,6 +131,8 @@ The provider-neutral `/api/calendar/events` endpoint also exposes date, event-ty
 
 The document-generation scenarios and expected outcomes are recorded in [docs/document-generation-test-matrix.md](docs/document-generation-test-matrix.md).
 
+Document templates also expose `/api/document-platform/templates/{key}/completeness`. It audits the active DOCX for registered tags, declared runtime-input tags, and unknown tags before a future server cutover. Tag matching is case-insensitive, so legacy templates using forms such as `{{COUNTY}}` continue to resolve to the canonical `County` field. Blank values remain visible as missing data during generation rather than blocking the document.
+
 ## Deferred work
 
 - Entra authentication and final manager/admin authorization
@@ -138,5 +140,11 @@ The document-generation scenarios and expected outcomes are recorded in [docs/do
 - Weighted workload scoring
 - Final confidential settlement/authority tag policy
 - Production deployment and network-share storage policy
+
+An actual restore now returns the restored backup name, the automatically created pre-restore safety backup name, and the restore timestamp so the recovery action is auditable in the UI.
+
+Data-quality findings expose a total count plus the number of additional affected cases beyond the navigable sample links, so exports and manager reports do not imply that the first few links are the complete finding set.
+
+Event reconciliation is observational: data-quality checks flag a case-level jury-trial date with no matching calendar event, a Jury Trial event with no case-level date, and conflicting dates. The case-level `trial_date` remains authoritative until a deliberate source-of-truth migration is approved.
 
 When behavior changes, update this README and the IT handoff documentation in the same change.

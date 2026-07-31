@@ -914,6 +914,13 @@ public sealed class RestoreBackupRequest
     public string FileName { get; set; } = "";
 }
 
+public sealed class RestoreBackupResult
+{
+    public string RestoredFileName { get; set; } = "";
+    public string SafetyBackupFileName { get; set; } = "";
+    public string RestoredAt { get; set; } = "";
+}
+
 public sealed class DatabaseResetRequest
 {
     public string Scope { get; set; } = "database";
@@ -1645,6 +1652,7 @@ public sealed class DataQualityIssue
     public string Definition { get; set; } = "";
     public string SuggestedAction { get; set; } = "";
     public List<long> SampleCaseIds { get; set; } = [];
+    public int AdditionalCaseCount { get; set; }
 }
 
 public sealed class DataQualityReport
@@ -1709,6 +1717,25 @@ public sealed class TemplateTagInfo
     public string Label { get; set; } = "";
     public string Category { get; set; } = "";
     public string Description { get; set; } = "";
+}
+
+public sealed class MergeTagAudit
+{
+    public List<string> DiscoveredTags { get; set; } = [];
+    public List<string> KnownTags { get; set; } = [];
+    public List<string> UnknownTags { get; set; } = [];
+    public List<string> BlankValues { get; set; } = [];
+}
+
+public sealed class DocumentTemplateCompletenessReport
+{
+    public string TemplateKey { get; set; } = "";
+    public string Title { get; set; } = "";
+    public int Version { get; set; }
+    public string StoragePath { get; set; } = "";
+    public MergeTagAudit Audit { get; set; } = new();
+    public List<string> RuntimeInputTags { get; set; } = [];
+    public bool Passed => Audit.UnknownTags.Count == 0;
 }
 
 public sealed class CustomDocumentTemplateInfo

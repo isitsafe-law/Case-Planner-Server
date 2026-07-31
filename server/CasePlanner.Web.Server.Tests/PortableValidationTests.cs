@@ -21,4 +21,17 @@ public sealed class PortableValidationTests : IAsyncLifetime
         Assert.Contains(report.Checks, x => x.Name == "Restore/schema compatibility" && x.Passed);
         Assert.Contains(report.Checks, x => x.Name == "Restore read test" && x.Passed);
     }
+
+    [Fact]
+    public async Task ActualRestoreReturnsThePreRestoreSafetyBackupName()
+    {
+        var backup = await _fixture.Repository.CreateBackupNowAsync();
+
+        var result = await _fixture.Repository.RestoreBackupAsync(backup.FileName);
+
+        Assert.Equal(backup.FileName, result.RestoredFileName);
+        Assert.False(string.IsNullOrWhiteSpace(result.SafetyBackupFileName));
+        Assert.NotEqual(result.RestoredFileName, result.SafetyBackupFileName);
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(_fixture.DatabasePath)!, "..", "backups", result.SafetyBackupFileName)));
+    }
 }

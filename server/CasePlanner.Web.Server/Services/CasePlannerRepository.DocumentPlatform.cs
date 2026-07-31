@@ -481,6 +481,46 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task<DocumentTemplateCompletenessReport?> GetDocumentTemplateCompletenessAsync(string templateKey)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var active = await GetActiveTemplateVersionAsync(connection, templateKey);
+        if (active is null) return null;
+
+        var storagePath = ResolveTemplateStoragePath(active.Version.StoragePath);
+        if (storagePath is null)
+        {
+            return new DocumentTemplateCompletenessReport
+            {
+                TemplateKey = active.Template.TemplateKey,
+                Title = active.Template.Title,
+                Version = active.Version.Version,
+                StoragePath = active.Version.StoragePath,
+                Audit = new MergeTagAudit { UnknownTags = ["[template file missing]"] },
+            };
+        }
+
+        var templateBytes = await File.ReadAllBytesAsync(storagePath);
+        var discovered = DocumentGenerationEngine.ExtractTokensFromDocx(templateBytes);
+        var runtimeInputs = await GetRuntimeInputsAsync(connection, active.Version.Id);
+        var runtimeKeys = runtimeInputs.Select(input => input.FieldKey).Distinct(StringComparer.Ordinal).ToList();
+        var audit = DocumentGenerationEngine.AuditTemplateTags(
+            discovered,
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            runtimeKeys);
+
+        return new DocumentTemplateCompletenessReport
+        {
+            TemplateKey = active.Template.TemplateKey,
+            Title = active.Template.Title,
+            Version = active.Version.Version,
+            StoragePath = storagePath,
+            Audit = audit,
+            RuntimeInputTags = runtimeKeys,
+        };
+    }
+
     private string? ResolveTemplateStoragePath(string storedPath)
     {
         if (!string.IsNullOrWhiteSpace(storedPath) && File.Exists(storedPath)) return storedPath;

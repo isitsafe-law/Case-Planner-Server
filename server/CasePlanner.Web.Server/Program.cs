@@ -210,6 +210,12 @@ builder.Services.AddSingleton<ICaseLegalAssistantStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerCaseLegalAssistantStore>()
         : services.GetRequiredService<SqliteCaseLegalAssistantStore>());
+builder.Services.AddSingleton<SqliteCaseAttorneyAssignmentStore>();
+builder.Services.AddSingleton<SqlServerCaseAttorneyAssignmentStore>();
+builder.Services.AddSingleton<ICaseAttorneyAssignmentStore>(services =>
+    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
+        ? services.GetRequiredService<SqlServerCaseAttorneyAssignmentStore>()
+        : services.GetRequiredService<SqliteCaseAttorneyAssignmentStore>());
 builder.Services.AddSingleton<SqliteCaseDefendantStore>();
 builder.Services.AddSingleton<SqlServerCaseDefendantStore>();
 builder.Services.AddSingleton<ICaseDefendantStore>(services =>
@@ -1183,6 +1189,21 @@ app.MapDelete("/api/legal-assistants/{id:long}", async (long id,ICaseLegalAssist
     await legalAssistants.DeleteAsync(id);
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/cases/{id:long}/attorney-assignments", async (long id, ICaseAttorneyAssignmentStore assignments) => Results.Ok(await assignments.GetAsync(id)));
+app.MapGet("/api/attorney-assignments", async (ICaseAttorneyAssignmentStore assignments, CancellationToken token) => Results.Ok(await assignments.GetAsync(null, token)));
+app.MapPost("/api/cases/{id:long}/attorney-assignments", async (long id, CaseAttorneyAssignmentRecord model, ICaseAttorneyAssignmentStore assignments, CaseAccessService access, CancellationToken token) =>
+{
+    model.CaseId = id;
+    return await access.CanWriteAsync(id, token) ? Results.Ok(await assignments.SaveAsync(model, token)) : Results.Forbid();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/case-attorney-assignments/{id:long}", async (long id, ICaseAttorneyAssignmentStore assignments, ICaseChildLookupStore children, CaseAccessService access, CancellationToken token) =>
+{
+    var caseId = await children.GetCaseIdAsync("case-attorney", id, token);
+    if (caseId is null) return Results.NotFound();
+    if (!await access.CanWriteAsync(caseId.Value, token)) return Results.Forbid();
+    await assignments.DeleteAsync(id, token);
+    return Results.Ok();
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/cases/{id:long}/defendants", async (long id, ICaseDefendantStore defendants) => Results.Ok(await defendants.GetAsync(id)));
 app.MapPost("/api/cases/{id:long}/defendants", async (long id, CaseDefendantRecord model,ICaseDefendantStore defendants,CaseAccessService access,CancellationToken token) =>
 {
@@ -1325,17 +1346,31 @@ app.MapGet("/api/work-queues/hearings",async(IHearingStore hearings,CaseAccessSe
 {
     var items=await hearings.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapGet("/api/calendar/events", async (string? from, string? to, string? eventType, string? assignedAttorney, int? limit, int? offset, IHearingStore hearings, ICaseCatalogReader cases, CaseAccessService access, CancellationToken token) =>
+app.MapGet("/api/calendar/events", async (string? from, string? to, string? eventType, string? assignedAttorney, int? limit, int? offset, IHearingStore hearings, ICaseCatalogReader cases, ICaseAttorneyAssignmentStore attorneyAssignments, CaseAccessService access, CancellationToken token) =>
 {
     var visible = await access.GetVisibleCaseIdsAsync(token);
     var records = await hearings.GetAsync(null, token);
     var caseRows = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);
     var attorneyByCase = caseRows.ToDictionary(x => x.Id, x => x.AssignedAttorney ?? "");
+    IReadOnlyDictionary<long, string[]> supportingByCase;
+    try
+    {
+        supportingByCase = (await attorneyAssignments.GetAsync(null, token))
+            .Where(row => !string.IsNullOrWhiteSpace(row.Name))
+            .GroupBy(row => row.CaseId)
+            .ToDictionary(group => group.Key, group => group.Select(row => row.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+    catch (NotSupportedException)
+    {
+        supportingByCase = new Dictionary<long, string[]>();
+    }
     var fromDate = DateOnly.TryParse(from, out var parsedFrom) ? parsedFrom : (DateOnly?)null;
     var toDate = DateOnly.TryParse(to, out var parsedTo) ? parsedTo : (DateOnly?)null;
     var filtered = records.Where(item => (visible is null || visible.Contains(item.CaseId))
         && (string.IsNullOrWhiteSpace(eventType) || string.Equals(item.EventType, eventType, StringComparison.OrdinalIgnoreCase))
-        && (string.IsNullOrWhiteSpace(assignedAttorney) || attorneyByCase.GetValueOrDefault(item.CaseId, "").Equals(assignedAttorney, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrWhiteSpace(assignedAttorney)
+            || attorneyByCase.GetValueOrDefault(item.CaseId, "").Equals(assignedAttorney, StringComparison.OrdinalIgnoreCase)
+            || supportingByCase.GetValueOrDefault(item.CaseId, Array.Empty<string>()).Any(name => name.Equals(assignedAttorney, StringComparison.OrdinalIgnoreCase)))
         && (!fromDate.HasValue || !DateOnly.TryParse(item.EndDate ?? item.HearingDate, out var eventEnd) || eventEnd >= fromDate.Value)
         && (!toDate.HasValue || !DateOnly.TryParse(item.HearingDate, out var eventStart) || eventStart <= toDate.Value))
         .OrderBy(item => item.HearingDate ?? "9999-12-31")

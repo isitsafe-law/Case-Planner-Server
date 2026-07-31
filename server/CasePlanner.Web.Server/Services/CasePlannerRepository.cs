@@ -53,6 +53,7 @@ public sealed partial class CasePlannerRepository
         await SeedAssessorsAsync(connection);
         await SeedCollectorsAsync(connection);
         await SeedAsync(connection, !databaseWasPresent);
+        await MigrateLegacyJuryTrialEventsAsync(connection);
         await EnsureImportSampleAsync();
         // Must run before the backfill below: it rekeys existing checklist_items to the
         // (now-current) stable template-name+sort_order source_type so the backfill's
@@ -73,6 +74,65 @@ public sealed partial class CasePlannerRepository
         await CleanupRetired31DayServiceReminderAsync(connection);
         await MigrateOpposingCounselToAttorneysAsync(connection);
         await ApplyDeadlineClosureRulesRetroactivelyAsync(connection);
+    }
+
+    private async Task MigrateLegacyJuryTrialEventsAsync(SqliteConnection connection)
+    {
+        const string flagKey = "legacy_jury_trial_events_v1";
+        if (await GetAppSettingAsync(connection, flagKey) is not null) return;
+
+        var created = 0;
+        var conflicts = 0;
+        var ambiguous = 0;
+        var casesCommand = connection.CreateCommand();
+        casesCommand.CommandText = "SELECT id, trial_date, trial_end_date FROM cases WHERE COALESCE(trial_date,'')<>'' ORDER BY id";
+        var legacyRows = new List<(long Id, string TrialDate, string? TrialEndDate)>();
+        await using (var cases = await casesCommand.ExecuteReaderAsync())
+        {
+            while (await cases.ReadAsync())
+                legacyRows.Add((cases.GetInt64(0), cases.GetString(1), cases.IsDBNull(2) ? null : cases.GetString(2)));
+        }
+
+        foreach (var legacy in legacyRows)
+        {
+            var eventsCommand = connection.CreateCommand();
+            eventsCommand.CommandText = "SELECT hearing_date, end_date FROM hearings WHERE case_id=@caseId AND event_type='Jury Trial' ORDER BY hearing_date, id";
+            eventsCommand.Parameters.AddWithValue("@caseId", legacy.Id);
+            var events = new List<(string? Start, string? End)>();
+            await using (var eventReader = await eventsCommand.ExecuteReaderAsync())
+            {
+                while (await eventReader.ReadAsync())
+                    events.Add((eventReader.IsDBNull(0) ? null : eventReader.GetString(0), eventReader.IsDBNull(1) ? null : eventReader.GetString(1)));
+            }
+
+            if (events.Count == 0)
+            {
+                var insert = connection.CreateCommand();
+                insert.CommandText = """
+                    INSERT INTO hearings (case_id, title, hearing_date, end_date, location, description, created_at, updated_at, event_type, status)
+                    VALUES (@caseId, 'Jury Trial', @start, @end, NULL, 'Migrated from legacy case trial date.', @now, @now, 'Jury Trial', 'Scheduled');
+                    """;
+                insert.Parameters.AddWithValue("@caseId", legacy.Id);
+                insert.Parameters.AddWithValue("@start", legacy.TrialDate);
+                insert.Parameters.AddWithValue("@end", DbValue(legacy.TrialEndDate));
+                insert.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+                created++;
+            }
+            else if (events.Count > 1)
+            {
+                ambiguous++;
+            }
+            else if (!string.Equals(NormalizeDate(events[0].Start), NormalizeDate(legacy.TrialDate), StringComparison.Ordinal)
+                     || !string.Equals(NormalizeDate(events[0].End), NormalizeDate(legacy.TrialEndDate), StringComparison.Ordinal))
+            {
+                conflicts++;
+            }
+        }
+
+        await using var tx = connection.BeginTransaction();
+        await SetAppSettingAsync(connection, tx, flagKey, $"Created {created} Jury Trial event(s); {conflicts} conflict(s); {ambiguous} ambiguous multi-event case(s) at {DateTime.UtcNow:O}");
+        await tx.CommitAsync();
     }
 
     // One-time backfill: GenerateDeadlinesForCaseAsync now also closes a case's open computed
@@ -1148,6 +1208,7 @@ public sealed partial class CasePlannerRepository
             ServiceLogEntries = await GetServiceLogEntriesAsync(caseId),
             OpposingAttorneys = await GetOpposingAttorneysAsync(caseId),
             CaseLegalAssistants = await GetCaseLegalAssistantsAsync(caseId),
+            CaseAttorneyAssignments = await GetCaseAttorneyAssignmentsAsync(caseId),
             CaseDefendants = await GetCaseDefendantsAsync(caseId),
             PipelineHolderApprovals = await GetPipelineHolderApprovalsAsync(caseId),
             AvailableIssueTags = await GetIssueTagsAsync(),
@@ -3620,6 +3681,110 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    public async Task<List<CaseAttorneyAssignmentRecord>> GetCaseAttorneyAssignmentsAsync(long? caseId)
+    {
+        var list = new List<CaseAttorneyAssignmentRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, name, role, sort_order
+            FROM case_attorney_assignments
+            WHERE (@caseId IS NULL OR case_id=@caseId)
+            ORDER BY sort_order, id
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            list.Add(new CaseAttorneyAssignmentRecord
+            {
+                Id = reader.GetInt64(0),
+                CaseId = reader.GetInt64(1),
+                Name = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Role = reader.IsDBNull(3) ? "Supporting" : reader.GetString(3),
+                SortOrder = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+            });
+        }
+        return list;
+    }
+
+    public async Task<CaseAttorneyAssignmentRecord> SaveCaseAttorneyAssignmentAsync(CaseAttorneyAssignmentRecord model)
+    {
+        if (string.IsNullOrWhiteSpace(model.Name)) throw new InvalidOperationException("Attorney name is required.");
+        model.Role = string.Equals(model.Role, "Primary", StringComparison.OrdinalIgnoreCase) ? "Primary" : "Supporting";
+        var saved = await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            if (model.Id == 0)
+            {
+                var next = connection.CreateCommand();
+                next.Transaction = tx;
+                next.CommandText = "SELECT COALESCE(MAX(sort_order),-1)+1 FROM case_attorney_assignments WHERE case_id=@caseId";
+                next.Parameters.AddWithValue("@caseId", model.CaseId);
+                model.SortOrder = Convert.ToInt32(await next.ExecuteScalarAsync());
+                cmd.CommandText = """
+                    INSERT INTO case_attorney_assignments (case_id, name, role, sort_order, created_at, updated_at)
+                    VALUES (@caseId,@name,@role,@sortOrder,@now,@now);
+                    SELECT last_insert_rowid();
+                    """;
+            }
+            else
+            {
+                cmd.CommandText = """
+                    UPDATE case_attorney_assignments SET name=@name, role=@role, sort_order=@sortOrder, updated_at=@now
+                    WHERE id=@id;
+                    SELECT @id;
+                    """;
+                cmd.Parameters.AddWithValue("@id", model.Id);
+            }
+            cmd.Parameters.AddWithValue("@caseId", model.CaseId);
+            cmd.Parameters.AddWithValue("@name", model.Name.Trim());
+            cmd.Parameters.AddWithValue("@role", model.Role);
+            cmd.Parameters.AddWithValue("@sortOrder", model.SortOrder);
+            cmd.Parameters.AddWithValue("@now", now);
+            model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Saved case attorney {model.Name} at {DateTime.Now:G}");
+            return model;
+        });
+        await RecordActivityAsync(saved.CaseId, "AttorneyAssignmentChanged", $"Attorney assignment saved: {saved.Name} ({saved.Role}).", null, "AttorneyAssignment", null, $"{saved.Name} ({saved.Role})");
+        return saved;
+    }
+
+    public async Task DeleteCaseAttorneyAssignmentAsync(long id)
+    {
+        var deleted = await WithWriteAsync(async (connection, tx) =>
+        {
+            long caseId = 0;
+            string? name = null;
+            string? role = null;
+            var read = connection.CreateCommand();
+            read.Transaction = tx;
+            read.CommandText = "SELECT case_id, name, role FROM case_attorney_assignments WHERE id=@id";
+            read.Parameters.AddWithValue("@id", id);
+            await using (var reader = await read.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    caseId = reader.GetInt64(0);
+                    name = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    role = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
+            var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM case_attorney_assignments WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted case attorney {id} at {DateTime.Now:G}");
+            return (caseId, name, role);
+        });
+        if (deleted.caseId != 0)
+            await RecordActivityAsync(deleted.caseId, "AttorneyAssignmentRemoved", $"Attorney assignment removed: {deleted.name ?? "Unknown"} ({deleted.role ?? "Supporting"}).", null, "AttorneyAssignment", $"{deleted.name} ({deleted.role})", null);
+    }
+
     public async Task<List<CaseDefendantRecord>> GetCaseDefendantsAsync(long? caseId)
     {
         var list = new List<CaseDefendantRecord>();
@@ -4955,11 +5120,51 @@ public sealed partial class CasePlannerRepository
     {
         await WithWriteAsync(async (connection, tx) =>
         {
+            long? caseId = null;
+            string? eventType = null;
+            string? hearingDate = null;
+            var lookup = connection.CreateCommand();
+            lookup.Transaction = tx;
+            lookup.CommandText = "SELECT case_id, event_type, hearing_date FROM hearings WHERE id=@id";
+            lookup.Parameters.AddWithValue("@id", id);
+            await using (var reader = await lookup.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    caseId = reader.GetInt64(0);
+                    eventType = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    hearingDate = reader.IsDBNull(2) ? null : reader.GetString(2);
+                }
+            }
             var cmd = connection.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = "DELETE FROM hearings WHERE id=@id";
             cmd.Parameters.AddWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
+            if (caseId.HasValue && string.Equals(eventType, "Jury Trial", StringComparison.OrdinalIgnoreCase))
+            {
+                var replacement = connection.CreateCommand();
+                replacement.Transaction = tx;
+                replacement.CommandText = "SELECT hearing_date, end_date FROM hearings WHERE case_id=@caseId AND event_type='Jury Trial' ORDER BY hearing_date, id LIMIT 1";
+                replacement.Parameters.AddWithValue("@caseId", caseId.Value);
+                await using var replacementReader = await replacement.ExecuteReaderAsync();
+                string? replacementDate = null;
+                string? replacementEnd = null;
+                if (await replacementReader.ReadAsync())
+                {
+                    replacementDate = replacementReader.IsDBNull(0) ? null : replacementReader.GetString(0);
+                    replacementEnd = replacementReader.IsDBNull(1) ? null : replacementReader.GetString(1);
+                }
+                await replacementReader.CloseAsync();
+                var clearOrSync = connection.CreateCommand();
+                clearOrSync.Transaction = tx;
+                clearOrSync.CommandText = "UPDATE cases SET trial_date=@trialDate, trial_end_date=@trialEnd WHERE id=@caseId AND substr(COALESCE(trial_date,''),1,10)=substr(COALESCE(@oldDate,''),1,10)";
+                clearOrSync.Parameters.AddWithValue("@trialDate", DbValue(replacementDate));
+                clearOrSync.Parameters.AddWithValue("@trialEnd", DbValue(replacementEnd));
+                clearOrSync.Parameters.AddWithValue("@caseId", caseId.Value);
+                clearOrSync.Parameters.AddWithValue("@oldDate", DbValue(hearingDate));
+                await clearOrSync.ExecuteNonQueryAsync();
+            }
             await SetAppSettingAsync(connection, tx, "last_save_result", $"Deleted hearing {id} at {DateTime.Now:G}");
             return 0;
         });
@@ -5791,7 +5996,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, party_name, status, method, event_date, notes, created_at, updated_at
+            SELECT id, case_id, case_defendant_id, party_name, status, method, event_date, notes, created_at, updated_at
             FROM service_log_entries WHERE case_id=@caseId
             ORDER BY party_name, COALESCE(event_date, '9999-12-31')
             """;
@@ -5803,13 +6008,14 @@ public sealed partial class CasePlannerRepository
             {
                 Id = reader.GetInt64(0),
                 CaseId = reader.GetInt64(1),
-                PartyName = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                Status = reader.IsDBNull(3) ? "Not Served" : reader.GetString(3),
-                Method = reader.IsDBNull(4) ? null : reader.GetString(4),
-                EventDate = NormalizeDate(reader.IsDBNull(5) ? null : reader.GetString(5)),
-                Notes = reader.IsDBNull(6) ? null : reader.GetString(6),
-                CreatedAt = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdatedAt = reader.IsDBNull(8) ? null : reader.GetString(8),
+                CaseDefendantId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                PartyName = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Status = reader.IsDBNull(4) ? "Not Served" : reader.GetString(4),
+                Method = reader.IsDBNull(5) ? null : reader.GetString(5),
+                EventDate = NormalizeDate(reader.IsDBNull(6) ? null : reader.GetString(6)),
+                Notes = reader.IsDBNull(7) ? null : reader.GetString(7),
+                CreatedAt = reader.IsDBNull(8) ? null : reader.GetString(8),
+                UpdatedAt = reader.IsDBNull(9) ? null : reader.GetString(9),
             });
         }
 
@@ -5821,13 +6027,25 @@ public sealed partial class CasePlannerRepository
         return await WithWriteAsync(async (connection, tx) =>
         {
             var now = DateTime.UtcNow.ToString("O");
+            if (model.CaseDefendantId is { } defendantId)
+            {
+                var party = connection.CreateCommand();
+                party.Transaction = tx;
+                party.CommandText = "SELECT name FROM case_defendants WHERE id=@id AND case_id=@caseId";
+                party.Parameters.AddWithValue("@id", defendantId);
+                party.Parameters.AddWithValue("@caseId", model.CaseId);
+                var name = await party.ExecuteScalarAsync();
+                if (name is null or DBNull)
+                    throw new InvalidOperationException("The selected service party does not belong to this case.");
+                model.PartyName = Convert.ToString(name) ?? model.PartyName;
+            }
             var cmd = connection.CreateCommand();
             cmd.Transaction = tx;
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO service_log_entries (case_id, party_name, status, method, event_date, notes, created_at, updated_at)
-                    VALUES (@case_id, @party_name, @status, @method, @event_date, @notes, @created_at, @updated_at);
+                    INSERT INTO service_log_entries (case_id, case_defendant_id, party_name, status, method, event_date, notes, created_at, updated_at)
+                    VALUES (@case_id, @case_defendant_id, @party_name, @status, @method, @event_date, @notes, @created_at, @updated_at);
                     SELECT last_insert_rowid();
                     """;
                 cmd.Parameters.AddWithValue("@created_at", now);
@@ -5835,7 +6053,7 @@ public sealed partial class CasePlannerRepository
             else
             {
                 cmd.CommandText = """
-                    UPDATE service_log_entries SET party_name=@party_name, status=@status, method=@method, event_date=@event_date, notes=@notes, updated_at=@updated_at
+                    UPDATE service_log_entries SET case_defendant_id=@case_defendant_id, party_name=@party_name, status=@status, method=@method, event_date=@event_date, notes=@notes, updated_at=@updated_at
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -5843,6 +6061,7 @@ public sealed partial class CasePlannerRepository
             }
 
             cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@case_defendant_id", model.CaseDefendantId is { } selectedId ? selectedId : DBNull.Value);
             cmd.Parameters.AddWithValue("@party_name", DbValue(model.PartyName));
             cmd.Parameters.AddWithValue("@status", DbValue(model.Status));
             cmd.Parameters.AddWithValue("@method", DbValue(model.Method));
@@ -6507,6 +6726,10 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel_contact", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_folder_path", "TEXT");
         await AddColumnIfMissingAsync(connection, "case_defendants", "party_role", "TEXT NOT NULL DEFAULT 'Defendant'");
+        await ExecuteAsync(connection, "CREATE TABLE IF NOT EXISTS case_attorney_assignments (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Supporting', sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT, updated_at TEXT);");
+        // Staged service-party consolidation: new rows may reference the canonical defendant,
+        // while legacy free-text party names remain intact for historical records.
+        await AddColumnIfMissingAsync(connection, "service_log_entries", "case_defendant_id", "INTEGER");
         // Manager/Administrator Dashboard Milestone 3 (Settlement Authority workflow): the ceiling
         // Chief Counsel has most recently granted - same nullable-decimal AddColumnIfMissingAsync
         // convention as additional_deposit_amount/attorney_fees_amount above (REAL, not TEXT -
@@ -10050,6 +10273,15 @@ public sealed partial class CasePlannerRepository
             note TEXT,
             override_reason TEXT
         );
+        CREATE TABLE IF NOT EXISTS case_attorney_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'Supporting',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT,
+            updated_at TEXT
+        );
         CREATE INDEX IF NOT EXISTS idx_case_prefiling_review_events_case_id ON case_prefiling_review_events(case_id, id);
         CREATE TABLE IF NOT EXISTS witnesses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10230,6 +10462,7 @@ public sealed partial class CasePlannerRepository
         CREATE TABLE IF NOT EXISTS service_log_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
+            case_defendant_id INTEGER,
             party_name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'Not Served',
             method TEXT,

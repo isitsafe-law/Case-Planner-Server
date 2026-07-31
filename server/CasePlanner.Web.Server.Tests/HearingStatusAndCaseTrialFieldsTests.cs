@@ -67,6 +67,18 @@ public sealed class HearingStatusAndCaseTrialFieldsTests : IAsyncLifetime
         Assert.Equal("40-acre tract fronting Highway 10.", match.PropertyDescription);
     }
 
+    [Fact]
+    public async Task LegacySampleTrialDateHasOneJuryTrialEvent()
+    {
+        var sample = Assert.Single(await _fixture.Repository.GetCasesAsync("SAMPLE-CASE-004", "", "", "", true));
+
+        var events = await _fixture.Repository.GetHearingsAsync(sample.Id);
+
+        var trial = Assert.Single(events, item => item.EventType == "Jury Trial");
+        Assert.Equal(sample.TrialDate, trial.HearingDate);
+        Assert.Equal(sample.TrialEndDate, trial.EndDate);
+    }
+
     private Task<CaseRecord> CreateCaseAsync(string name, string number) => _fixture.Repository.SaveCaseAsync(new CaseRecord
     {
         CaseName = name,

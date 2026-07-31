@@ -700,6 +700,18 @@ public sealed class RecordPipelineHolderApprovalRequest
     public string? SetByDisplayName { get; set; }
 }
 
+// Additive assignment relation. The legacy cases.assigned_attorney field remains the primary
+// compatibility projection until dashboards, calendars, permissions, and exports consume this
+// relation end-to-end.
+public sealed class CaseAttorneyAssignmentRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public string Name { get; set; } = "";
+    public string Role { get; set; } = "Supporting";
+    public int SortOrder { get; set; }
+}
+
 // Authoritative SQLite review history for the pre-filing workflow. The older
 // pipeline_holder_approvals/pipeline_handoffs tables remain readable for compatibility, but new
 // review actions record one event and update the active case state in the same transaction.
@@ -1953,6 +1965,9 @@ public sealed class ServiceLogEntry
 {
     public long Id { get; set; }
     public long CaseId { get; set; }
+    // Nullable during the staged migration: older service history may only have a typed name,
+    // while new entries can point at the canonical case_defendants row.
+    public long? CaseDefendantId { get; set; }
     public string PartyName { get; set; } = "";
     public string Status { get; set; } = "Not Served";
     public string? Method { get; set; }
@@ -2145,6 +2160,7 @@ public sealed class CaseWorkspaceResponse
     public List<ServiceLogEntry> ServiceLogEntries { get; set; } = [];
     public List<OpposingAttorneyRecord> OpposingAttorneys { get; set; } = [];
     public List<CaseLegalAssistantRecord> CaseLegalAssistants { get; set; } = [];
+    public List<CaseAttorneyAssignmentRecord> CaseAttorneyAssignments { get; set; } = [];
     public List<CaseDefendantRecord> CaseDefendants { get; set; } = [];
     public List<PipelineHolderApprovalRecord> PipelineHolderApprovals { get; set; } = [];
     public List<CaseIssueTagRecord> CaseIssueTags { get; set; } = [];

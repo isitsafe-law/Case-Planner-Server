@@ -86,3 +86,17 @@ Manager data-quality findings now distinguish the total affected-case count from
 The report also flags incomplete jury-trial synchronization without changing dates automatically. `cases.trial_date` remains authoritative; the hearings catalog supplies shared calendar events until a future source-of-truth migration is deliberately approved.
 
 Keep this file synchronized with `README.md` when release, workflow, or storage behavior changes.
+
+## Current case-record migration notes
+
+- Case Style now appears in the lower Case Record card. Its stored value and document/export behavior are unchanged.
+- Startup performs a one-time, additive reconciliation of legacy case trial dates into Jury Trial events. Conflicting or multiple Jury Trial representations are counted and left for review; existing dates are not discarded.
+- Jury Trial edits keep the case-level trial-date projection synchronized. Deleting a Jury Trial selects the next remaining Jury Trial when available, otherwise clears the compatible case dates.
+- Primary attorney assignment and multiple legal-assistant rows remain the current SQLite source of truth. Supporting attorney assignments remain staged work; historical free-text service party names remain preserved while the new optional Service Log-to-defendant bridge is adopted.
+- SQLite Service Log entries now support an optional `case_defendant_id`; the UI can select a canonical party, and the original party name remains preserved as a snapshot. Existing entries are not mass-rewritten. SQL Server has the additive column migration prepared, but its runtime service-log store remains a deliberate stub.
+- SQLite now has an additive `case_attorney_assignments` relation and API/Edit Case controls for `Primary` and `Supporting` attorney rows. The legacy assigned-attorney field remains authoritative to existing consumers until the provider-neutral compatibility read migration is complete; SQL Server runtime assignment storage remains staged.
+- The open-case Work task assignee picker includes supporting attorneys. Cross-case queue assignment options still use the legacy primary-attorney/legal-assistant compatibility feed pending a paged assignment-aware endpoint.
+- SQLite now exposes `/api/attorney-assignments` for the assignment-aware queue feed. The client groups those rows by case and falls back safely when a provider does not implement the endpoint.
+- Caseload reporting recognizes supporting assignments for attorney filters and per-attorney case, trial, and deadline counts. These are assignment counts, so one case may contribute to multiple attorney rows; primary ownership is unchanged.
+- Calendar attorney filtering now matches supporting assignments on SQLite while retaining the primary attorney as the displayed case owner. SQL Server remains primary-only until its assignment runtime store is implemented.
+- Attorney assignment additions/changes/removals are recorded in the existing activity log with assignment name/role and actor metadata. This is the audit source for the current SQLite implementation.

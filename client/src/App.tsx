@@ -436,6 +436,7 @@ const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement', 'Corr
 type ServiceLogEntry = {
   id: number
   caseId: number
+  caseDefendantId?: number | null
   partyName: string
   status: string
   method?: string | null
@@ -593,6 +594,14 @@ type BackupInfo = {
   sizeBytes: number
   createdAt: string
 }
+
+type CaseAttorneyAssignment = {
+  id: number
+  caseId: number
+  name: string
+  role: 'Primary' | 'Supporting' | string
+  sortOrder?: number
+}
 type RestoreBackupResult = { restoredFileName: string; safetyBackupFileName: string; restoredAt: string }
 
 type AttentionItem = {
@@ -662,6 +671,7 @@ type WorkspaceResponse = {
   serviceLogEntries: ServiceLogEntry[]
   opposingAttorneys: OpposingAttorney[]
   caseLegalAssistants: CaseLegalAssistant[]
+  caseAttorneyAssignments: CaseAttorneyAssignment[]
   caseDefendants: CaseDefendant[]
   pipelineHolderApprovals: PipelineHolderApproval[]
   caseIssueTags: CaseIssueTag[]
@@ -1098,7 +1108,7 @@ const RISK_ANALYSIS_SLOT_OPTIONS: Record<string, string[]> = {
 const HOURLY_FEE_RISK_OPTIONS = [20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, 65000, 70000, 75000, 80000, 85000, 90000]
 
 function emptyServiceLogEntry(caseId: number): ServiceLogEntry {
-  return { id: 0, caseId, partyName: '', status: 'Not Served', method: '', eventDate: '', notes: '' }
+  return { id: 0, caseId, caseDefendantId: null, partyName: '', status: 'Not Served', method: '', eventDate: '', notes: '' }
 }
 
 function emptyPublicationEntry(caseId: number): PublicationEntry {
@@ -2059,12 +2069,16 @@ export function linkedAccountDisplayName(
 // App.taskAssigneeOptions.test.ts) - who a task on a given case can be assigned to. Replaces the
 // old case_assignments-backed roster (assigneeOptionsForCase used to return caseAssignments,
 // always empty locally) with the case's own Assigned Attorney plus its Legal Assistant(s) - the
-// people already known to be working the case. Attorney sorts first (the case's lead), then each
-// legal assistant in list order; de-duplicated in case an attorney is also entered as an LA.
-export function assignableStaffNames(assignedAttorney: string | null | undefined, legalAssistantNames: string[]): string[] {
+// people already known to be working the case. The primary attorney sorts first, followed by
+// supporting attorneys and legal assistants; names are de-duplicated across the lists.
+export function assignableStaffNames(assignedAttorney: string | null | undefined, legalAssistantNames: string[], supportingAttorneyNames: string[] = []): string[] {
   const names: string[] = []
   const attorney = assignedAttorney?.trim()
   if (attorney) names.push(attorney)
+  for (const raw of supportingAttorneyNames) {
+    const name = raw?.trim()
+    if (name && !names.includes(name)) names.push(name)
+  }
   for (const raw of legalAssistantNames) {
     const name = raw?.trim()
     if (name && !names.includes(name)) names.push(name)
@@ -2420,6 +2434,8 @@ function App() {
   const [publicationEntryFormOpen, setPublicationEntryFormOpen] = useState(false)
   const [opposingAttorneys, setOpposingAttorneys] = useState<OpposingAttorney[]>([])
   const [caseLegalAssistants, setCaseLegalAssistants] = useState<CaseLegalAssistant[]>([])
+  const [caseAttorneyAssignments, setCaseAttorneyAssignments] = useState<CaseAttorneyAssignment[]>([])
+  const [allCaseAttorneyAssignments, setAllCaseAttorneyAssignments] = useState<Record<number, CaseAttorneyAssignment[]>>({})
   const [caseDefendants, setCaseDefendants] = useState<CaseDefendant[]>([])
   const [pipelineHolderApprovals, setPipelineHolderApprovals] = useState<PipelineHolderApproval[]>([])
   // Which gated-holder action (Approve or Return for Revision) is currently expanded for a note
@@ -2874,10 +2890,11 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, allAttorneyAssignments, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
+        api<CaseAttorneyAssignment[]>('/api/attorney-assignments').catch(() => []),
         api<DiagnosticsSnapshot>('/api/diagnostics'),
         api<DeadlineItem[]>('/api/work-queues/deadlines'),
         api<ChecklistItem[]>('/api/work-queues/checklist'),
@@ -2905,6 +2922,10 @@ function App() {
       setDashboard(dashboardData)
       setCases(caseList)
       setAllCases(allCaseList)
+      setAllCaseAttorneyAssignments(allAttorneyAssignments.reduce<Record<number, CaseAttorneyAssignment[]>>((groups, row) => {
+        groups[row.caseId] = [...(groups[row.caseId] ?? []), row]
+        return groups
+      }, {}))
       setDiagnostics(diagnosticsData)
       setQueueDeadlines(deadlinesData)
       setQueueChecklist(checklistData)
@@ -2998,6 +3019,7 @@ function App() {
       setPublicationEntryFormOpen(false)
       setOpposingAttorneys(data.opposingAttorneys ?? [])
       setCaseLegalAssistants(data.caseLegalAssistants ?? [])
+      setCaseAttorneyAssignments(data.caseAttorneyAssignments ?? [])
       setCaseDefendants(data.caseDefendants ?? [])
       setDefendantAnswerConfirmingKey(null)
       setPipelineHolderApprovals(data.pipelineHolderApprovals ?? [])
@@ -3287,7 +3309,7 @@ function App() {
   // both); the cross-case Work Queue fetches and caches the combined list per case on demand.
   function assigneeOptionsForCase(caseId: number): string[] {
     if (caseId === (workspace?.case.id ?? selectedCaseId)) {
-      return assignableStaffNames(workspace?.case.assignedAttorney ?? caseDraft.assignedAttorney, caseLegalAssistants.map((row) => row.name))
+      return assignableStaffNames(workspace?.case.assignedAttorney ?? caseDraft.assignedAttorney, caseLegalAssistants.map((row) => row.name), caseAttorneyAssignments.map((row) => row.name))
     }
     return queueAssigneeOptions[caseId] ?? []
   }
@@ -3297,7 +3319,7 @@ function App() {
     try {
       const attorney = allCases.find((c) => c.id === caseId)?.assignedAttorney
       const legalAssistants = await api<CaseLegalAssistant[]>(`/api/cases/${caseId}/legal-assistants`)
-      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: assignableStaffNames(attorney, legalAssistants.map((row) => row.name)) }))
+      setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: assignableStaffNames(attorney, legalAssistants.map((row) => row.name), allCaseAttorneyAssignments[caseId]?.map((row) => row.name) ?? []) }))
     } catch {
       setQueueAssigneeOptions((prev) => ({ ...prev, [caseId]: [] }))
     }
@@ -3510,6 +3532,7 @@ function App() {
     // genuinely empty here so the auto-populate-while-blank rule behaves correctly the first time
     // Assigned Attorney is set on a brand-new case.
     setCaseLegalAssistants([])
+    setCaseAttorneyAssignments([])
     setCaseTab('overview')
     setDeadlineDraft(emptyDeadline())
     setChecklistDraft(emptyChecklist())
@@ -6032,6 +6055,33 @@ function App() {
     }
   }
 
+  function addCaseAttorneyAssignmentRow() {
+    const caseId = selectedCaseId ?? caseDraft.id
+    setCaseAttorneyAssignments((prev) => [...prev, { id: 0, caseId: caseId || 0, name: '', role: 'Supporting', sortOrder: prev.length }])
+  }
+
+  async function changeCaseAttorneyAssignment(index: number, patch: Partial<CaseAttorneyAssignment>) {
+    const row = caseAttorneyAssignments[index]
+    const next = { ...row, ...patch }
+    setCaseAttorneyAssignments((prev) => prev.map((item, i) => i === index ? next : item))
+    if (!next.name.trim() || !next.caseId) return
+    try {
+      const saved = await api<CaseAttorneyAssignment>(`/api/cases/${next.caseId}/attorney-assignments`, { method: 'POST', body: JSON.stringify(next) })
+      setCaseAttorneyAssignments((prev) => prev.map((item, i) => i === index ? saved : item))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save attorney assignment.')
+    }
+  }
+
+  async function removeCaseAttorneyAssignment(index: number) {
+    const row = caseAttorneyAssignments[index]
+    setCaseAttorneyAssignments((prev) => prev.filter((_, i) => i !== index))
+    if (row.id) {
+      try { await api(`/api/case-attorney-assignments/${row.id}`, { method: 'DELETE' }) }
+      catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to remove attorney assignment.') }
+    }
+  }
+
   async function removeCaseDefendantRow(index: number) {
     const row = caseDefendants[index]
     if (!row) return
@@ -6188,9 +6238,13 @@ function App() {
   // ---- Report A: Caseload & Workload (reportView === 'caseload') ----------------------------
   const caseloadOpenCases = useMemo(() => allCases.filter(isOpenCase), [allCases])
   const caseloadActiveAttorneyNames = useMemo(() => attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), [attorneys])
+  const attorneyNamesForCase = (record: CaseRecord): string[] => {
+    const supporting = allCaseAttorneyAssignments[record.id]?.map((assignment) => assignment.name).filter(Boolean) ?? []
+    return [...new Set([record.assignedAttorney || '', ...supporting].filter(Boolean))]
+  }
   const caseloadScopedCases = useMemo(
-    () => caseloadViewAttorney ? caseloadOpenCases.filter((record) => (record.assignedAttorney || '') === caseloadViewAttorney) : caseloadOpenCases,
-    [caseloadOpenCases, caseloadViewAttorney],
+    () => caseloadViewAttorney ? caseloadOpenCases.filter((record) => attorneyNamesForCase(record).includes(caseloadViewAttorney)) : caseloadOpenCases,
+    [caseloadOpenCases, caseloadViewAttorney, allCaseAttorneyAssignments],
   )
   // Row list for the per-attorney breakdowns below: active attorneys (Staff Directory order) plus
   // any other assignedAttorney value actually present on an open case - a deactivated/legacy name,
@@ -6203,23 +6257,29 @@ function App() {
     let hasUnassigned = false
     for (const record of caseloadOpenCases) {
       const name = record.assignedAttorney || ''
-      if (!name) { hasUnassigned = true; continue }
-      if (!rows.includes(name)) extra.add(name)
+      if (!name) hasUnassigned = true
+      else if (!rows.includes(name)) extra.add(name)
+      for (const supporting of allCaseAttorneyAssignments[record.id] ?? []) {
+        if (supporting.name && !rows.includes(supporting.name)) extra.add(supporting.name)
+      }
     }
     rows.push(...[...extra].sort((a, b) => a.localeCompare(b)))
     if (hasUnassigned) rows.push('Unassigned')
     return rows
-  }, [caseloadActiveAttorneyNames, caseloadOpenCases, caseloadViewAttorney])
+  }, [caseloadActiveAttorneyNames, caseloadOpenCases, caseloadViewAttorney, allCaseAttorneyAssignments])
   const caseloadCasesByRow = useMemo(() => {
     const map = new Map<string, CaseRecord[]>()
     for (const row of caseloadAttorneyRows) map.set(row, [])
     for (const record of caseloadScopedCases) {
-      const row = record.assignedAttorney || 'Unassigned'
-      if (!map.has(row)) continue
-      map.get(row)!.push(record)
+      const rowsForCase = attorneyNamesForCase(record)
+      if (rowsForCase.length === 0) {
+        if (map.has('Unassigned')) map.get('Unassigned')!.push(record)
+        continue
+      }
+      for (const row of rowsForCase) if (map.has(row)) map.get(row)!.push(record)
     }
     return map
-  }, [caseloadAttorneyRows, caseloadScopedCases])
+  }, [caseloadAttorneyRows, caseloadScopedCases, allCaseAttorneyAssignments])
   const caseloadStatusMatrix = useMemo(() => caseloadAttorneyRows.map((row) => {
     const rowCases = caseloadCasesByRow.get(row) || []
     const counts = Object.fromEntries(consolidatedCaseStatuses.map((status) => [status, rowCases.filter((record) => (record.caseStatus || 'Pipeline') === status).length])) as Record<string, number>
@@ -6264,18 +6324,22 @@ function App() {
     for (const deadline of queueDeadlines) {
       if (deadline.status !== 'Open') continue
       if (!scopedCaseIds.has(deadline.caseId)) continue
-      const row = caseById.get(deadline.caseId)?.assignedAttorney || 'Unassigned'
-      const bucket = perAttorney.get(row)
-      if (!bucket) continue
       const matches = caseloadWindowMatches(deadline.dueDate, today)
-      if (matches.includes(30)) bucket.d30++
-      if (matches.includes(60)) bucket.d60++
-      if (matches.includes(90)) bucket.d90++
+      const record = caseById.get(deadline.caseId)
+      if (!record) continue
+      const rowsForCase = attorneyNamesForCase(record)
+      for (const row of rowsForCase.length ? rowsForCase : ['Unassigned']) {
+        const bucket = perAttorney.get(row)
+        if (!bucket) continue
+        if (matches.includes(30)) bucket.d30++
+        if (matches.includes(60)) bucket.d60++
+        if (matches.includes(90)) bucket.d90++
+      }
     }
     const perAttorneyArray = caseloadAttorneyRows.map((row) => ({ name: row, ...perAttorney.get(row)! }))
     const totals = perAttorneyArray.reduce((sum, row) => ({ d30: sum.d30 + row.d30, d60: sum.d60 + row.d60, d90: sum.d90 + row.d90 }), { d30: 0, d60: 0, d90: 0 })
     return { perAttorney: perAttorneyArray, totals }
-  }, [allCases, queueDeadlines, caseloadScopedCases, caseloadAttorneyRows])
+  }, [allCases, queueDeadlines, caseloadScopedCases, caseloadAttorneyRows, allCaseAttorneyAssignments])
   const caseloadAgeBuckets = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
     return caseloadAttorneyRows.map((row) => {
@@ -7478,16 +7542,6 @@ function App() {
               <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next event</span><strong>{nextUpcomingEvent ? `${nextUpcomingEvent.title} · ${displayDate(nextUpcomingEvent.hearingDate)}` : '—'}</strong></button>
             </div>
 
-            {(selectedCase.caseStyle || caseDefendants.length > 0 || selectedCase.landowner || selectedCase.owner) && (
-              <Panel title="Case Style">
-                <p className="case-style-text" style={{ whiteSpace: 'pre-wrap' }}>{selectedCase.caseStyle || suggestedCaseStyle()}</p>
-                <div className="button-row compact-actions top-gap-small">
-                  <Btn size="sm" onClick={() => void navigator.clipboard.writeText(selectedCase.caseStyle || suggestedCaseStyle())}>Copy Case Style</Btn>
-                  <Btn size="sm" onClick={startEditCaseWithSuggestedStyle}>{selectedCase.caseStyle ? 'Rebuild from Parties' : 'Save Case Style'}</Btn>
-                </div>
-              </Panel>
-            )}
-
             <div className="workspace-panel-grid two-col">
               <Panel title="Next Deadlines" headerAction={<button className="link-button" onClick={() => setCaseTab('work')}>View All</button>}>
                 {commandDeadlines.length === 0 ? <p>No open deadlines right now.</p> : (
@@ -7623,6 +7677,20 @@ function App() {
                 <Btn onClick={() => setShowAllCaseRecordFields((current) => !current)}>{showAllCaseRecordFields ? 'Hide empty fields' : 'Show all fields'}</Btn>
               </div>
               <div className="record-section-stack top-gap">
+                <div className="record-section">
+                  <div className="record-section-header">
+                    <h4>Case Style</h4>
+                    <p>The stored caption used by document generation and case exports.</p>
+                  </div>
+                  <p className={`preformatted-note${selectedCase.caseStyle ? '' : ' record-kv-empty'}`}>
+                    {selectedCase.caseStyle || 'No case style saved.'}
+                  </p>
+                  <div className="button-row compact-actions top-gap-small">
+                    <Btn size="sm" disabled={!selectedCase.caseStyle && caseDefendants.length === 0 && !selectedCase.landowner && !selectedCase.owner} onClick={() => void navigator.clipboard.writeText(selectedCase.caseStyle || suggestedCaseStyle())}>Copy Case Style</Btn>
+                    <Btn size="sm" onClick={startEditCaseWithSuggestedStyle}>{selectedCase.caseStyle ? 'Rebuild from Parties' : 'Create from Parties'}</Btn>
+                  </div>
+                </div>
+
                 <div className="record-section">
                   <div className="record-section-header">
                     <h4>Core Case</h4>
@@ -7905,7 +7973,22 @@ function App() {
               <p className="helper-text">Track each defendant separately - who's served, who isn't, method, dates, and attempts.</p>
               {serviceLogFormOpen && (
                 <form className="form-grid top-gap-small" onSubmit={(event) => { event.preventDefault(); void saveServiceLogEntry() }}>
-                  <label><span>Party Name</span><input value={serviceLogDraft.partyName} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, partyName: event.target.value })} placeholder="Defendant name" required /></label>
+                  <label>
+                    <span>Canonical Party</span>
+                    <select
+                      value={serviceLogDraft.caseDefendantId ? String(serviceLogDraft.caseDefendantId) : ''}
+                      onChange={(event) => {
+                        const id = event.target.value ? Number(event.target.value) : null
+                        const party = caseDefendants.find((defendant) => defendant.id === id)
+                        setServiceLogDraft({ ...serviceLogDraft, caseDefendantId: id, partyName: party?.name || serviceLogDraft.partyName })
+                      }}
+                    >
+                      <option value="">Historical/free-text party</option>
+                      {caseDefendants.filter((defendant) => defendant.id !== 0).map((defendant) => <option key={defendant.id} value={defendant.id}>{defendant.name || 'Unnamed party'}</option>)}
+                    </select>
+                    <span className="helper-text">Select a case party when possible; historical entries may retain a typed name.</span>
+                  </label>
+                  <label><span>Party Name Snapshot</span><input value={serviceLogDraft.partyName} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, partyName: event.target.value, caseDefendantId: null })} placeholder="Defendant name" required /></label>
                   <label><span>Status</span><select value={serviceLogDraft.status} onChange={(event) => setServiceLogDraft({ ...serviceLogDraft, status: event.target.value })}>{serviceLogStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
                   <label>
                     <span>Method</span>
@@ -9584,6 +9667,25 @@ function App() {
                     ))}
                   </select>
                 </label>
+                <div className="full-span">
+                  <span>Additional Attorneys</span>
+                  <p className="helper-text">The Assigned Attorney remains the primary compatibility field. Add supporting attorneys here without changing current dashboard ownership.</p>
+                  {caseAttorneyAssignments.map((row, index) => (
+                    <div key={row.id || `new-attorney-${index}`} className="button-row compact-actions top-gap-small">
+                      <select value={row.name} onChange={(event) => void changeCaseAttorneyAssignment(index, { name: event.target.value })}>
+                        <option value="">Select attorney</option>
+                        {attorneyOptions(attorneys.filter((attorney) => attorney.isActive).map((attorney) => attorney.name), row.name).map((name) => <option key={name} value={name}>{name}</option>)}
+                      </select>
+                      <select value={row.role} onChange={(event) => void changeCaseAttorneyAssignment(index, { role: event.target.value })}>
+                        <option value="Supporting">Supporting</option>
+                        <option value="Primary">Primary (record only)</option>
+                      </select>
+                      <button type="button" onClick={() => void removeCaseAttorneyAssignment(index)}>Remove</button>
+                    </div>
+                  ))}
+                  {caseAttorneyAssignments.length === 0 && <p className="helper-text top-gap-small">No additional attorneys recorded.</p>}
+                  <button type="button" className="top-gap-small" onClick={addCaseAttorneyAssignmentRow}>+ Add Attorney</button>
+                </div>
                 <div className="full-span">
                   <span>Legal Assistant</span>
                   {caseLegalAssistants.map((row, index) => (

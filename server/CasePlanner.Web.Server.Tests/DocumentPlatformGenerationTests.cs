@@ -77,6 +77,38 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EveryActiveBuiltinTemplateCanRenderWithRepresentativeRequiredInputs()
+    {
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Built-in Render Smoke Test",
+            CaseNumber = "DOC-SMOKE-001",
+            County = "Pulaski",
+            Landowner = "Smoke Test Trust",
+            CaseStatus = "Active Litigation",
+            Status = "Active",
+            Track = "Contested",
+        });
+        var templates = await _fixture.Repository.GetAllDocumentTemplatesForAdminAsync();
+        var builtins = templates.Where(item => item.Template.IsBuiltin && item.ActiveVersion is not null).ToList();
+
+        foreach (var template in builtins)
+        {
+            var checklist = await _fixture.Repository.GetDocumentGenerationChecklistAsync(caseRecord.Id, template.Template.TemplateKey);
+            Assert.NotNull(checklist);
+            var inputs = checklist!.RuntimeInputs
+                .Where(input => input.IsRequired)
+                .ToDictionary(input => input.FieldKey, input => input.FieldType.Equals("date", StringComparison.OrdinalIgnoreCase) ? "2026-08-01" : "Representative test value");
+
+            var result = await _fixture.Repository.GenerateDocumentPlatformDocumentAsync(
+                caseRecord.Id, template.Template.TemplateKey, [], inputs, null);
+
+            Assert.True(File.Exists(result.OutputPath), template.Template.TemplateKey);
+            Assert.True(result.GenerationId > 0, template.Template.TemplateKey);
+        }
+    }
+
+    [Fact]
     public async Task DrainageSectionIsPreCheckedWhenCaseHasTheDrainageTag()
     {
         var caseRecord = await CreateCaseWithDrainageTagAsync();

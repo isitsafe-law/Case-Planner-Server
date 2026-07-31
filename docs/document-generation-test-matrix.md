@@ -23,4 +23,4 @@ This is the portable-first contract for document generation. The same cases shou
 
 Generation failures include a request ID in the response and portable log so a user report can be correlated with the server diagnostic record.
 
-The current automated coverage includes every active built-in template's completeness audit, built-in template generation, optional sections, missing values, repeated generation, and stale portable template paths. The remaining rows are the next expansion targets for integration or manual package smoke tests.
+The current automated coverage includes every active built-in template's completeness audit and render smoke test with representative required inputs, built-in template generation, optional sections, missing values, repeated generation, and stale portable template paths. The remaining rows are the next expansion targets for integration or manual package smoke tests.

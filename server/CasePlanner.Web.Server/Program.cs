@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Identity.Web;
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Packaging;
 using CasePlanner.Data;
 using CasePlanner.Web.Server.Models;
 using CasePlanner.Web.Server.Persistence;
@@ -1278,6 +1279,18 @@ app.MapPut("/api/cases/{id:long}/publication", async (long id, PublicationRecord
     catch (InvalidOperationException ex)
     {
         return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (OpenXmlPackageException ex)
+    {
+        return Results.BadRequest(new { error = $"The document template could not be opened: {ex.Message}" });
+    }
+    catch (InvalidDataException ex)
+    {
+        return Results.BadRequest(new { error = $"The document template contains invalid data: {ex.Message}" });
+    }
+    catch (IOException ex)
+    {
+        return Results.BadRequest(new { error = $"The document template could not be read: {ex.Message}" });
     }
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/work-queues/service",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>

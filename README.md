@@ -183,6 +183,8 @@ Document-generation tests now audit every active built-in template for unknown m
 
 If document generation fails unexpectedly, the portable server retains the latest failure message, operation, request ID, and log path in Diagnostics. This makes a reported 500 actionable without server access; the full exception remains in the local log.
 
+Malformed or unreadable DOCX templates now return a specific template error to the user instead of an opaque server error.
+
 Data Quality also flags active document templates that contain unknown merge tags, so template drift is visible before a user attempts generation.
 
 The latest recorded generation failure is cleared automatically after a successful generation, keeping Diagnostics focused on unresolved problems.

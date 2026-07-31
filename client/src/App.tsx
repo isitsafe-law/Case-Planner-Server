@@ -10943,7 +10943,8 @@ function App() {
                 <p className="helper-text top-gap-small">A display filter only, standing in for per-login scoping until Entra is live - available to everyone, same as the rest of this Reports tab.</p>
               </Panel>
 
-              <Panel title="Open Cases by Status" className="top-gap-small" headerAction={<span className="pill pill-neutral">{caseloadScopedCases.length} open case{caseloadScopedCases.length === 1 ? '' : 's'}</span>}>
+              <Panel title="Open Cases by Status" className="top-gap-small" headerAction={<span className="pill pill-neutral">{caseloadScopedCases.length} unique open case{caseloadScopedCases.length === 1 ? '' : 's'}</span>}>
+                <p className="helper-text">The case total counts each case once. Per-attorney rows count assignments, so a case with a supporting attorney can appear in more than one row.</p>
                 <div className="table-wrap">
                   <table className="ui-table compact-table">
                     <thead>

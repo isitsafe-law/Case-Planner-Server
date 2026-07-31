@@ -106,3 +106,4 @@ Keep this file synchronized with `README.md` when release, workflow, or storage 
 - Diagnostics provides an Export CSV action for these findings, including counts, definitions, suggested actions, and sample case IDs.
 - The portable Diagnostics page displays and refreshes those findings directly, so IT can review assignment and party-link issues without querying SQLite manually.
 - Case list rows and open-case headers distinguish the primary attorney from supporting attorneys without changing primary ownership.
+- Caseload reporting distinguishes unique open-case totals from assignment-based attorney rows, where shared cases may appear more than once.

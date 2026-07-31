@@ -179,6 +179,8 @@ It also flags cases whose legacy primary-attorney projection has no matching `Pr
 
 Diagnostics findings can be exported to CSV with their definitions, suggested actions, counts, and sample case IDs for review or IT handoff.
 
+Document-generation tests now audit every active built-in template for unknown merge tags, in addition to testing missing-value markers, optional sections, repeated generations, and portable template-path repair.
+
 The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.
 
 Case list rows and open-case headers now show the primary attorney separately from supporting attorneys, keeping the view compact while making shared responsibility visible.

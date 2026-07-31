@@ -62,6 +62,21 @@ public sealed class DocumentPlatformGenerationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EveryActiveBuiltinTemplateHasOnlyRegisteredOrDeclaredTags()
+    {
+        var templates = await _fixture.Repository.GetAllDocumentTemplatesForAdminAsync();
+        var builtins = templates.Where(item => item.Template.IsBuiltin && item.ActiveVersion is not null).ToList();
+
+        Assert.NotEmpty(builtins);
+        foreach (var template in builtins)
+        {
+            var report = await _fixture.Repository.GetDocumentTemplateCompletenessAsync(template.Template.TemplateKey);
+            Assert.NotNull(report);
+            Assert.Empty(report!.Audit.UnknownTags);
+        }
+    }
+
+    [Fact]
     public async Task DrainageSectionIsPreCheckedWhenCaseHasTheDrainageTag()
     {
         var caseRecord = await CreateCaseWithDrainageTagAsync();

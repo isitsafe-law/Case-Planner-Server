@@ -3573,3 +3573,15 @@ button.ui-tile.ui-tile-on .ui-tile-label {
     background: var(--surface-muted);
   }
 }
+.metric-definition-disclosure {
+  margin: 0 0 1rem;
+  padding: .75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  background: var(--surface);
+}
+
+.metric-definition-disclosure summary { cursor: pointer; font-weight: 600; }
+.metric-definition-list { display: grid; gap: .45rem; margin-top: .75rem; }
+.metric-definition-list div { display: grid; grid-template-columns: 11rem 1fr; gap: .75rem; }
+@media (max-width: 700px) { .metric-definition-list div { grid-template-columns: 1fr; gap: .15rem; } }

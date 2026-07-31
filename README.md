@@ -70,6 +70,8 @@ The Division Overview summarizes upcoming events, needs-attention cases, pipelin
 
 The top-level Calendar is the shared case-event view. It defaults to the signed-in attorney when Entra identity is available; SQLite preview mode provides an all-attorney view for testing. It supports 30/60/90/120/180-day and See All ranges, attorney scope, event-type filters, multi-day events, and links back to cases. Events are intentionally not Work Queue items; Work Queue contains tasks, deadlines, discovery, and service work. The manager calendar uses the same event catalog and permission-filtered event feed.
 
+Jury trial dates remain the controlling case-level date for the header and trial-watch views. A Jury Trial event is synchronized when edited through Events; other proceedings are stored in the hearings event catalog. The data-quality report flags conflicting trial representations for review rather than silently choosing a date.
+
 Planned Work is priority level 4 in the attorney Action Queue. It is an observational bucket for open filed-case work that is appropriate to schedule or advance but is not an immediate deadline, attorney decision, discovery issue, or stale-momentum concern. It is not a second task list and does not create work by itself; the underlying case signal and review date remain the source of truth.
 
 The manager dashboard does not show a permanent Awaiting Triage card. Triage is surfaced conditionally in the attorney workflow only when triage cases exist.
@@ -98,6 +100,8 @@ Arkansas State Highway Commission v. <party names>
 
 Stored `CaseStyle` remains authoritative when present. Multi-party output should use party entities rather than assuming a single landowner or opposing-counsel field.
 
+The current SQLite UI uses the existing ordered defendant/interest-holder rows as the first canonical party list and offers `Save Case Style` / `Rebuild from Parties`. This is intentionally additive: legacy owner/landowner values remain available as fallback data until a fuller party-role model is introduced.
+
 ## Checklist and deadline rules
 
 Work-item templates use broad case statuses and optional stage groupings. The legacy database field `phase` is retained for compatibility and does not imply a finely divided workflow.
@@ -107,6 +111,14 @@ Supported deadline anchors include filing date, jury trial date, date opened, da
 ## Testing expectations
 
 Important coverage includes consolidated triage activation, optional discovery strategy persistence, service-alert date bands, conditional triage rendering, management totals, pipeline sign-off, Close/Reopen retention, Events navigation, jury-trial/header behavior, County Officials collapse behavior, merge-tag resolver completeness, missing-tag warnings, checklist/deadline anchors, and portable package startup.
+
+The Diagnostics settings page now exposes Portable Validation. It checks database/write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. `/api/data-quality` returns stable checks for unassigned pipeline cases, missing case styles, missing party records, conflicting jury-trial representations, and missing template files. `/api/portable-validation` is the portable deployment contract that can later be reused by the server/IT health checks.
+
+API responses include an `X-Request-Id` correlation header. If a portable request fails unexpectedly, include that ID with the latest log when reporting the problem.
+
+The provider-neutral `/api/calendar/events` endpoint also exposes date, event-type, attorney, limit, and offset parameters for the next calendar pagination pass. The current SQLite client continues to use the compatibility feed while the paged response is validated.
+
+The document-generation scenarios and expected outcomes are recorded in [docs/document-generation-test-matrix.md](docs/document-generation-test-matrix.md).
 
 ## Deferred work
 

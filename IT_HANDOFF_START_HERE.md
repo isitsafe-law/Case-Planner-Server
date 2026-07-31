@@ -43,6 +43,8 @@ Service-pending behavior is graduated: day 60 is an attorney check-in; day 90 be
 
 Appearance options now include pastel blue/sage/lavender, deep navy, forest, slate, sunset, rose, ocean, plum, amber, carbon, and arctic variants in addition to light, dark, and high contrast. These are browser-local preferences and do not change data or deployment settings.
 
+Diagnostics now includes Portable Validation. It checks SQLite write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. The `/api/data-quality` and `/api/portable-validation` contracts are intentionally provider-neutral enough to reuse when the server implementation is introduced. Jury trial dates remain the controlling case-level date for header/trial-watch behavior; Jury Trial event edits synchronize that compatibility projection, while other proceedings use the hearings catalog.
+
 ## Document generation
 
 Templates use `{{Token}}` merge tags. The server catalog and resolver are maintained together. Missing or unknown values produce a missing marker/warning and do not block draft generation. Users must review generated drafts before they are passed along or filed.

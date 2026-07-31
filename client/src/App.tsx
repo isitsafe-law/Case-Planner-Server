@@ -2083,6 +2083,12 @@ function isEventPastOrResolved(item: Hearing): boolean {
   return isQueueDateOverdue(through)
 }
 
+type PortableValidationReport = {
+  generatedAt: string
+  passed: boolean
+  checks: { name: string; passed: boolean; details: string }[]
+}
+
 function serviceWarningTone(warningLevel: string): StatusTone {
   if (warningLevel === 'overdue' || warningLevel === 'missing') return 'danger'
   if (warningLevel === 'urgent' || warningLevel === 'high' || warningLevel === 'warning' || warningLevel === 'upcoming') return 'warn'
@@ -2265,6 +2271,7 @@ function App() {
   const [bulkChecklistDueDateOpen, setBulkChecklistDueDateOpen] = useState(false)
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
+  const [portableValidation, setPortableValidation] = useState<PortableValidationReport | null>(null)
   const [cases, setCases] = useState<CaseRecord[]>([])
   const [allCases, setAllCases] = useState<CaseRecord[]>([])
   const [currentUser, setCurrentUser] = useState<AuthenticatedUserProfile | null>(null)
@@ -3871,6 +3878,19 @@ function App() {
     if (!caseId) return
     setHearingDraft(emptyHearing(caseId))
     openModal('event', 'create')
+  }
+
+  function suggestedCaseStyle(): string {
+    const parties = caseDefendants.map((party) => party.name.trim()).filter(Boolean)
+    const fallback = selectedCase.landowner || selectedCase.owner || ''
+    const names = parties.length > 0 ? parties : (fallback ? [fallback] : [])
+    return `Arkansas State Highway Commission v. ${names.length > 0 ? names.join(', ') : '[Add party names]'}`
+  }
+
+  function startEditCaseWithSuggestedStyle() {
+    if (!selectedCase.id) return
+    setCaseDraft({ ...selectedCase, caseStyle: suggestedCaseStyle() })
+    openModal('case', 'edit')
   }
 
   function startNewJuryTrial() {
@@ -7407,11 +7427,12 @@ function App() {
               <button className="summary-pill clickable" onClick={() => setCaseTab('work')}><span>Next event</span><strong>{nextUpcomingEvent ? `${nextUpcomingEvent.title} · ${displayDate(nextUpcomingEvent.hearingDate)}` : '—'}</strong></button>
             </div>
 
-            {selectedCase.caseStyle && (
+            {(selectedCase.caseStyle || caseDefendants.length > 0 || selectedCase.landowner || selectedCase.owner) && (
               <Panel title="Case Style">
-                <p className="case-style-text" style={{ whiteSpace: 'pre-wrap' }}>{selectedCase.caseStyle}</p>
+                <p className="case-style-text" style={{ whiteSpace: 'pre-wrap' }}>{selectedCase.caseStyle || suggestedCaseStyle()}</p>
                 <div className="button-row compact-actions top-gap-small">
-                  <Btn size="sm" onClick={() => void navigator.clipboard.writeText(selectedCase.caseStyle || '')}>Copy Case Style</Btn>
+                  <Btn size="sm" onClick={() => void navigator.clipboard.writeText(selectedCase.caseStyle || suggestedCaseStyle())}>Copy Case Style</Btn>
+                  <Btn size="sm" onClick={startEditCaseWithSuggestedStyle}>{selectedCase.caseStyle ? 'Rebuild from Parties' : 'Save Case Style'}</Btn>
                 </div>
               </Panel>
             )}
@@ -8644,6 +8665,17 @@ function App() {
         </Panel>
       </div>
     )
+  }
+
+  async function runPortableValidation() {
+    try {
+      setErrorMessage('')
+      const result = await api<PortableValidationReport>('/api/portable-validation')
+      setPortableValidation(result)
+      setMessage(result.passed ? 'Portable validation passed.' : 'Portable validation found issues.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to run portable validation.')
+    }
   }
 
   async function updatePipelineHolder(holder: string) {
@@ -11156,6 +11188,8 @@ function App() {
 
           {settingsSection === 'diagnostics' && (
             <Panel title="Diagnostics">
+              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><span className="helper-text">Checks writable paths, active document templates, and critical data-quality findings.</span></div>
+              {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td></tr>)}</tbody></table></div></div>}
               {diagnostics ? (
                 <div className="diagnostics-grid">
                   <StatCard label="App / Version" value={`${diagnostics.appName} | ${diagnostics.version}`} />

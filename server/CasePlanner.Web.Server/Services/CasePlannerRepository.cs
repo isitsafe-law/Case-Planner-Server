@@ -9505,6 +9505,76 @@ public sealed partial class CasePlannerRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<DataQualityReport> GetDataQualityReportAsync()
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var report = new DataQualityReport
+        {
+            GeneratedAt = DateTime.UtcNow.ToString("O"),
+            ScopeDefinition = "Open includes Pipeline, Filed / Service Pending, Active Litigation, Settlement Pending, and Trial Preparation; Triage and Resolved / Closed are excluded.",
+        };
+
+        async Task<DataQualityIssue> Issue(string key, string severity, string label, string definition, string action, string countSql, string sampleSql)
+        {
+            await using var countCommand = connection.CreateCommand();
+            countCommand.CommandText = countSql;
+            var count = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+            var samples = new List<long>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = sampleSql;
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) samples.Add(reader.GetInt64(0));
+            return new DataQualityIssue { Key = key, Severity = severity, Label = label, Count = count, Definition = definition, SuggestedAction = action, SampleCaseIds = samples };
+        }
+
+        report.Issues.Add(await Issue(
+            "pipeline-unassigned", "Warning", "Pipeline cases without a current holder",
+            "Open Pipeline cases whose current_holder is blank.",
+            "Assign a legal assistant, attorney, counsel reviewer, or filing staff holder.",
+            "SELECT COUNT(*) FROM cases WHERE COALESCE(case_status,'Pipeline')='Pipeline' AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(current_holder,'')='';",
+            "SELECT id FROM cases WHERE COALESCE(case_status,'Pipeline')='Pipeline' AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(current_holder,'')='' ORDER BY id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "missing-case-style", "Info", "Open cases without a case style",
+            "Open cases with no persisted CaseStyle value.",
+            "Review party names and generate or enter the case style.",
+            "SELECT COUNT(*) FROM cases WHERE COALESCE(case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(case_style,'')='';",
+            "SELECT id FROM cases WHERE COALESCE(case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(case_style,'')='' ORDER BY id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "missing-parties", "Warning", "Open cases without party rows",
+            "Open cases with no case_defendants rows and no legacy owner/landowner value.",
+            "Add the known defendants/interest holders before generating captions or pleadings.",
+            "SELECT COUNT(*) FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='';",
+            "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='' ORDER BY c.id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
+            "jury-trial-conflict", "Warning", "Conflicting jury-trial dates",
+            "A case-level trial_date differs from its Jury Trial event date.",
+            "Choose the controlling date and update the other representation.",
+            "SELECT COUNT(*) FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10);",
+            "SELECT c.id FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10) ORDER BY c.id LIMIT 20;"));
+
+        var templateIssue = new DataQualityIssue
+        {
+            Key = "missing-template-files", Severity = "Critical", Label = "Active document templates with missing files",
+            Definition = "Active document template versions whose stored file path does not resolve on this machine.",
+            SuggestedAction = "Restore the template file, move the package with its templates folder, or re-upload the template.",
+        };
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT v.storage_path FROM document_template_versions v WHERE v.is_active=1";
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                if (!File.Exists(reader.GetString(0))) templateIssue.Count++;
+            }
+        }
+        report.Issues.Add(templateIssue);
+        return report;
+    }
+
     private static void ValidateHearingDates(HearingRecord model)
     {
         if (DateOnly.TryParse(model.HearingDate, out var start) && DateOnly.TryParse(model.EndDate, out var end) && end < start)

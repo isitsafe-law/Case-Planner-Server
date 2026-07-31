@@ -1635,6 +1635,33 @@ public sealed class DiagnosticsSnapshot
     public Dictionary<string, string> Folders { get; set; } = [];
 }
 
+public sealed class DataQualityIssue
+{
+    public string Key { get; set; } = "";
+    public string Severity { get; set; } = "Info";
+    public string Label { get; set; } = "";
+    public int Count { get; set; }
+    public string Definition { get; set; } = "";
+    public string SuggestedAction { get; set; } = "";
+    public List<long> SampleCaseIds { get; set; } = [];
+}
+
+public sealed class DataQualityReport
+{
+    public string GeneratedAt { get; set; } = "";
+    public string ScopeDefinition { get; set; } = "";
+    public List<DataQualityIssue> Issues { get; set; } = [];
+}
+
+public sealed record PortableValidationCheck(string Name, bool Passed, string Details);
+
+public sealed class PortableValidationReport
+{
+    public string GeneratedAt { get; set; } = "";
+    public bool Passed { get; set; }
+    public List<PortableValidationCheck> Checks { get; set; } = [];
+}
+
 public sealed class OrgDefaults
 {
     public long Id { get; set; }

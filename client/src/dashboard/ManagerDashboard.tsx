@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CaseRecord, Hearing } from '../App'
 import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
@@ -7,6 +7,8 @@ import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from '.
 import { DivisionPipelineTab } from './DivisionPipelineTab'
 import { ByAttorneyTab } from './ByAttorneyTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
+import { METRIC_DEFINITIONS, type DataQualityReport } from './dataQuality'
+import { api } from '../App'
 
 type ManagerDashboardTab = 'calendar' | 'pipeline' | 'byAttorney' | 'needsAttention'
 
@@ -55,6 +57,11 @@ export function ManagerDashboard({
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
   const [horizon, setHorizon] = useState<CalendarHorizon>(30)
+  const [dataQuality, setDataQuality] = useState<DataQualityReport | null>(null)
+
+  useEffect(() => {
+    void api<DataQualityReport>('/api/data-quality').then(setDataQuality).catch(() => setDataQuality(null))
+  }, [])
 
   const eventsNext7 = useMemo(() => countEventsInWindow(allCases, hearings, 7), [allCases, hearings])
   const eventsNext30 = useMemo(() => countEventsInWindow(allCases, hearings, 30), [allCases, hearings])
@@ -77,6 +84,20 @@ export function ManagerDashboard({
         <h2>Division Overview</h2>
         <span className="dash-date">Testing view pending Microsoft Entra ID integration.</span>
       </div>
+
+      <details className="metric-definition-disclosure">
+        <summary>Metric definitions and data quality</summary>
+        <p className="helper-text">These definitions are the current management-view contract. Counts are computed from the active SQLite case and event data.</p>
+        <div className="metric-definition-list">
+          {METRIC_DEFINITIONS.map(([label, definition]) => <div key={label}><strong>{label}</strong><span>{definition}</span></div>)}
+        </div>
+        {dataQuality && (
+          <div className="top-gap-small">
+            <strong>Data-quality checks</strong>
+            {dataQuality.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text">No current issues detected.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>{dataQuality.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td className={`ui-data${issue.severity === 'Critical' ? ' ui-cell-danger' : ' ui-cell-warn'}`}>{issue.count}</td><td>{issue.suggestedAction}</td></tr>)}</tbody></table></div>}
+          </div>
+        )}
+      </details>
 
       <div className="ui-tiles" style={{ marginBottom: '1rem', flexWrap: 'wrap' }}>
         <MetricTile

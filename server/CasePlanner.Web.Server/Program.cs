@@ -424,13 +424,17 @@ await repo.LogAsync($"Web app startup complete. localUrl={paths.Config.LocalUrl}
 // request exceptions get recorded - without it a crash would be invisible instead of just quiet.
 app.Use(async (context, next) =>
 {
+    var requestId = context.Request.Headers.TryGetValue("X-Request-Id", out var suppliedRequestId) && !string.IsNullOrWhiteSpace(suppliedRequestId)
+        ? suppliedRequestId.ToString()
+        : Guid.NewGuid().ToString("N");
+    context.Response.Headers["X-Request-Id"] = requestId;
     try
     {
         await next();
     }
     catch (Exception ex)
     {
-        await repo.LogAsync($"UNHANDLED EXCEPTION on {context.Request.Method} {context.Request.Path}: {ex}");
+        await repo.LogAsync($"UNHANDLED EXCEPTION requestId={requestId} on {context.Request.Method} {context.Request.Path}: {ex}");
         throw;
     }
 });
@@ -1316,6 +1320,26 @@ app.MapGet("/api/work-queues/hearings",async(IHearingStore hearings,CaseAccessSe
 {
     var items=await hearings.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/calendar/events", async (string? from, string? to, string? eventType, string? assignedAttorney, int? limit, int? offset, IHearingStore hearings, ICaseCatalogReader cases, CaseAccessService access, CancellationToken token) =>
+{
+    var visible = await access.GetVisibleCaseIdsAsync(token);
+    var records = await hearings.GetAsync(null, token);
+    var caseRows = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);
+    var attorneyByCase = caseRows.ToDictionary(x => x.Id, x => x.AssignedAttorney ?? "");
+    var fromDate = DateOnly.TryParse(from, out var parsedFrom) ? parsedFrom : (DateOnly?)null;
+    var toDate = DateOnly.TryParse(to, out var parsedTo) ? parsedTo : (DateOnly?)null;
+    var filtered = records.Where(item => (visible is null || visible.Contains(item.CaseId))
+        && (string.IsNullOrWhiteSpace(eventType) || string.Equals(item.EventType, eventType, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrWhiteSpace(assignedAttorney) || attorneyByCase.GetValueOrDefault(item.CaseId, "").Equals(assignedAttorney, StringComparison.OrdinalIgnoreCase))
+        && (!fromDate.HasValue || !DateOnly.TryParse(item.EndDate ?? item.HearingDate, out var eventEnd) || eventEnd >= fromDate.Value)
+        && (!toDate.HasValue || !DateOnly.TryParse(item.HearingDate, out var eventStart) || eventStart <= toDate.Value))
+        .OrderBy(item => item.HearingDate ?? "9999-12-31")
+        .ThenBy(item => item.Id)
+        .ToList();
+    var pageSize = Math.Clamp(limit ?? 200, 1, 500);
+    var pageOffset = Math.Max(offset ?? 0, 0);
+    return Results.Ok(new { total = filtered.Count, limit = pageSize, offset = pageOffset, items = filtered.Skip(pageOffset).Take(pageSize) });
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/issue-tags",async(IIssueTagStore issueTags,CancellationToken token)=>Results.Ok(await issueTags.GetCatalogAsync(token))).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/issue-tags", async (IssueTagRecord model,IIssueTagStore issueTags,CancellationToken token) =>
 {
@@ -1682,6 +1706,22 @@ app.MapDelete("/api/risk-analysis-offers/{id:long}", async (long id,IRiskAnalysi
     return Results.Ok();
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/diagnostics", async () => Results.Ok(await repo.GetDiagnosticsAsync()));
+app.MapGet("/api/data-quality", async () => Results.Ok(await repo.GetDataQualityReportAsync()));
+app.MapGet("/api/portable-validation", async () =>
+{
+    var diagnostics = await repo.GetDiagnosticsAsync();
+    var dataQuality = await repo.GetDataQualityReportAsync();
+    var checks = new List<PortableValidationCheck>
+    {
+        new("Database write safety", diagnostics.WriteSafetyOk, diagnostics.WriteSafetyMessage),
+        new("Backup folder writable", diagnostics.BackupsWritable, diagnostics.Folders.GetValueOrDefault("backups", "Not available")),
+        new("Export folder writable", diagnostics.ExportsWritable, diagnostics.Folders.GetValueOrDefault("exports", "Not available")),
+        new("Log folder writable", diagnostics.LogsWritable, diagnostics.Folders.GetValueOrDefault("logs", "Not available")),
+        new("Document template files", dataQuality.Issues.Single(x => x.Key == "missing-template-files").Count == 0, "All active template paths resolve on this machine."),
+        new("Data quality critical issues", dataQuality.Issues.Where(x => x.Severity == "Critical").Sum(x => x.Count) == 0, "Critical data-quality findings must be resolved before a handoff."),
+    };
+    return Results.Ok(new PortableValidationReport { GeneratedAt = DateTime.UtcNow.ToString("O"), Passed = checks.All(x => x.Passed), Checks = checks });
+});
 app.MapGet("/api/health", async () =>
 {
     var diagnostics = await repo.GetDiagnosticsAsync();

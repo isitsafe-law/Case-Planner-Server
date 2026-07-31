@@ -52,5 +52,8 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         var issue = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-duplicate");
         Assert.True(issue.Count >= 1);
         Assert.Contains(caseRecord.Id, issue.SampleCaseIds);
+        var directoryIssue = Assert.Single(report.Issues, item => item.Key == "attorney-assignment-not-in-directory");
+        Assert.True(directoryIssue.Count >= 2);
+        Assert.Contains(caseRecord.Id, directoryIssue.SampleCaseIds);
     }
 }

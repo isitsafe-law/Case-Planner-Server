@@ -9888,6 +9888,13 @@ public sealed partial class CasePlannerRepository
             "SELECT case_id FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1 ORDER BY case_id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
+            "attorney-assignment-not-in-directory", "Warning", "Attorney assignments not in the active Staff Directory",
+            "Assignment rows whose name does not match an active attorneys directory record.",
+            "Confirm the person, update the assignment to the current directory name, or preserve it as a reviewed legacy assignment.",
+            "SELECT COUNT(*) FROM case_attorney_assignments a LEFT JOIN attorneys directory ON lower(trim(directory.name))=lower(trim(a.name)) AND directory.is_active=1 WHERE directory.id IS NULL;",
+            "SELECT a.case_id FROM case_attorney_assignments a LEFT JOIN attorneys directory ON lower(trim(directory.name))=lower(trim(a.name)) AND directory.is_active=1 WHERE directory.id IS NULL ORDER BY a.case_id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
             "service-log-party-reference-mismatch", "Warning", "Service entries with invalid canonical party references",
             "Service Log rows whose optional case_defendant_id is missing or belongs to another case.",
             "Review the canonical party link; preserve the party-name snapshot when the historical entry cannot be safely matched.",

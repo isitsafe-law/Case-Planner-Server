@@ -70,6 +70,26 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ChangingAssignedAttorneyToNewAttorneyDoesNotCreateUnexpectedSecondChair()
+    {
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Assignment Replace Case",
+            CaseNumber = "ASSIGNMENT-REPLACE-1",
+            County = "Pulaski",
+            AssignedAttorney = "First Chair",
+        });
+
+        caseRecord.AssignedAttorney = "New Primary";
+        await _fixture.Repository.SaveCaseAsync(caseRecord);
+
+        var assignments = await _fixture.Repository.GetCaseAttorneyAssignmentsAsync(caseRecord.Id);
+        var primary = Assert.Single(assignments);
+        Assert.Equal("New Primary", primary.Name);
+        Assert.Equal("Primary", primary.Role);
+    }
+
+    [Fact]
     public async Task StartupBackfillsExistingPrimaryAttorneyAsAssignment()
     {
         var sample = Assert.Single(await _fixture.Repository.GetCasesAsync("SAMPLE-CASE-004", "", "", "", true));

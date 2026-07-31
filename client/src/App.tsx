@@ -6092,16 +6092,25 @@ function App() {
       setCaseAttorneyAssignments((prev) => prev.map((item, i) => i === index ? saved : item))
       await refreshAll(next.caseId)
     } catch (error) {
+      setCaseAttorneyAssignments((prev) => prev.map((item, i) => i === index ? row : item))
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save attorney assignment.')
     }
   }
 
   async function removeCaseAttorneyAssignment(index: number) {
     const row = caseAttorneyAssignments[index]
-    setCaseAttorneyAssignments((prev) => prev.filter((_, i) => i !== index))
-    if (row.id) {
-      try { await api(`/api/case-attorney-assignments/${row.id}`, { method: 'DELETE' }); await refreshAll(row.caseId) }
-      catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to remove attorney assignment.') }
+    if (!row) return
+    if (!row.id) {
+      setCaseAttorneyAssignments((prev) => prev.filter((_, i) => i !== index))
+      return
+    }
+    try {
+      setErrorMessage('')
+      await api(`/api/case-attorney-assignments/${row.id}`, { method: 'DELETE' })
+      await refreshAll(row.caseId)
+      setMessage('2nd chair attorney removed.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to remove attorney assignment.')
     }
   }
 
@@ -7287,7 +7296,7 @@ function App() {
     // "tiedLegalAssistant" value (a live lookup against the Staff Directory tie) so a case can hold
     // more than one legal assistant and support a manual override.
     const legalAssistantNames = caseLegalAssistants.map((row) => row.name.trim()).filter(Boolean).join(', ')
-    const supportingAttorneyNames = caseAttorneyAssignments.filter((row) => row.name.trim() && row.name.trim() !== selectedCase.assignedAttorney?.trim()).map((row) => row.name.trim()).filter(Boolean).join(', ')
+    const supportingAttorneyNames = [...new Set(caseAttorneyAssignments.filter((row) => row.role !== 'Primary' && row.name.trim() && row.name.trim() !== selectedCase.assignedAttorney?.trim()).map((row) => row.name.trim()).filter(Boolean))].join(', ')
     const coreRecordFields = [
       { label: 'Filing Date', value: displayDate(selectedCase.filingDate), important: Boolean(selectedCase.filingDate), always: false },
       { label: 'Date of Taking', value: displayDate(selectedCase.dateOfTaking), important: Boolean(selectedCase.dateOfTaking), always: false },
@@ -7297,6 +7306,7 @@ function App() {
     ]
     const peopleRecordFields = [
       { label: 'Assigned Attorney', value: selectedCase.assignedAttorney || '', important: Boolean(selectedCase.assignedAttorney) },
+      { label: '2nd Chair Attorney', value: supportingAttorneyNames, important: Boolean(supportingAttorneyNames) },
       { label: 'Legal Assistant', value: legalAssistantNames, important: Boolean(legalAssistantNames) },
       { label: 'Opposing Attorneys', value: opposingAttorneyNames, important: Boolean(opposingAttorneyNames) },
       { label: 'Owner', value: selectedCase.owner || '', important: Boolean(selectedCase.owner) },
@@ -9712,7 +9722,7 @@ function App() {
                 <div className="full-span">
                   <span>Additional Attorneys</span>
                   <p className="helper-text">The Assigned Attorney is the primary attorney. Additional attorneys are recorded as 2nd chair. Changing the Assigned Attorney automatically swaps the primary and 2nd-chair roles when appropriate.</p>
-                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary' && row.name.trim() !== (caseDraft.assignedAttorney || '').trim()).map((row) => {
+                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary').map((row) => {
                     const index = caseAttorneyAssignments.indexOf(row)
                     return (
                     <div key={row.id || `new-attorney-${index}`} className="button-row compact-actions top-gap-small">
@@ -9727,7 +9737,7 @@ function App() {
                     </div>
                     )
                   })}
-                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary' && row.name.trim() !== (caseDraft.assignedAttorney || '').trim()).length === 0 && <p className="helper-text top-gap-small">No 2nd chair attorney recorded.</p>}
+                  {caseAttorneyAssignments.filter((row) => row.role !== 'Primary').length === 0 && <p className="helper-text top-gap-small">No 2nd chair attorney recorded.</p>}
                   <button type="button" className="top-gap-small" onClick={addCaseAttorneyAssignmentRow}>+ Add Attorney</button>
                 </div>
                 <div className="full-span">

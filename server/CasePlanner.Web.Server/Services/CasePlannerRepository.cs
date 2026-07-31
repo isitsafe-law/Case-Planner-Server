@@ -3831,12 +3831,14 @@ public sealed partial class CasePlannerRepository
 
         if (primary.Id != 0)
         {
-            await using var demote = connection.CreateCommand();
-            demote.Transaction = tx;
-            demote.CommandText = "UPDATE case_attorney_assignments SET role='Supporting', sort_order=1, updated_at=@now WHERE id=@id";
-            demote.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
-            demote.Parameters.AddWithValue("@id", primary.Id);
-            await demote.ExecuteNonQueryAsync();
+            await using var replace = connection.CreateCommand();
+            replace.Transaction = tx;
+            replace.CommandText = "UPDATE case_attorney_assignments SET name=@name, role='Primary', sort_order=0, updated_at=@now WHERE id=@id";
+            replace.Parameters.AddWithValue("@name", desired);
+            replace.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("O"));
+            replace.Parameters.AddWithValue("@id", primary.Id);
+            await replace.ExecuteNonQueryAsync();
+            return;
         }
 
         await using var insert = connection.CreateCommand();

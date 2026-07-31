@@ -157,6 +157,8 @@ Service Log now has an additive nullable reference to `case_defendants`. New ent
 
 Case attorney assignments now have an additive SQLite/API foundation with `Primary` and `Supporting` roles and an Edit Case control. The legacy `cases.assigned_attorney` field remains the compatibility projection for dashboards, calendars, permissions, and exports until those consumers are migrated together.
 
+On startup, a one-time SQLite migration backfills every existing nonblank `cases.assigned_attorney` value into a `Primary` assignment row. The legacy field remains intact, so existing reports and integrations continue to work while the assignment relation is adopted.
+
 The open-case Work tab task assignee picker now includes supporting attorneys for the currently open case, alongside the primary attorney and legal assistants. Cross-case queue options continue to use the existing compatibility feed until assignment rows are included in that feed.
 
 The client now loads all SQLite attorney-assignment rows through `/api/attorney-assignments` and includes supporting attorneys in cross-case Work Queue assignee options. If a future provider does not yet implement the endpoint, the client falls back to the legacy primary-attorney/legal-assistant feed.

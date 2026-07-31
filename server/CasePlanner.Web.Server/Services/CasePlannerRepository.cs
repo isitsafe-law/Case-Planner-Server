@@ -55,6 +55,7 @@ public sealed partial class CasePlannerRepository
         await SeedAsync(connection, !databaseWasPresent);
         await MigrateLegacyJuryTrialEventsAsync(connection);
         await EnsureImportSampleAsync();
+        await MigratePrimaryAttorneyAssignmentsV1Async(connection);
         // Must run before the backfill below: it rekeys existing checklist_items to the
         // (now-current) stable template-name+sort_order source_type so the backfill's
         // already-generated check recognizes them and doesn't insert yet another duplicate.
@@ -74,6 +75,32 @@ public sealed partial class CasePlannerRepository
         await CleanupRetired31DayServiceReminderAsync(connection);
         await MigrateOpposingCounselToAttorneysAsync(connection);
         await ApplyDeadlineClosureRulesRetroactivelyAsync(connection);
+    }
+
+    private async Task MigratePrimaryAttorneyAssignmentsV1Async(SqliteConnection connection)
+    {
+        const string flagKey = "primary_attorney_assignments_v1";
+        if (await GetAppSettingAsync(connection, flagKey) is not null) return;
+
+        var insert = connection.CreateCommand();
+        insert.CommandText = """
+            INSERT INTO case_attorney_assignments (case_id, name, role, sort_order, created_at, updated_at)
+            SELECT c.id, trim(c.assigned_attorney), 'Primary', 0, @now, @now
+            FROM cases c
+            WHERE COALESCE(trim(c.assigned_attorney),'')<>''
+              AND NOT EXISTS (
+                SELECT 1 FROM case_attorney_assignments a
+                WHERE a.case_id=c.id AND a.role='Primary'
+              );
+            SELECT changes();
+            """;
+        var now = DateTime.UtcNow.ToString("O");
+        insert.Parameters.AddWithValue("@now", now);
+        var created = Convert.ToInt32(await insert.ExecuteScalarAsync());
+
+        await using var tx = connection.BeginTransaction();
+        await SetAppSettingAsync(connection, tx, flagKey, $"Created {created} primary attorney assignment row(s) at {now}");
+        await tx.CommitAsync();
     }
 
     private async Task MigrateLegacyJuryTrialEventsAsync(SqliteConnection connection)
@@ -9693,16 +9720,16 @@ public sealed partial class CasePlannerRepository
         await ExecuteAsync(connection, """
             INSERT INTO cases (
                 case_number, case_name, job_number, tract, county, status, stage, filing_date, trial_date,
-                next_action, next_action_due, deposit_amount, owner, landowner, valuation_notes,
+                next_action, next_action_due, deposit_amount, owner, assigned_attorney, landowner, valuation_notes,
                 settlement_notes, publication_service_notes, service_required, service_perfected,
                 service_perfected_date, service_deadline_120, service_deadline_basis_date,
                 service_method, service_notes, service_status, created_at, updated_at
             )
             VALUES
-            ('SAMPLE-CASE-001', 'Fictional Sample Pipeline Case', 'SAMPLE-JOB-001', 'SAMPLE-TRACT-001', 'Sample County', 'Pipeline', 'Pipeline', NULL, NULL, 'Review sample intake', NULL, NULL, 'Sample Legal Assistant', 'Fictional Landowner', 'Clearly fictional seed record for testing only.', NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, 'Not Perfected', '%NOW%', '%NOW%'),
-            ('SAMPLE-CASE-002', 'Fictional Sample Service Case', 'SAMPLE-JOB-002', 'SAMPLE-TRACT-002', 'Demo County', 'Filed / Service Pending', 'Filed / Service Pending', '2026-06-01', NULL, 'Complete service follow-up', '2026-07-20', 1250.00, 'Sample Attorney', 'Fictional Owner Two', 'Sample service facts.', NULL, 'Sample publication note.', 1, 0, NULL, '2026-09-29', '2026-06-01', 'Certified mail', 'Awaiting service.', 'Not Perfected', '%NOW%', '%NOW%'),
-            ('SAMPLE-CASE-003', 'Fictional Sample Litigation Case', 'SAMPLE-JOB-003', 'SAMPLE-TRACT-003', 'Example County', 'Active Litigation', 'Active Litigation', '2026-03-15', NULL, 'Review discovery responses', '2026-07-25', 2500.00, 'Sample Attorney', 'Fictional Owner Three', 'Sample litigation posture.', NULL, NULL, 1, 1, NULL, '2026-07-13', '2026-03-15', 'Personal service', 'Service marked perfected.', 'Perfected', '%NOW%', '%NOW%'),
-            ('SAMPLE-CASE-004', 'Fictional Sample Trial Case', 'SAMPLE-JOB-004', 'SAMPLE-TRACT-004', 'Example County', 'Trial Preparation', 'Trial Preparation', '2025-11-01', '2026-09-15', 'Prepare trial notebook', '2026-08-15', 4000.00, 'Sample Chief Counsel', 'Fictional Owner Four', 'Sample trial preparation facts.', NULL, NULL, 1, 1, NULL, '2026-02-28', '2025-11-01', 'Personal service', 'Service complete.', 'Perfected', '%NOW%', '%NOW%');
+            ('SAMPLE-CASE-001', 'Fictional Sample Pipeline Case', 'SAMPLE-JOB-001', 'SAMPLE-TRACT-001', 'Sample County', 'Pipeline', 'Pipeline', NULL, NULL, 'Review sample intake', NULL, NULL, 'Sample Legal Assistant', 'Sample Legal Assistant', 'Fictional Landowner', 'Clearly fictional seed record for testing only.', NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, 'Not Perfected', '%NOW%', '%NOW%'),
+            ('SAMPLE-CASE-002', 'Fictional Sample Service Case', 'SAMPLE-JOB-002', 'SAMPLE-TRACT-002', 'Demo County', 'Filed / Service Pending', 'Filed / Service Pending', '2026-06-01', NULL, 'Complete service follow-up', '2026-07-20', 1250.00, 'Sample Attorney', 'Sample Attorney', 'Fictional Owner Two', 'Sample service facts.', NULL, 'Sample publication note.', 1, 0, NULL, '2026-09-29', '2026-06-01', 'Certified mail', 'Awaiting service.', 'Not Perfected', '%NOW%', '%NOW%'),
+            ('SAMPLE-CASE-003', 'Fictional Sample Litigation Case', 'SAMPLE-JOB-003', 'SAMPLE-TRACT-003', 'Example County', 'Active Litigation', 'Active Litigation', '2026-03-15', NULL, 'Review discovery responses', '2026-07-25', 2500.00, 'Sample Attorney', 'Sample Attorney', 'Fictional Owner Three', 'Sample litigation posture.', NULL, NULL, 1, 1, NULL, '2026-07-13', '2026-03-15', 'Personal service', 'Service marked perfected.', 'Perfected', '%NOW%', '%NOW%'),
+            ('SAMPLE-CASE-004', 'Fictional Sample Trial Case', 'SAMPLE-JOB-004', 'SAMPLE-TRACT-004', 'Example County', 'Trial Preparation', 'Trial Preparation', '2025-11-01', '2026-09-15', 'Prepare trial notebook', '2026-08-15', 4000.00, 'Sample Chief Counsel', 'Sample Chief Counsel', 'Fictional Owner Four', 'Sample trial preparation facts.', NULL, NULL, 1, 1, NULL, '2026-02-28', '2025-11-01', 'Personal service', 'Service complete.', 'Perfected', '%NOW%', '%NOW%');
             """.Replace("%NOW%", now));
         await ExecuteAsync(connection, """
             INSERT INTO deadlines (case_id, title, due_date, status, notes, source_type, is_manual, created_at, updated_at)

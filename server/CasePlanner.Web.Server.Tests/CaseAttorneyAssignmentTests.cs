@@ -42,6 +42,14 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StartupBackfillsExistingPrimaryAttorneyAsAssignment()
+    {
+        var sample = Assert.Single(await _fixture.Repository.GetCasesAsync("SAMPLE-CASE-004", "", "", "", true));
+        var primary = Assert.Single(await _fixture.Repository.GetCaseAttorneyAssignmentsAsync(sample.Id), row => row.Role == "Primary");
+        Assert.Equal(sample.AssignedAttorney, primary.Name);
+    }
+
+    [Fact]
     public async Task DataQualityReportsDuplicateAttorneyAssignments()
     {
         var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Duplicate Assignment Case", CaseNumber = "ASSIGNMENT-DQ-1", County = "Pulaski" });

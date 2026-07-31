@@ -35,7 +35,9 @@ Events now use Jury Trial as the only trial event type and support optional end 
 
 The top-level Calendar is the shared case-event view. It supports attorney scope, 30/60/90/120/180-day and See All ranges, event-type filters, multi-day events, and case navigation. It uses the permission-filtered event feed used by management views. Events are not included in Work Queue or the dashboard's due-work list; Work Queue remains for actionable tasks, deadlines, discovery, and service items. Outlook/Graph availability and Entra-based manager authorization remain deferred.
 
-Division Overview no longer shows a separate Unassigned Pipeline card or the old 30,000-foot-view tagline. Unassigned records remain available in pipeline/reporting data-quality views. Planned Work is priority level 4 in the attorney Action Queue: an observational planning bucket for open work that is not currently immediate, decision-required, discovery-blocked, or stale.
+Division Overview no longer shows a separate Unassigned Pipeline card or the old 30,000-foot-view tagline. Unassigned records remain available in pipeline/reporting data-quality views, where representative affected cases can now be opened directly and the full findings list can be exported to CSV. Planned Work is priority level 4 in the attorney Action Queue: an observational planning bucket for open work that is not currently immediate, decision-required, discovery-blocked, or stale.
+
+The By Attorney view now shows transparent workload signals: open tracts, pipeline tracts, events in the next 30 days, overdue deadlines, and needs-attention cases. No weighted workload formula has been hard-coded; that decision remains a management calibration task.
 
 Imported cases use a consolidated Triage and Activate screen. A single `Save and Activate` action saves reviewed fields, optionally stores discovery strategy, records activation, and generates only selected checklist/deadline templates. Service not perfected and discovery strategy deferred are warnings, not ordinary activation blockers. The working Excel importer is intentionally unchanged.
 
@@ -43,11 +45,17 @@ Service-pending behavior is graduated: day 60 is an attorney check-in; day 90 be
 
 Appearance options now include pastel blue/sage/lavender, deep navy, forest, slate, sunset, rose, ocean, plum, amber, carbon, and arctic variants in addition to light, dark, and high contrast. These are browser-local preferences and do not change data or deployment settings.
 
-Diagnostics now includes Portable Validation. It checks SQLite write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. The `/api/data-quality` and `/api/portable-validation` contracts are intentionally provider-neutral enough to reuse when the server implementation is introduced. Jury trial dates remain the controlling case-level date for header/trial-watch behavior; Jury Trial event edits synchronize that compatibility projection, while other proceedings use the hearings catalog.
+The ordered party rows used for case-style construction now include a small designation: Defendant, Unknown Heirs, Lienholder, Tenant, or Other. Existing rows migrate to Defendant. Move Up/Move Down controls persist the order used by case-style construction, and the dashboard remains compact rather than listing every party.
+
+Diagnostics now includes Portable Validation. It checks SQLite write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. **Test Backup / Restore** creates a backup, checks SQLite integrity and required tables, and opens a temporary restored copy without replacing the live database. The `/api/data-quality`, `/api/portable-validation`, and `POST /api/portable-validation/backup-restore` contracts are intentionally provider-neutral enough to reuse when the server implementation is introduced. Jury trial dates remain the controlling case-level date for header/trial-watch behavior; Jury Trial event edits synchronize that compatibility projection, while other proceedings use the hearings catalog.
+
+The global Calendar page consumes `/api/calendar/events` with server-side range, event-type, and attorney filters and 100-row pagination. This is the intended provider-neutral contract for a future server-backed calendar; the manager summary views retain their existing division-wide data feed for aggregate calculations.
 
 ## Document generation
 
-Templates use `{{Token}}` merge tags. The server catalog and resolver are maintained together. Missing or unknown values produce a missing marker/warning and do not block draft generation. Users must review generated drafts before they are passed along or filed.
+Templates use `{{Token}}` merge tags. The server catalog and resolver are maintained together. Missing or unknown values produce a missing marker/warning and do not block draft generation. Users must review generated drafts before they are passed along or filed. If generation fails unexpectedly, the response and the log contain the same request ID so IT can correlate the user report with the portable log.
+
+The server test suite includes an isolated portable upgrade fixture that exercises startup migrations against a deliberately older SQLite shape, verifies representative case and party data preservation, and confirms current DOCX generation remains available after the upgrade. It does not alter a live or packaged user database.
 
 ## Verification
 

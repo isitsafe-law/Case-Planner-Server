@@ -435,7 +435,12 @@ app.Use(async (context, next) =>
     catch (Exception ex)
     {
         await repo.LogAsync($"UNHANDLED EXCEPTION requestId={requestId} on {context.Request.Method} {context.Request.Path}: {ex}");
-        throw;
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new { error = "Request failed.", requestId });
+        }
     }
 });
 
@@ -1722,6 +1727,7 @@ app.MapGet("/api/portable-validation", async () =>
     };
     return Results.Ok(new PortableValidationReport { GeneratedAt = DateTime.UtcNow.ToString("O"), Passed = checks.All(x => x.Passed), Checks = checks });
 });
+app.MapPost("/api/portable-validation/backup-restore", async () => Results.Ok(await repo.ValidatePortableBackupAsync()));
 app.MapGet("/api/health", async () =>
 {
     var diagnostics = await repo.GetDiagnosticsAsync();

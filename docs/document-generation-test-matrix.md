@@ -15,7 +15,10 @@ This is the portable-first contract for document generation. The same cases shou
 | Review | Generated document is downloaded before filing | Output is stored as a draft and remains editable/reviewable by the user |
 | History | Two generations of the same case/template occur quickly | Both history rows and files remain distinct |
 | Storage failure | Export folder is read-only or unavailable | Portable validation fails and the UI reports a storage error |
-| Backup/restore | Restore is requested from a valid backup | Current database is backed up first; restored database reopens and migrations run |
-| Upgrade | Older portable database opens in a newer package | Schema upgrades complete; data-quality and template-path checks run afterward |
+| Backup/restore | Run Diagnostics > Test Backup / Restore, then generate a document | Backup passes integrity/schema checks; temporary restored copy opens; generation remains valid |
+| Live restore | Restore is requested from a valid backup | Current database is backed up first; restored database reopens and migrations run |
+| Upgrade | Older portable database opens in a newer package | Schema upgrades complete; legacy case/party data survives; current DOCX generation remains available | Covered by `PortableUpgradeValidationTests` |
+
+Generation failures include a request ID in the response and portable log so a user report can be correlated with the server diagnostic record.
 
 The current automated coverage includes built-in template generation, optional sections, missing values, repeated generation, and stale portable template paths. The remaining rows are the next expansion targets for integration or manual package smoke tests.

@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
-import type { CaseRecord, Hearing } from '../App'
+import type { CaseRecord, DeadlineItem, Hearing } from '../App'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
 import { formatDate } from '../ui/format'
@@ -7,6 +7,7 @@ import { EmptyState } from './EmptyState'
 import { needsAttention } from './ManagerDashboard'
 import { nextHardDate, statusDistribution, type NextHardDate, type StatusCount } from './dashboardAggregation'
 import { StatusDistributionBar, StatusDistributionLegend } from './StatusDistributionBar'
+import { countEventsInWindow } from './ManagerCalendarTab'
 
 // Note: this tab deliberately does not use ManagerDashboard.tsx's exported isOpenForDivision - the
 // "tract counts by status" bar and every other total here intentionally span all six caseStatus
@@ -20,12 +21,17 @@ export type AttorneyRow = {
   totalTracts: number
   nextHard: NextHardDate | null
   needsAttentionCount: number
+  openTracts: number
+  pipelineTracts: number
+  eventsNext30: number
+  overdueDeadlines: number
 }
 
 // Groups allCases by assignedAttorney (blank/missing -> "Unassigned", matching
 // IncomingPipelinePanel.tsx's own convention) and computes each column's value for every group.
 // Exported for unit testing independent of the rendered table.
-export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[]): AttorneyRow[] {
+export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[], deadlines: DeadlineItem[] = []): AttorneyRow[] {
+  const today = new Date().toISOString().slice(0, 10)
   const groups = new Map<string, CaseRecord[]>()
   for (const record of allCases) {
     const attorney = record.assignedAttorney || 'Unassigned'
@@ -40,6 +46,10 @@ export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[]): 
     totalTracts: cases.length,
     nextHard: nextHardDate(cases, hearings),
     needsAttentionCount: cases.filter(needsAttention).length,
+    openTracts: cases.filter((record) => (record.caseStatus || 'Pipeline') !== 'Resolved / Closed' && record.status !== 'Closed' && record.status !== 'Complete' && record.status !== 'Triage').length,
+    pipelineTracts: cases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline' && record.status !== 'Closed' && record.status !== 'Complete' && record.status !== 'Triage').length,
+    eventsNext30: countEventsInWindow(cases, hearings.filter((hearing) => cases.some((record) => record.id === hearing.caseId)), 30),
+    overdueDeadlines: deadlines.filter((deadline) => deadline.dueDate && deadline.dueDate < today && deadline.status !== 'Done' && deadline.status !== 'Complete' && cases.some((record) => record.id === deadline.caseId && (record.caseStatus || 'Pipeline') !== 'Resolved / Closed' && record.status !== 'Closed' && record.status !== 'Complete' && record.status !== 'Triage')).length,
   }))
 }
 
@@ -81,17 +91,19 @@ const COLUMNS: { key: AttorneySortColumn; label: string }[] = [
 export function ByAttorneyTab({
   allCases,
   hearings,
+  deadlines,
   onOpenCase,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
+  deadlines: DeadlineItem[]
   onOpenCase: (caseId: number) => void
 }) {
   const [sortColumn, setSortColumn] = useState<AttorneySortColumn>('attorney')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const rows = useMemo(() => buildAttorneyRows(allCases, hearings), [allCases, hearings])
+  const rows = useMemo(() => buildAttorneyRows(allCases, hearings, deadlines), [allCases, hearings, deadlines])
   const sortedRows = useMemo(() => sortAttorneyRows(rows, sortColumn, sortDirection), [rows, sortColumn, sortDirection])
 
   function toggleSort(column: AttorneySortColumn) {
@@ -117,6 +129,10 @@ export function ByAttorneyTab({
       const statusCols = Object.fromEntries(row.distribution.map((d) => [`${d.status} Count`, d.count]))
       return {
         Attorney: row.attorney,
+        'Open Tracts': row.openTracts,
+        'Pipeline Tracts': row.pipelineTracts,
+        'Events Next 30 Days': row.eventsNext30,
+        'Overdue Deadlines': row.overdueDeadlines,
         ...statusCols,
         'Next Hard Date': row.nextHard ? formatDate(row.nextHard.date) : '',
         'Next Hard Date Label': row.nextHard?.label || '',
@@ -152,6 +168,7 @@ export function ByAttorneyTab({
                   {sortColumn === column.key && <span className="sort-indicator">{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>}
                 </th>
               ))}
+              <th>Workload Signals</th>
             </tr>
           </thead>
           <tbody>
@@ -169,10 +186,11 @@ export function ByAttorneyTab({
                     <td><StatusDistributionBar counts={row.distribution} /></td>
                     <td>{row.nextHard ? <>{formatDate(row.nextHard.date)}<div className="subtle-text">{row.nextHard.label}</div></> : '—'}</td>
                     <td>{row.needsAttentionCount}</td>
+                    <td><div className="workload-signal-list"><span>{row.openTracts} open</span><span>{row.pipelineTracts} pipeline</span><span>{row.eventsNext30} events/30d</span><span className={row.overdueDeadlines > 0 ? 'signal-danger' : undefined}>{row.overdueDeadlines} overdue</span></div></td>
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={COLUMNS.length + 1} style={{ padding: 0 }}>
+                      <td colSpan={COLUMNS.length + 2} style={{ padding: 0 }}>
                         <div className="table-wrap" style={{ margin: '0.35rem 0.6rem 0.6rem' }}>
                           <table className="ui-table compact-table">
                             <thead>

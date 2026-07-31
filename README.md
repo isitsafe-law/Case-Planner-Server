@@ -68,6 +68,11 @@ Close and Reopen are administrative actions inside Edit Case in the SQLite previ
 
 The Division Overview summarizes upcoming events, needs-attention cases, pipeline matters, and open tracts across the management scope. Open tracts include pipeline and filed work and exclude resolved/closed, legacy closed/complete, and Triage cases. Unassigned pipeline cases remain available through the pipeline data-quality/reporting views but are not a separate Division Overview card.
 
+The By Attorney view reports transparent workload signals—open tracts, pipeline tracts, events in the next 30 days, overdue deadlines, and needs-attention cases—alongside status distribution. These are observational counts, not a permanent weighted score; a weighting formula should be adopted only after management review of real docket behavior.
+
+The Division Overview's data-quality table includes representative affected-case links when the finding is case-specific. It shows up to three direct case links and a count of additional affected records; the full issue count remains the authoritative metric.
+The same section can export all current findings, definitions, counts, suggested actions, and sample case IDs to CSV for management follow-up.
+
 The top-level Calendar is the shared case-event view. It defaults to the signed-in attorney when Entra identity is available; SQLite preview mode provides an all-attorney view for testing. It supports 30/60/90/120/180-day and See All ranges, attorney scope, event-type filters, multi-day events, and links back to cases. Events are intentionally not Work Queue items; Work Queue contains tasks, deadlines, discovery, and service work. The manager calendar uses the same event catalog and permission-filtered event feed.
 
 Jury trial dates remain the controlling case-level date for the header and trial-watch views. A Jury Trial event is synchronized when edited through Events; other proceedings are stored in the hearings event catalog. The data-quality report flags conflicting trial representations for review rather than silently choosing a date.
@@ -100,7 +105,7 @@ Arkansas State Highway Commission v. <party names>
 
 Stored `CaseStyle` remains authoritative when present. Multi-party output should use party entities rather than assuming a single landowner or opposing-counsel field.
 
-The current SQLite UI uses the existing ordered defendant/interest-holder rows as the first canonical party list and offers `Save Case Style` / `Rebuild from Parties`. This is intentionally additive: legacy owner/landowner values remain available as fallback data until a fuller party-role model is introduced.
+The current SQLite UI uses the existing ordered defendant/interest-holder rows as the first canonical party list and offers `Save Case Style` / `Rebuild from Parties`. Each row now carries a small designation (`Defendant`, `Unknown Heirs`, `Lienholder`, `Tenant`, or `Other`), with legacy rows defaulting to `Defendant`. Move Up/Move Down controls change the stored order used by case-style construction. This is intentionally additive: legacy owner/landowner values remain available as fallback data.
 
 ## Checklist and deadline rules
 
@@ -112,7 +117,13 @@ Supported deadline anchors include filing date, jury trial date, date opened, da
 
 Important coverage includes consolidated triage activation, optional discovery strategy persistence, service-alert date bands, conditional triage rendering, management totals, pipeline sign-off, Close/Reopen retention, Events navigation, jury-trial/header behavior, County Officials collapse behavior, merge-tag resolver completeness, missing-tag warnings, checklist/deadline anchors, and portable package startup.
 
-The Diagnostics settings page now exposes Portable Validation. It checks database/write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. `/api/data-quality` returns stable checks for unassigned pipeline cases, missing case styles, missing party records, conflicting jury-trial representations, and missing template files. `/api/portable-validation` is the portable deployment contract that can later be reused by the server/IT health checks.
+The Diagnostics settings page now exposes Portable Validation. It checks database/write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. The adjacent **Test Backup / Restore** action creates a fresh SQLite backup, runs `PRAGMA integrity_check`, verifies required schema tables, and opens a temporary restored copy without replacing the live database. `/api/data-quality` returns stable checks for unassigned pipeline cases, missing case styles, missing party records, conflicting jury-trial representations, and missing template files. `/api/portable-validation` is the portable deployment contract that can later be reused by the server/IT health checks; `POST /api/portable-validation/backup-restore` is the safe local recovery validation contract.
+
+The Calendar page now uses the paged `/api/calendar/events` endpoint with server-side date-range, event-type, and attorney filtering. The page displays 100 events at a time with Previous/Next controls, while the existing work queues and manager summaries continue to use their broader feeds.
+
+Document-generation failures include a request ID in the user-facing error and in the portable log entry. Use that ID with the latest log path shown in Diagnostics when investigating a failed generation or an HTTP 500.
+
+The automated server suite also includes a portable upgrade fixture. It removes representative newer SQLite columns/tables from a throwaway database, reruns normal startup initialization, verifies legacy case and opposing-counsel data survives, and generates a current DOCX afterward. This is a test-only fixture; it never modifies a user database.
 
 API responses include an `X-Request-Id` correlation header. If a portable request fails unexpectedly, include that ID with the latest log when reporting the problem.
 

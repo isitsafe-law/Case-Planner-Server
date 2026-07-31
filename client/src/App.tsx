@@ -1,9 +1,9 @@
 import type { ComponentProps, FormEvent, ReactNode } from 'react'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
-import { GlobalCalendarTab } from './dashboard/GlobalCalendarTab'
+import { GlobalCalendarTab, type CalendarEventPage, type CalendarEventQuery } from './dashboard/GlobalCalendarTab'
 import { CASE_EVENT_TYPES } from './eventTypes'
 import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
 import { ActionQueueRow, type ActionQueueHandlers } from './dashboard/ActionQueueRow'
@@ -157,7 +157,7 @@ type DeadlineHistoryEntry = {
   changedAt: string
 }
 
-type DeadlineItem = {
+export type DeadlineItem = {
   id: number
   caseId: number
   title: string
@@ -276,6 +276,7 @@ type CaseDefendant = {
   sortOrder?: number
   rowVersion?: string | null
   name: string
+  partyRole?: string | null
   address?: string | null
   serviceMethod?: string | null
   servedDate?: string | null
@@ -426,6 +427,7 @@ type PublicationEntry = {
 const serviceLogStatuses = ['Served', 'Not Served', 'Attempted', 'Refused'] as const
 
 const serviceMethods = ['Certified Mail', 'Process Server', 'Warning Order'] as const
+const partyRoleOptions = ['Defendant', 'Unknown Heirs', 'Lienholder', 'Tenant', 'Other'] as const
 
 const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
 
@@ -1119,6 +1121,7 @@ function defaultRiskAnalysisRows(): RiskAnalysisRowInput[] {
 type ApiError = {
   error?: string
   message?: string
+  requestId?: string
 }
 
 const navItems: { key: PageKey; label: string }[] = [
@@ -1655,7 +1658,9 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     } catch {
       parsed = null
     }
-    throw new Error(parsed?.error || parsed?.message || text || `Request failed: ${response.status}`)
+    const requestId = parsed?.requestId || response.headers.get('X-Request-Id')
+    const base = parsed?.error || parsed?.message || text || `Request failed: ${response.status}`
+    throw new Error(`${base}${requestId ? ` (Request ID: ${requestId})` : ` (HTTP ${response.status})`}`)
   }
 
   const body = await response.text()
@@ -5957,7 +5962,7 @@ function App() {
   // brand-new unsaved case can still hold locally-drafted rows (id: 0).
   function addCaseDefendantRow() {
     const caseId = selectedCaseId ?? caseDraft.id
-    setCaseDefendants((prev) => [...prev, { id: 0, caseId: caseId || 0, name: '', address: '', serviceMethod: '', servedDate: '', answerFiled: false, answerFiledDate: '', notes: '', sortOrder: prev.length }])
+    setCaseDefendants((prev) => [...prev, { id: 0, caseId: caseId || 0, name: '', partyRole: 'Defendant', address: '', serviceMethod: '', servedDate: '', answerFiled: false, answerFiledDate: '', notes: '', sortOrder: prev.length }])
   }
 
   // Generic per-field updater for one defendant row - covers name/address/serviceMethod/
@@ -5978,6 +5983,31 @@ function App() {
       setCaseDefendants((prev) => prev.map((r, i) => (i === index ? saved : r)))
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save defendant.')
+    }
+  }
+
+  async function moveCaseDefendantRow(index: number, direction: -1 | 1) {
+    const caseId = selectedCaseId ?? caseDraft.id
+    const target = index + direction
+    if (!caseId || target < 0 || target >= caseDefendants.length) return
+    const next = [...caseDefendants]
+    const current = next[index]
+    const other = next[target]
+    const currentOrder = current.sortOrder ?? index
+    const otherOrder = other.sortOrder ?? target
+    next[index] = { ...other, sortOrder: currentOrder }
+    next[target] = { ...current, sortOrder: otherOrder }
+    setCaseDefendants(next)
+    try {
+      setErrorMessage('')
+      for (const row of [next[index], next[target]].filter((item) => item.id !== 0)) {
+        await api<CaseDefendant>(`/api/cases/${caseId}/defendants`, { method: 'POST', body: JSON.stringify({ ...row, caseId }) })
+      }
+      await refreshAll(caseId)
+      setMessage('Party order updated.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update party order.')
+      await refreshAll(caseId)
     }
   }
 
@@ -7787,7 +7817,7 @@ function App() {
                   <div className="table-wrap compact-table-wrap">
                     <table className="compact-table">
                       <thead>
-                        <tr><th>Name</th><th>Address</th><th>Service Method</th><th>Served Date</th><th>Answer Filed</th><th>Actions</th></tr>
+                        <tr><th>Name</th><th>Party Role</th><th>Address</th><th>Service Method</th><th>Served Date</th><th>Answer Filed</th><th>Actions</th></tr>
                       </thead>
                       <tbody>
                         {caseDefendants.map((row, index) => {
@@ -7796,6 +7826,11 @@ function App() {
                           return (
                             <tr key={rowKey}>
                               <td><input value={row.name} onChange={(event) => void changeCaseDefendantField(index, { name: event.target.value })} placeholder="Defendant name" /></td>
+                              <td>
+                                <select value={partyRoleOptions.includes((row.partyRole || 'Defendant') as typeof partyRoleOptions[number]) ? (row.partyRole || 'Defendant') : 'Other'} onChange={(event) => void changeCaseDefendantField(index, { partyRole: event.target.value })}>
+                                  {partyRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+                                </select>
+                              </td>
                               <td><textarea rows={2} value={row.address || ''} onChange={(event) => void changeCaseDefendantField(index, { address: event.target.value })} placeholder="Address (free text — multiple addresses OK)" /></td>
                               <td>
                                 <select
@@ -7824,7 +7859,7 @@ function App() {
                                   ))}
                                 </div>
                               </td>
-                              <td><button type="button" onClick={() => void removeCaseDefendantRow(index)}>Remove</button></td>
+                              <td><div className="button-row compact-actions row-actions"><button type="button" aria-label={`Move ${row.name || 'party'} up`} onClick={() => void moveCaseDefendantRow(index, -1)} disabled={index === 0}>↑</button><button type="button" aria-label={`Move ${row.name || 'party'} down`} onClick={() => void moveCaseDefendantRow(index, 1)} disabled={index === caseDefendants.length - 1}>↓</button><button type="button" onClick={() => void removeCaseDefendantRow(index)}>Remove</button></div></td>
                             </tr>
                           )
                         })}
@@ -8675,6 +8710,28 @@ function App() {
       setMessage(result.passed ? 'Portable validation passed.' : 'Portable validation found issues.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to run portable validation.')
+    }
+  }
+
+  const fetchCalendarEvents = useCallback(async (query: CalendarEventQuery): Promise<CalendarEventPage> => {
+    const params = new URLSearchParams()
+    if (query.from) params.set('from', query.from)
+    if (query.to) params.set('to', query.to)
+    if (query.eventType) params.set('eventType', query.eventType)
+    if (query.assignedAttorney) params.set('assignedAttorney', query.assignedAttorney)
+    params.set('limit', String(query.limit))
+    params.set('offset', String(query.offset))
+    return api<CalendarEventPage>(`/api/calendar/events?${params.toString()}`)
+  }, [])
+
+  async function runBackupRestoreValidation() {
+    try {
+      setErrorMessage('')
+      const result = await api<PortableValidationReport>('/api/portable-validation/backup-restore', { method: 'POST' })
+      setPortableValidation(result)
+      setMessage(result.passed ? 'Backup and restore validation passed.' : 'Backup and restore validation found issues.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to validate backup and restore.')
     }
   }
 
@@ -10499,6 +10556,7 @@ function App() {
         <ManagerDashboard
           allCases={allCases}
           hearings={queueHearings}
+          deadlines={queueDeadlines}
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}
@@ -10509,7 +10567,7 @@ function App() {
       {page === 'calendar' && (
         <GlobalCalendarTab
           allCases={allCases}
-          hearings={queueHearings}
+          fetchEvents={fetchCalendarEvents}
           currentUserName={currentUser?.displayName}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
         />
@@ -11188,7 +11246,7 @@ function App() {
 
           {settingsSection === 'diagnostics' && (
             <Panel title="Diagnostics">
-              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><span className="helper-text">Checks writable paths, active document templates, and critical data-quality findings.</span></div>
+              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
               {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td></tr>)}</tbody></table></div></div>}
               {diagnostics ? (
                 <div className="diagnostics-grid">

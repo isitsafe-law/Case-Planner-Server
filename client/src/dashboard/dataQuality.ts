@@ -22,4 +22,5 @@ export const METRIC_DEFINITIONS = [
   ['Next hard date', 'The earliest open deadline, future jury trial, or scheduled non-Other proceeding for the selected case group.'],
   ['Planned Work', 'Priority 4 attorney action-queue items that are appropriate to plan or advance but are not currently urgent, decision-required, discovery-blocked, or stale.'],
   ['Data-quality issue', 'A record-level condition that can make assignment, reporting, document generation, or workflow interpretation unreliable.'],
+  ['Attorney workload signals', 'Transparent observational counts: open tracts, pipeline tracts, events in the next 30 days, overdue deadlines, and needs-attention cases. These are not yet a weighted workload score.'],
 ] as const

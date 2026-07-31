@@ -3627,7 +3627,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, name, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order
+            SELECT id, case_id, name, party_role, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order
             FROM case_defendants
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY sort_order, id
@@ -3641,13 +3641,14 @@ public sealed partial class CasePlannerRepository
                 Id = reader.GetInt64(0),
                 CaseId = reader.GetInt64(1),
                 Name = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
-                ServiceMethod = reader.IsDBNull(4) ? null : reader.GetString(4),
-                ServedDate = reader.IsDBNull(5) ? null : reader.GetString(5),
-                AnswerFiled = !reader.IsDBNull(6) && reader.GetInt64(6) == 1,
-                AnswerFiledDate = reader.IsDBNull(7) ? null : reader.GetString(7),
-                Notes = reader.IsDBNull(8) ? null : reader.GetString(8),
-                SortOrder = reader.IsDBNull(9) ? 0 : reader.GetInt32(9)
+                PartyRole = reader.IsDBNull(3) ? "Defendant" : reader.GetString(3),
+                Address = reader.IsDBNull(4) ? null : reader.GetString(4),
+                ServiceMethod = reader.IsDBNull(5) ? null : reader.GetString(5),
+                ServedDate = reader.IsDBNull(6) ? null : reader.GetString(6),
+                AnswerFiled = !reader.IsDBNull(7) && reader.GetInt64(7) == 1,
+                AnswerFiledDate = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Notes = reader.IsDBNull(9) ? null : reader.GetString(9),
+                SortOrder = reader.IsDBNull(10) ? 0 : reader.GetInt32(10)
             });
         }
 
@@ -3670,8 +3671,8 @@ public sealed partial class CasePlannerRepository
                 model.SortOrder = Convert.ToInt32(await nextOrderCmd.ExecuteScalarAsync());
 
                 cmd.CommandText = """
-                    INSERT INTO case_defendants (case_id, name, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order, created_at, updated_at)
-                    VALUES (@case_id, @name, @address, @service_method, @served_date, @answer_filed, @answer_filed_date, @notes, @sort_order, @created_at, @updated_at);
+                    INSERT INTO case_defendants (case_id, name, party_role, address, service_method, served_date, answer_filed, answer_filed_date, notes, sort_order, created_at, updated_at)
+                    VALUES (@case_id, @name, @party_role, @address, @service_method, @served_date, @answer_filed, @answer_filed_date, @notes, @sort_order, @created_at, @updated_at);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -3679,7 +3680,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE case_defendants
-                    SET name=@name, address=@address, service_method=@service_method, served_date=@served_date,
+                    SET name=@name, party_role=@party_role, address=@address, service_method=@service_method, served_date=@served_date,
                         answer_filed=@answer_filed, answer_filed_date=@answer_filed_date, notes=@notes,
                         sort_order=@sort_order, updated_at=@updated_at
                     WHERE id=@id;
@@ -3690,6 +3691,7 @@ public sealed partial class CasePlannerRepository
 
             cmd.Parameters.AddWithValue("@case_id", model.CaseId);
             cmd.Parameters.AddWithValue("@name", model.Name);
+            cmd.Parameters.AddWithValue("@party_role", string.IsNullOrWhiteSpace(model.PartyRole) ? "Defendant" : model.PartyRole.Trim());
             cmd.Parameters.AddWithValue("@address", (object?)model.Address ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@service_method", (object?)model.ServiceMethod ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@served_date", (object?)model.ServedDate ?? DBNull.Value);
@@ -6504,6 +6506,7 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "case_style", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel_contact", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_folder_path", "TEXT");
+        await AddColumnIfMissingAsync(connection, "case_defendants", "party_role", "TEXT NOT NULL DEFAULT 'Defendant'");
         // Manager/Administrator Dashboard Milestone 3 (Settlement Authority workflow): the ceiling
         // Chief Counsel has most recently granted - same nullable-decimal AddColumnIfMissingAsync
         // convention as additional_deposit_amount/attorney_fees_amount above (REAL, not TEXT -
@@ -9029,6 +9032,77 @@ public sealed partial class CasePlannerRepository
         }
     }
 
+    public async Task<PortableValidationReport> ValidatePortableBackupAsync()
+    {
+        var checks = new List<PortableValidationCheck>();
+        var generatedAt = DateTime.UtcNow.ToString("O");
+
+        if (!_paths.IsSafeWritableDatabase(out var safetyMessage))
+        {
+            checks.Add(new PortableValidationCheck("Backup source write safety", false, safetyMessage));
+            return new PortableValidationReport { GeneratedAt = generatedAt, Passed = false, Checks = checks };
+        }
+
+        BackupInfo backup;
+        try
+        {
+            backup = await CreateBackupNowAsync();
+            checks.Add(new PortableValidationCheck("Create backup", backup.SizeBytes > 0, $"Created {backup.FileName} ({backup.SizeBytes:N0} bytes)."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new PortableValidationCheck("Create backup", false, ex.Message));
+            return new PortableValidationReport { GeneratedAt = generatedAt, Passed = false, Checks = checks };
+        }
+
+        var sourcePath = Path.Combine(_paths.Config.BackupsFolder, backup.FileName);
+        var validationCopy = Path.Combine(Path.GetTempPath(), $"case_planner_restore_validation_{Guid.NewGuid():N}.sqlite");
+        try
+        {
+            File.Copy(sourcePath, validationCopy, overwrite: true);
+            var validationConnectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = validationCopy,
+                Mode = SqliteOpenMode.ReadOnly,
+                Cache = SqliteCacheMode.Private
+            }.ToString();
+            await using var connection = new SqliteConnection(validationConnectionString);
+            await connection.OpenAsync();
+
+            await using var integrity = connection.CreateCommand();
+            integrity.CommandText = "PRAGMA integrity_check";
+            var integrityResult = Convert.ToString(await integrity.ExecuteScalarAsync()) ?? "";
+            checks.Add(new PortableValidationCheck("Backup integrity", integrityResult.Equals("ok", StringComparison.OrdinalIgnoreCase), $"SQLite integrity_check: {integrityResult}."));
+
+            var requiredTables = new[] { "cases", "document_templates", "document_template_versions", "document_generations", "document_exports" };
+            var missingTables = new List<string>();
+            foreach (var table in requiredTables)
+            {
+                await using var tableCommand = connection.CreateCommand();
+                tableCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@name";
+                tableCommand.Parameters.AddWithValue("@name", table);
+                if (Convert.ToInt32(await tableCommand.ExecuteScalarAsync()) == 0) missingTables.Add(table);
+            }
+            checks.Add(new PortableValidationCheck("Restore/schema compatibility", missingTables.Count == 0,
+                missingTables.Count == 0 ? "The backup can be opened and contains the required current tables." : $"Missing tables: {string.Join(", ", missingTables)}."));
+
+            await using var countCommand = connection.CreateCommand();
+            countCommand.CommandText = "SELECT COUNT(*) FROM cases";
+            var caseCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+            checks.Add(new PortableValidationCheck("Restore read test", true, $"A temporary restored copy opened successfully with {caseCount:N0} case(s). The live database was not replaced."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new PortableValidationCheck("Restore/read test", false, ex.Message));
+        }
+        finally
+        {
+            try { if (File.Exists(validationCopy)) File.Delete(validationCopy); } catch { }
+        }
+
+        return new PortableValidationReport { GeneratedAt = generatedAt, Passed = checks.All(x => x.Passed), Checks = checks };
+    }
+
     // Returns true when the Milestone 4 filing gate would have blocked this save (Director signature
     // milestone not marked) but a valid manager override reason let it through anyway - the caller
     // (SaveCaseAsync) uses this to decide whether to write a "FilingGateOverridden" activity_log
@@ -9919,6 +9993,7 @@ public sealed partial class CasePlannerRepository
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            party_role TEXT NOT NULL DEFAULT 'Defendant',
             address TEXT,
             service_method TEXT,
             served_date TEXT,

@@ -30,7 +30,7 @@ public class CaseDefendantTests : IAsyncLifetime
         var c = await CreateCaseAsync();
 
         var first = await _fixture.Repository.SaveCaseDefendantAsync(new CaseDefendantRecord { CaseId = c.Id, Name = "John Smith", Address = "123 Main St, Little Rock, AR" });
-        var second = await _fixture.Repository.SaveCaseDefendantAsync(new CaseDefendantRecord { CaseId = c.Id, Name = "Unknown Heirs of John Smith", ServiceMethod = "Warning Order" });
+        var second = await _fixture.Repository.SaveCaseDefendantAsync(new CaseDefendantRecord { CaseId = c.Id, Name = "Unknown Heirs of John Smith", PartyRole = "Unknown Heirs", ServiceMethod = "Warning Order" });
 
         Assert.NotEqual(0, first.Id);
         Assert.NotEqual(0, second.Id);
@@ -40,8 +40,10 @@ public class CaseDefendantTests : IAsyncLifetime
         var list = await _fixture.Repository.GetCaseDefendantsAsync(c.Id);
         Assert.Equal(2, list.Count);
         Assert.Equal("John Smith", list[0].Name);
+        Assert.Equal("Defendant", list[0].PartyRole);
         Assert.Equal("123 Main St, Little Rock, AR", list[0].Address);
         Assert.Equal("Unknown Heirs of John Smith", list[1].Name);
+        Assert.Equal("Unknown Heirs", list[1].PartyRole);
         Assert.Equal("Warning Order", list[1].ServiceMethod);
     }
 
@@ -56,6 +58,7 @@ public class CaseDefendantTests : IAsyncLifetime
             Id = saved.Id,
             CaseId = c.Id,
             Name = "Corrected Name",
+            PartyRole = "Lienholder",
             Address = "Corrected Address",
             ServiceMethod = "Personal",
             ServedDate = "2026-01-05",
@@ -68,6 +71,7 @@ public class CaseDefendantTests : IAsyncLifetime
         var list = await _fixture.Repository.GetCaseDefendantsAsync(c.Id);
         var only = Assert.Single(list);
         Assert.Equal("Corrected Name", only.Name);
+        Assert.Equal("Lienholder", only.PartyRole);
         Assert.Equal("Corrected Address", only.Address);
         Assert.Equal("Personal", only.ServiceMethod);
         Assert.Equal("2026-01-05", only.ServedDate);

@@ -3584,4 +3584,8 @@ button.ui-tile.ui-tile-on .ui-tile-label {
 .metric-definition-disclosure summary { cursor: pointer; font-weight: 600; }
 .metric-definition-list { display: grid; gap: .45rem; margin-top: .75rem; }
 .metric-definition-list div { display: grid; grid-template-columns: 11rem 1fr; gap: .75rem; }
+.data-quality-case-links { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-top: .45rem; }
+.workload-signal-list { display: flex; flex-wrap: wrap; gap: .25rem .45rem; min-width: 11rem; }
+.workload-signal-list span { white-space: nowrap; color: var(--text-muted); }
+.workload-signal-list .signal-danger { color: var(--danger); font-weight: 600; }
 @media (max-width: 700px) { .metric-definition-list div { grid-template-columns: 1fr; gap: .15rem; } }

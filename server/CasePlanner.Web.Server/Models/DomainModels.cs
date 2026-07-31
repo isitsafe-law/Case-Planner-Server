@@ -516,6 +516,7 @@ public sealed class CaseDefendantRecord
     public long CaseId { get; set; }
     public int SortOrder { get; set; }
     public string Name { get; set; } = "";
+    public string PartyRole { get; set; } = "Defendant";
     public string? Address { get; set; }
     public string? ServiceMethod { get; set; }
     public string? ServedDate { get; set; }
@@ -1660,6 +1661,14 @@ public sealed class PortableValidationReport
     public string GeneratedAt { get; set; } = "";
     public bool Passed { get; set; }
     public List<PortableValidationCheck> Checks { get; set; } = [];
+}
+
+public sealed class DocumentGenerationFailure
+{
+    public string RequestId { get; set; } = "";
+    public string Operation { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string? LogPath { get; set; }
 }
 
 public sealed class OrgDefaults

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CaseRecord, Hearing } from '../App'
+import type { CaseRecord, DeadlineItem, Hearing } from '../App'
 import { Panel } from '../App'
 import { MetricTile } from '../ui/MetricTile'
+import { Btn } from '../ui/Btn'
+import { downloadCsv } from '../ui/csvExport'
 import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
 import { DivisionPipelineTab } from './DivisionPipelineTab'
@@ -43,6 +45,7 @@ export function needsAttention(record: CaseRecord): boolean {
 export function ManagerDashboard({
   allCases,
   hearings,
+  deadlines,
   preFilingMilestones,
   preFilingMilestonesAging,
   reviewNotes,
@@ -50,6 +53,7 @@ export function ManagerDashboard({
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
+  deadlines: DeadlineItem[]
   preFilingMilestones: PreFilingMilestoneRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
   reviewNotes: ReviewNoteRecord[]
@@ -72,6 +76,19 @@ export function ManagerDashboard({
   const openPipelineCount = useMemo(() => openCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [openCases])
   const openFiledCount = totalOpenCount - openPipelineCount
   const openNeedsAttentionCount = useMemo(() => openCases.filter(needsAttention).length, [openCases])
+  const caseById = useMemo(() => new Map(allCases.map((record) => [record.id, record])), [allCases])
+
+  function exportDataQuality() {
+    if (!dataQuality) return
+    downloadCsv(`Division_Data_Quality_${new Date().toISOString().slice(0, 10)}.csv`, dataQuality.issues.map((issue) => ({
+      Check: issue.label,
+      Severity: issue.severity,
+      Count: issue.count,
+      Definition: issue.definition,
+      SuggestedAction: issue.suggestedAction,
+      SampleCaseIds: issue.sampleCaseIds.join('; '),
+    })))
+  }
 
   function goToCalendar(nextHorizon?: CalendarHorizon) {
     setActiveTab('calendar')
@@ -93,8 +110,8 @@ export function ManagerDashboard({
         </div>
         {dataQuality && (
           <div className="top-gap-small">
-            <strong>Data-quality checks</strong>
-            {dataQuality.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text">No current issues detected.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>{dataQuality.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td className={`ui-data${issue.severity === 'Critical' ? ' ui-cell-danger' : ' ui-cell-warn'}`}>{issue.count}</td><td>{issue.suggestedAction}</td></tr>)}</tbody></table></div>}
+            <div className="button-row compact-actions"><strong>Data-quality checks</strong><button onClick={exportDataQuality} disabled={!dataQuality}>Export CSV</button></div>
+            {dataQuality.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text">No current issues detected.</p> : <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>{dataQuality.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td className={`ui-data${issue.severity === 'Critical' ? ' ui-cell-danger' : ' ui-cell-warn'}`}>{issue.count}</td><td><div>{issue.suggestedAction}</div>{issue.sampleCaseIds.length > 0 && <div className="data-quality-case-links">{issue.sampleCaseIds.slice(0, 3).map((caseId) => { const record = caseById.get(caseId); return <Btn key={caseId} size="sm" onClick={() => onOpenCase(caseId)}>Open {record?.caseNumber || record?.caseName || `Case ${caseId}`}</Btn> })}{issue.sampleCaseIds.length > 3 && <span className="helper-text">+{issue.sampleCaseIds.length - 3} more</span>}</div>}</td></tr>)}</tbody></table></div>}
           </div>
         )}
       </details>
@@ -157,7 +174,7 @@ export function ManagerDashboard({
 
         {activeTab === 'byAttorney' && (
           <Panel title="By Attorney">
-            <ByAttorneyTab allCases={allCases} hearings={hearings} onOpenCase={onOpenCase} />
+            <ByAttorneyTab allCases={allCases} hearings={hearings} deadlines={deadlines} onOpenCase={onOpenCase} />
           </Panel>
         )}
         {activeTab === 'needsAttention' && (

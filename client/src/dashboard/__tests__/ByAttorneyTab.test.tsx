@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { CaseRecord } from '../../App'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CaseRecord, DeadlineItem, Hearing } from '../../App'
 import { buildAttorneyRows, sortAttorneyRows } from '../ByAttorneyTab'
 
 function makeCase(overrides: Partial<CaseRecord> = {}): CaseRecord {
@@ -17,6 +17,16 @@ function makeCase(overrides: Partial<CaseRecord> = {}): CaseRecord {
   }
 }
 
+function makeHearing(overrides: Partial<Hearing> = {}): Hearing {
+  return { id: 1, caseId: 1, title: 'Hearing', eventType: 'Hearing', hearingDate: '2026-08-10', createdAt: '', updatedAt: '', ...overrides }
+}
+
+function makeDeadline(overrides: Partial<DeadlineItem> = {}): DeadlineItem {
+  return { id: 1, caseId: 1, title: 'Deadline', dueDate: '2026-07-29', status: 'Open', sourceType: 'Manual', isManual: true, severity: 'normal', ...overrides }
+}
+
+afterEach(() => vi.useRealTimers())
+
 describe('buildAttorneyRows', () => {
   it('groups blank/missing assignedAttorney into "Unassigned"', () => {
     const rows = buildAttorneyRows(
@@ -26,6 +36,24 @@ describe('buildAttorneyRows', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].attorney).toBe('Unassigned')
     expect(rows[0].totalTracts).toBe(2)
+  })
+
+  it('computes transparent workload signals without counting closed work or completed deadlines', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-30T12:00:00'))
+    const rows = buildAttorneyRows(
+      [
+        makeCase({ id: 1, assignedAttorney: 'A', caseStatus: 'Pipeline' }),
+        makeCase({ id: 2, assignedAttorney: 'A', status: 'Closed', caseStatus: 'Resolved / Closed' }),
+      ],
+      [makeHearing({ caseId: 1 })],
+      [makeDeadline({ caseId: 1 }), makeDeadline({ id: 2, caseId: 1, status: 'Done' }), makeDeadline({ id: 3, caseId: 2 })],
+    )
+    const row = rows[0]
+    expect(row.openTracts).toBe(1)
+    expect(row.pipelineTracts).toBe(1)
+    expect(row.eventsNext30).toBe(1)
+    expect(row.overdueDeadlines).toBe(1)
   })
 })
 

@@ -18,6 +18,11 @@ try {
   }
   if ($null -eq $health -or $health.status -ne 'ok') { throw 'The packaged server did not report a healthy status.' }
 
+  $portableValidation = Invoke-RestMethod "$url/api/portable-validation" -TimeoutSec 10
+  if (-not $portableValidation.passed) { throw 'The packaged server failed portable validation.' }
+  $backupRestoreValidation = Invoke-RestMethod "$url/api/portable-validation/backup-restore" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30
+  if (-not $backupRestoreValidation.passed) { throw 'The packaged server failed backup/restore validation.' }
+
   $catalogResponse = Invoke-WebRequest "$url/api/document-platform/templates" -UseBasicParsing -TimeoutSec 5
   $catalog = $catalogResponse.Content | ConvertFrom-Json
   $catalogCount = if ($catalog -is [array]) { $catalog.Length } elseif ($null -eq $catalog) { 0 } else { 1 }
@@ -43,6 +48,8 @@ try {
     Url = $url
     Provider = $health.provider
     CatalogEntries = $catalogCount
+    PortableValidation = $portableValidation.passed
+    BackupRestoreValidation = $backupRestoreValidation.passed
     DocxBytes = (Get-Item -LiteralPath $docxPath).Length
     DocxSignature = $signature
     SummarySignature = $utilitySignatures.summary

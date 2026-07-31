@@ -21,7 +21,7 @@
 
 Adding supporting attorneys is not just an extra input. It affects case reads, filtering, attorney dashboards, calendar scope, permission checks, exports, and management counts. The safe next implementation is an additive `case_attorneys` relation with an explicit primary/supporting role, followed by provider-neutral query updates and compatibility reads. The existing primary field should remain until those consumers are migrated and tested.
 
-The first foundation slice is now in place as `case_attorney_assignments` with `Primary` and `Supporting` roles, SQLite repository methods, portable API endpoints, and an Edit Case control. It deliberately does not replace `cases.assigned_attorney`; the control is labeled record-only for a Primary row so users do not mistake this slice for migrated dashboard ownership. SQL Server schema is prepared, but its runtime store remains staged.
+The first foundation slice is now in place as `case_attorney_assignments` with `Primary` and `Supporting` roles, SQLite repository methods, portable API endpoints, and an Edit Case control. It deliberately does not replace `cases.assigned_attorney`; the control is labeled record-only for a Primary row so users do not mistake this slice for migrated dashboard ownership. SQL Server also has a provider store with row-version concurrency, soft delete, and audit-event writes, but both providers still require deployment/identity validation before the legacy projection can be retired.
 
 Multiple legal assistants are already supported through explicit case rows, so the next improvement should be assignment UX and validation rather than another storage migration.
 

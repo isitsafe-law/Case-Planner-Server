@@ -151,7 +151,7 @@ Case Style is displayed in the lower Case Record section rather than the top Ove
 
 On startup, legacy nonblank `cases.trial_date` values are reconciled into a Jury Trial event when no such event exists. The one-time migration preserves the legacy case-date projection and records conflict or multiple-event cases for review. Jury Trial event edits continue to synchronize the case-level compatibility dates; deleting the selected Jury Trial synchronizes them to the next remaining event or clears them when no replacement exists.
 
-The current SQLite model still uses one primary assigned attorney and explicit case legal-assistant rows. Additional attorney assignments and a canonical Service Log party reference remain staged work; historical free-text service party names are preserved and no destructive consolidation is performed automatically.
+The current SQLite model retains the legacy primary assigned-attorney projection and explicit case legal-assistant rows while the additive attorney-assignment relation is adopted. The canonical Service Log party reference is optional; historical free-text service party names are preserved and no destructive consolidation is performed automatically.
 
 Service Log now has an additive nullable reference to `case_defendants`. New entries can select a canonical case party while preserving the party-name snapshot; older free-text entries are not automatically rewritten. The SQL Server runtime store now supports the same bridge, with deployment validation still deferred.
 

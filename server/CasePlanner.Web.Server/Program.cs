@@ -441,6 +441,11 @@ app.Use(async (context, next) =>
     catch (Exception ex)
     {
         await repo.LogAsync($"UNHANDLED EXCEPTION requestId={requestId} on {context.Request.Method} {context.Request.Path}: {ex}");
+        if (context.Request.Path.Value?.Contains("document-platform", StringComparison.OrdinalIgnoreCase) == true
+            || context.Request.Path.Value?.Contains("/generate/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            await repo.RecordDocumentGenerationFailureAsync(requestId, $"{context.Request.Method} {context.Request.Path}", ex.Message);
+        }
         if (!context.Response.HasStarted)
         {
             context.Response.StatusCode = StatusCodes.Status500InternalServerError;

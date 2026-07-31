@@ -1651,6 +1651,7 @@ public sealed class DiagnosticsSnapshot
     public bool SampleDataExists { get; set; }
     public string? LastImportResult { get; set; }
     public string? LastDocumentGenerationResult { get; set; }
+    public DocumentGenerationFailure? LastDocumentGenerationFailure { get; set; }
     public string? StageMigrationReview { get; set; }
     public string? LatestLogPath { get; set; }
     public Dictionary<string, string> Folders { get; set; } = [];

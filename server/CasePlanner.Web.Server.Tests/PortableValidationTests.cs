@@ -38,4 +38,15 @@ public sealed class PortableValidationTests : IAsyncLifetime
         Assert.True(diagnostics.WriteSafetyOk, diagnostics.WriteSafetyMessage);
         Assert.True(diagnostics.CaseCount >= 4);
     }
+
+    [Fact]
+    public async Task DocumentGenerationFailureIsRetainedInDiagnostics()
+    {
+        await _fixture.Repository.RecordDocumentGenerationFailureAsync("request-123", "POST /api/cases/4/document-platform/templates/test/generate", "Template could not be opened.");
+
+        var diagnostics = await _fixture.Repository.GetDiagnosticsAsync();
+        Assert.NotNull(diagnostics.LastDocumentGenerationFailure);
+        Assert.Equal("request-123", diagnostics.LastDocumentGenerationFailure!.RequestId);
+        Assert.Contains("Template could not be opened", diagnostics.LastDocumentGenerationFailure.Message);
+    }
 }

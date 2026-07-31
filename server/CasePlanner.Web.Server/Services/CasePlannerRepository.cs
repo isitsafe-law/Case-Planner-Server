@@ -6567,6 +6567,7 @@ public sealed partial class CasePlannerRepository
             SampleDataExists = await ScalarCountAsync(connection, "cases WHERE case_number LIKE 'SAMPLE-CASE-%' AND case_name LIKE 'Fictional Sample %'") > 0,
             LastImportResult = await GetAppSettingAsync(connection, "last_import_result"),
             LastDocumentGenerationResult = await GetAppSettingAsync(connection, "last_document_generation_result"),
+            LastDocumentGenerationFailure = DeserializeDocumentGenerationFailure(await GetAppSettingAsync(connection, "last_document_generation_failure")),
             StageMigrationReview = await GetAppSettingAsync(connection, "stage_migration_v2_review"),
             LatestLogPath = Directory.Exists(_paths.Config.LogsFolder)
                 ? Directory.GetFiles(_paths.Config.LogsFolder, "*.log").OrderByDescending(File.GetLastWriteTime).FirstOrDefault()
@@ -6580,6 +6581,38 @@ public sealed partial class CasePlannerRepository
                 ["logs"] = _paths.Config.LogsFolder
             }
         };
+    }
+
+    public async Task RecordDocumentGenerationFailureAsync(string requestId, string operation, string message)
+    {
+        var failure = new DocumentGenerationFailure
+        {
+            RequestId = requestId,
+            Operation = operation,
+            Message = message,
+            LogPath = Path.Combine(_paths.Config.LogsFolder, $"web_{DateTime.Now:yyyyMMdd}.log"),
+        };
+
+        try
+        {
+            await LogAsync($"DOCUMENT GENERATION FAILURE requestId={failure.RequestId} operation={failure.Operation}: {failure.Message}");
+            await using var connection = new SqliteConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var tx = connection.BeginTransaction();
+            await SetAppSettingAsync(connection, tx, "last_document_generation_failure", JsonSerializer.Serialize(failure));
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            // Failure diagnostics must never mask the original request failure.
+        }
+    }
+
+    private static DocumentGenerationFailure? DeserializeDocumentGenerationFailure(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        try { return JsonSerializer.Deserialize<DocumentGenerationFailure>(value); }
+        catch (JsonException) { return null; }
     }
 
     private static List<ServiceQueueItem> BuildServiceSummaries(IEnumerable<CaseRecord> cases, IEnumerable<PublicationRecord> publicationEntries)

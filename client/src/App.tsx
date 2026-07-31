@@ -702,6 +702,7 @@ type DiagnosticsSnapshot = {
   documentExportCount: number
   lastImportResult?: string | null
   lastDocumentGenerationResult?: string | null
+  lastDocumentGenerationFailure?: { requestId: string; operation: string; message: string; logPath?: string | null } | null
   latestLogPath?: string | null
   sampleDataExists: boolean
   folders: Record<string, string>
@@ -11424,6 +11425,7 @@ function App() {
                   <label><span>Write-safety details</span><textarea readOnly value={diagnostics.writeSafetyMessage} /></label>
                   <label><span>Last import result</span><input readOnly value={diagnostics.lastImportResult || '—'} /></label>
                   <label><span>Last document generation result</span><input readOnly value={diagnostics.lastDocumentGenerationResult || '—'} /></label>
+                  <label><span>Last document generation failure</span><textarea readOnly value={diagnostics.lastDocumentGenerationFailure ? `${diagnostics.lastDocumentGenerationFailure.message}\nRequest ID: ${diagnostics.lastDocumentGenerationFailure.requestId}\nOperation: ${diagnostics.lastDocumentGenerationFailure.operation}` : '—'} /></label>
                   <PathField label="Latest log path" value={diagnostics.latestLogPath || 'Not available'} />
                 </div>
               ) : <p>Diagnostics are loading.</p>}

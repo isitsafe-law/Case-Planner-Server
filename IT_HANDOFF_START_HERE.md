@@ -107,5 +107,6 @@ Keep this file synchronized with `README.md` when release, workflow, or storage 
 - It flags cases with a populated legacy assigned-attorney value but no matching `Primary` assignment row, allowing drift to be reviewed before assignment-aware reporting is relied on.
 - Diagnostics provides an Export CSV action for these findings, including counts, definitions, suggested actions, and sample case IDs.
 - The portable Diagnostics page displays and refreshes those findings directly, so IT can review assignment and party-link issues without querying SQLite manually.
+- Unexpected document-generation failures are also retained in the Diagnostics snapshot with the request ID, operation, message, and local log path. The request ID can be matched to the detailed exception in the portable log.
 - Case list rows and open-case headers distinguish the primary attorney from supporting attorneys without changing primary ownership.
 - Caseload reporting distinguishes unique open-case totals from assignment-based attorney rows, where shared cases may appear more than once.

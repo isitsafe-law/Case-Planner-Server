@@ -597,6 +597,7 @@ type BackupInfo = {
 
 type CaseAttorneyAssignment = {
   id: number
+  rowVersion?: string | null
   caseId: number
   name: string
   role: 'Primary' | 'Supporting' | string

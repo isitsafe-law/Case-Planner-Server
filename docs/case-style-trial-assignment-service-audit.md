@@ -27,7 +27,7 @@ Multiple legal assistants are already supported through explicit case rows, so t
 
 ## Service Log migration boundary
 
-`service_log_entries.party_name` is historical text and must remain available for prior service records. The first additive slice now adds nullable `case_defendant_id`; new entries can select a canonical defendant while the existing party name remains the stored snapshot. Historical rows are not automatically backfilled, and ambiguous/unmatched rows remain untouched. The SQL Server schema migration is prepared, but its runtime store remains deferred with the existing SQL Server service-log stub.
+`service_log_entries.party_name` is historical text and must remain available for prior service records. The first additive slice now adds nullable `case_defendant_id`; new entries can select a canonical defendant while the existing party name remains the stored snapshot. Historical rows are not automatically backfilled, and ambiguous/unmatched rows remain untouched. SQLite and SQL Server runtime stores support the bridge; deployment validation remains deferred.
 
 ## Verification
 

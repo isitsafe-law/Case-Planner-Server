@@ -706,6 +706,7 @@ public sealed class RecordPipelineHolderApprovalRequest
 public sealed class CaseAttorneyAssignmentRecord
 {
     public long Id { get; set; }
+    public string? RowVersion { get; set; }
     public long CaseId { get; set; }
     public string Name { get; set; } = "";
     public string Role { get; set; } = "Supporting";
@@ -1964,6 +1965,7 @@ public sealed class RiskAnalysisOfferLogEntry
 public sealed class ServiceLogEntry
 {
     public long Id { get; set; }
+    public string? RowVersion { get; set; }
     public long CaseId { get; set; }
     // Nullable during the staged migration: older service history may only have a typed name,
     // while new entries can point at the canonical case_defendants row.

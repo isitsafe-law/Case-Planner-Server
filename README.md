@@ -153,7 +153,7 @@ On startup, legacy nonblank `cases.trial_date` values are reconciled into a Jury
 
 The current SQLite model still uses one primary assigned attorney and explicit case legal-assistant rows. Additional attorney assignments and a canonical Service Log party reference remain staged work; historical free-text service party names are preserved and no destructive consolidation is performed automatically.
 
-Service Log now has an additive nullable reference to `case_defendants`. New entries can select a canonical case party while preserving the party-name snapshot; older free-text entries are not automatically rewritten. The SQL Server schema migration is prepared, while the SQL Server runtime service-log store remains deferred.
+Service Log now has an additive nullable reference to `case_defendants`. New entries can select a canonical case party while preserving the party-name snapshot; older free-text entries are not automatically rewritten. The SQL Server runtime store now supports the same bridge, with deployment validation still deferred.
 
 Case attorney assignments now have an additive SQLite/API foundation with `Primary` and `Supporting` roles and an Edit Case control. The legacy `cases.assigned_attorney` field remains the compatibility projection for dashboards, calendars, permissions, and exports until those consumers are migrated together.
 
@@ -166,6 +166,8 @@ Caseload reporting now recognizes supporting attorneys for attorney filtering, p
 The global Calendar endpoint now matches an attorney filter against both the primary case assignment and supporting attorney rows. The event payload still displays the primary attorney as the case owner; SQL Server falls back to primary-only filtering until its assignment store is implemented.
 
 Attorney assignment changes are recorded in the existing case activity stream as `AttorneyAssignmentChanged` and `AttorneyAssignmentRemoved`, including the assignment name/role and actor metadata. No separate audit table is introduced.
+
+The SQL Server attorney-assignment store now follows the provider pattern used by other case child records: reads, inserts, updates with row-version concurrency, soft deletes, and audit events are implemented. The SQLite path remains the portable test-build source.
 
 Event reconciliation is observational: data-quality checks flag a case-level jury-trial date with no matching calendar event, a Jury Trial event with no case-level date, and conflicting dates. The case-level `trial_date` remains authoritative until a deliberate source-of-truth migration is approved.
 

@@ -103,3 +103,4 @@ Keep this file synchronized with `README.md` when release, workflow, or storage 
 - SQL Server attorney-assignment storage now has a provider implementation with row-version concurrency, soft delete, and audit-event writes. It still requires deployment validation against an actual SQL Server environment.
 - Data-quality reporting flags orphaned/duplicate attorney assignments and invalid Service Log canonical-party links for review without modifying data.
 - The portable Diagnostics page displays and refreshes those findings directly, so IT can review assignment and party-link issues without querying SQLite manually.
+- Case list rows and open-case headers distinguish the primary attorney from supporting attorneys without changing primary ownership.

@@ -6782,6 +6782,10 @@ function App() {
                     <td>
                       <button className="ui-case-link" onClick={(event) => { event.stopPropagation(); openCase(item.id, 'overview') }}>{item.caseName}</button>
                       <div className="ui-sub ui-data">{item.caseNumber}</div>
+                      <div className="ui-sub">Primary: {item.assignedAttorney || 'Unassigned'}</div>
+                      {(allCaseAttorneyAssignments[item.id] ?? []).filter((assignment) => assignment.name && assignment.name !== item.assignedAttorney).length > 0 && (
+                        <div className="ui-sub">Supporting: {(allCaseAttorneyAssignments[item.id] ?? []).filter((assignment) => assignment.name && assignment.name !== item.assignedAttorney).map((assignment) => assignment.name).join(', ')}</div>
+                      )}
                     </td>
                     <td className="ui-data">{item.jobNumber || <span className="ui-cell-faint">—</span>}</td>
                     <td className="ui-data">{item.tract || <span className="ui-cell-faint">—</span>}</td>
@@ -7281,6 +7285,7 @@ function App() {
     // "tiedLegalAssistant" value (a live lookup against the Staff Directory tie) so a case can hold
     // more than one legal assistant and support a manual override.
     const legalAssistantNames = caseLegalAssistants.map((row) => row.name.trim()).filter(Boolean).join(', ')
+    const supportingAttorneyNames = caseAttorneyAssignments.filter((row) => row.name.trim() && row.name.trim() !== selectedCase.assignedAttorney?.trim()).map((row) => row.name.trim()).filter(Boolean).join(', ')
     const coreRecordFields = [
       { label: 'Filing Date', value: displayDate(selectedCase.filingDate), important: Boolean(selectedCase.filingDate), always: false },
       { label: 'Date of Taking', value: displayDate(selectedCase.dateOfTaking), important: Boolean(selectedCase.dateOfTaking), always: false },
@@ -7439,11 +7444,12 @@ function App() {
               small, non-prominent line, similar weight to the Holder row's label above. Omits the
               Legal Assistant portion when that list is empty, and omits the whole line only when
               there's also no Assigned Attorney. */}
-          {!isNewCase && (selectedCase.assignedAttorney || legalAssistantNames) && (
+          {!isNewCase && (selectedCase.assignedAttorney || supportingAttorneyNames || legalAssistantNames) && (
             <div className="workspace-people-row top-gap-small">
               <span className="workspace-people-row-text">
                 {[
                   selectedCase.assignedAttorney ? `Attorney: ${selectedCase.assignedAttorney}` : '',
+                  supportingAttorneyNames ? `Supporting: ${supportingAttorneyNames}` : '',
                   legalAssistantNames ? `Legal Assistant: ${legalAssistantNames}` : '',
                 ].filter(Boolean).join(' · ')}
               </span>

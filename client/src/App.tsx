@@ -803,6 +803,23 @@ type DocumentTemplateAdminSummary = {
   runtimeInputs: DocumentRuntimeInput[]
   lintIssues: string[]
 }
+
+type DataQualityIssue = {
+  key: string
+  severity: string
+  label: string
+  count: number
+  definition: string
+  suggestedAction: string
+  sampleCaseIds: number[]
+  additionalCaseCount: number
+}
+
+type DataQualityReport = {
+  generatedAt: string
+  scopeDefinition: string
+  issues: DataQualityIssue[]
+}
 type DocumentTemplateCompletenessReport = {
   templateKey: string
   title: string
@@ -2301,6 +2318,7 @@ function App() {
   const [bulkChecklistDueDateOpen, setBulkChecklistDueDateOpen] = useState(false)
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
+  const [dataQualityReport, setDataQualityReport] = useState<DataQualityReport | null>(null)
   const [portableValidation, setPortableValidation] = useState<PortableValidationReport | null>(null)
   const [cases, setCases] = useState<CaseRecord[]>([])
   const [allCases, setAllCases] = useState<CaseRecord[]>([])
@@ -2891,12 +2909,13 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, allAttorneyAssignments, diagnosticsData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, allAttorneyAssignments, diagnosticsData, dataQualityData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
         api<CaseAttorneyAssignment[]>('/api/attorney-assignments').catch(() => []),
         api<DiagnosticsSnapshot>('/api/diagnostics'),
+        api<DataQualityReport>('/api/data-quality').catch(() => ({ generatedAt: '', scopeDefinition: '', issues: [] })),
         api<DeadlineItem[]>('/api/work-queues/deadlines'),
         api<ChecklistItem[]>('/api/work-queues/checklist'),
         api<DiscoveryItem[]>('/api/work-queues/discovery'),
@@ -2928,6 +2947,7 @@ function App() {
         return groups
       }, {}))
       setDiagnostics(diagnosticsData)
+      setDataQualityReport(dataQualityData)
       setQueueDeadlines(deadlinesData)
       setQueueChecklist(checklistData)
       setQueueDiscovery(discoveryData)
@@ -11387,6 +11407,16 @@ function App() {
                   <PathField label="Latest log path" value={diagnostics.latestLogPath || 'Not available'} />
                 </div>
               ) : <p>Diagnostics are loading.</p>}
+              {dataQualityReport && (
+                <div className="settings-subpanel top-gap-small">
+                  <div className="panel-header"><div><h3>Data Quality Findings</h3><p className="helper-text">Review-only checks for migration and document-readiness issues. No finding changes data automatically.</p></div><button onClick={() => void api<DataQualityReport>('/api/data-quality').then(setDataQualityReport)}>Refresh Findings</button></div>
+                  {dataQualityReport.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text top-gap-small">No current findings.</p> : (
+                    <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Finding</th><th>Severity</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>
+                      {dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td>{issue.label}</td><td>{issue.severity}</td><td>{issue.count}{issue.additionalCaseCount > 0 ? ` (+${issue.additionalCaseCount} more)` : ''}</td><td>{issue.suggestedAction}</td></tr>)}
+                    </tbody></table></div>
+                  )}
+                </div>
+              )}
             </Panel>
           )}
 

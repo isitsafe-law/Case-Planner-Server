@@ -171,6 +171,8 @@ The SQL Server attorney-assignment store now follows the provider pattern used b
 
 Data-quality reporting now flags orphaned or duplicate attorney assignments and invalid Service Log-to-defendant references. These findings are review-only; no automatic backfill or deletion is performed.
 
+The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.
+
 Event reconciliation is observational: data-quality checks flag a case-level jury-trial date with no matching calendar event, a Jury Trial event with no case-level date, and conflicting dates. The case-level `trial_date` remains authoritative until a deliberate source-of-truth migration is approved.
 
 When behavior changes, update this README and the IT handoff documentation in the same change.

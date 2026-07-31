@@ -187,6 +187,8 @@ Malformed or unreadable DOCX templates now return a specific template error to t
 
 Data Quality also flags active document templates that contain unknown merge tags, so template drift is visible before a user attempts generation.
 
+It also distinguishes missing template files from files that exist but are not valid DOCX packages, helping diagnose generation failures before users retry them.
+
 The latest recorded generation failure is cleared automatically after a successful generation, keeping Diagnostics focused on unresolved problems.
 
 The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.

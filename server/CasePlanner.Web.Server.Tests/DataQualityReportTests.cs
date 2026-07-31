@@ -20,7 +20,27 @@ public sealed class DataQualityReportTests : IAsyncLifetime
         Assert.Contains(report.Issues, issue => issue.Key == "jury-trial-event-no-case-date");
         Assert.Contains(report.Issues, issue => issue.Key == "missing-template-files");
         Assert.Equal(0, report.Issues.Single(issue => issue.Key == "missing-template-files").Count);
+        Assert.Equal(0, report.Issues.Single(issue => issue.Key == "invalid-document-template-files").Count);
         Assert.Equal(0, report.Issues.Single(issue => issue.Key == "unknown-document-template-tags").Count);
         Assert.All(report.Issues, issue => Assert.Equal(Math.Max(0, issue.Count - issue.SampleCaseIds.Count), issue.AdditionalCaseCount));
+    }
+
+    [Fact]
+    public async Task ReportFlagsAnActiveTemplateThatCannotBeOpened()
+    {
+        var template = (await _fixture.Repository.GetAllDocumentTemplatesForAdminAsync())
+            .First(item => item.Template.IsBuiltin && item.ActiveVersion is not null);
+        var path = template.ActiveVersion!.StoragePath;
+        var original = await File.ReadAllBytesAsync(path);
+        try
+        {
+            await File.WriteAllTextAsync(path, "not a docx package");
+            var report = await _fixture.Repository.GetDataQualityReportAsync();
+            Assert.True(report.Issues.Single(issue => issue.Key == "invalid-document-template-files").Count >= 1);
+        }
+        finally
+        {
+            await File.WriteAllBytesAsync(path, original);
+        }
     }
 }

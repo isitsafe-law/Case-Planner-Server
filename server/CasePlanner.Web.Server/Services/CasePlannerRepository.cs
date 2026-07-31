@@ -9989,6 +9989,13 @@ public sealed partial class CasePlannerRepository
         }
         report.Issues.Add(templateIssue);
 
+        var invalidTemplateIssue = new DataQualityIssue
+        {
+            Key = "invalid-document-template-files", Severity = "Critical", Label = "Active document templates that cannot be opened",
+            Definition = "Active document template files that exist but cannot be parsed as valid DOCX packages.",
+            SuggestedAction = "Restore the original DOCX, replace the file, or upload a new valid version before generating documents.",
+        };
+
         var unknownTagIssue = new DataQualityIssue
         {
             Key = "unknown-document-template-tags", Severity = "Warning", Label = "Active document templates with unknown merge tags",
@@ -10018,10 +10025,10 @@ public sealed partial class CasePlannerRepository
             }
             catch
             {
-                // Missing or malformed files are reported by the template-file check or the
-                // generation request itself; do not turn diagnostics into a second failure.
+                invalidTemplateIssue.Count++;
             }
         }
+        report.Issues.Add(invalidTemplateIssue);
         report.Issues.Add(unknownTagIssue);
         return report;
     }

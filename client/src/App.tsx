@@ -146,6 +146,7 @@ export type CaseRecord = {
   fapNumber?: string | null
   parcelNumber?: string | null
   caseStyle?: string | null
+  caseStyleFormattingJson?: string | null
   opposingCounselContact?: string | null
   caseFolderPath?: string | null
 }
@@ -3919,7 +3920,7 @@ function App() {
 
   function startEditCase() {
     if (!selectedCase.id) return
-    setCaseDraft(selectedCase)
+    setCaseDraft({ ...selectedCase, caseStyle: selectedCase.caseStyle || suggestedStructuredCaseStyle() })
     openModal('case', 'edit')
   }
 
@@ -3948,9 +3949,65 @@ function App() {
     return `Arkansas State Highway Commission v. ${names.length > 0 ? names.join(', ') : '[Add party names]'}`
   }
 
+  function suggestedStructuredCaseStyle(): string {
+    const county = selectedCase.county ? `${selectedCase.county.toUpperCase()} COUNTY` : '________ COUNTY'
+    const parties = caseDefendants.map((party) => party.name.trim()).filter(Boolean)
+    const fallback = selectedCase.landowner || selectedCase.owner || ''
+    const defendants = parties.length > 0 ? parties : (fallback ? [fallback] : ['[Add defendant / party]'])
+    return [
+      `IN THE CIRCUIT COURT OF ${county}, ARKANSAS`,
+      selectedCase.division || 'CIVIL DIVISION',
+      'ARKANSAS STATE HIGHWAY COMMISSION',
+      'PLAINTIFF',
+      'V.',
+      selectedCase.caseNumber ? `CASE NO. ${selectedCase.caseNumber}` : 'CASE NO. [Add case number]',
+      ...defendants,
+      'DEFENDANTS'
+    ].join('\n')
+  }
+
+  function structuredCaseStyle() {
+    const lines = (caseDraft.caseStyle || '').replace(/\r\n/g, '\n').split('\n')
+    if (lines.length <= 1) {
+      return { court: '', division: '', plaintiff: lines[0] || '', plaintiffDesignation: '', versus: 'V.', caseNumber: '', defendants: '', defendantDesignation: '' }
+    }
+    return {
+      court: lines[0] || '', division: lines[1] || '', plaintiff: lines[2] || '',
+      plaintiffDesignation: lines[3] || '', versus: lines[4] || 'V.', caseNumber: lines[5] || '',
+      defendants: lines.slice(6, -1).join('\n'), defendantDesignation: lines.length > 6 ? (lines[lines.length - 1] || '') : ''
+    }
+  }
+
+  function caseStyleFormatting() {
+    const lines = (caseDraft.caseStyle || '').replace(/\r\n/g, '\n').split('\n')
+    try {
+      const parsed = JSON.parse(caseDraft.caseStyleFormattingJson || '')
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    } catch { /* legacy plain-text style */ }
+    return lines.map(() => ({ bold: true, alignment: 'center', fontSize: 12 }))
+  }
+
+  function patchCaseStyleFormatting(patch: { bold?: boolean; alignment?: string; fontSize?: number }) {
+    const formats = caseStyleFormatting().map((format: { bold?: boolean; alignment?: string; fontSize?: number }) => ({
+      bold: patch.bold ?? Boolean(format.bold), alignment: patch.alignment ?? format.alignment ?? 'center', fontSize: patch.fontSize ?? format.fontSize ?? 12
+    }))
+    setCaseDraft({ ...caseDraft, caseStyleFormattingJson: JSON.stringify(formats) })
+  }
+
+  function patchStructuredCaseStyle(patch: Partial<ReturnType<typeof structuredCaseStyle>>) {
+    const current = structuredCaseStyle()
+    const next = { ...current, ...patch }
+    const lines = [next.court, next.division, next.plaintiff, next.plaintiffDesignation, next.versus, next.caseNumber,
+      ...next.defendants.split(/\r?\n/), next.defendantDesignation]
+    // Preserve fixed positions, spaces, and blank lines while the user is typing. In
+    // particular, do not trim trailing empty rows: a trailing newline in the parties box
+    // is an intentional edit and must survive the controlled-input round trip.
+    setCaseDraft({ ...caseDraft, caseStyle: lines.join('\n') })
+  }
+
   function startEditCaseWithSuggestedStyle() {
     if (!selectedCase.id) return
-    setCaseDraft({ ...selectedCase, caseStyle: suggestedCaseStyle() })
+    setCaseDraft({ ...selectedCase, caseStyle: suggestedStructuredCaseStyle() })
     openModal('case', 'edit')
   }
 
@@ -5667,6 +5724,14 @@ function App() {
     const values: Record<string, string> = {
       County: selectedCase.county || '', CaseNumber: selectedCase.caseNumber || '', JobNumber: selectedCase.jobNumber || '',
       Tract: selectedCase.tract || '', ProjectName: selectedCase.projectName || '', DefendantNames: selectedCase.landowner || selectedCase.owner || '',
+      'Case.Status': selectedCase.caseStatus || '', 'Case.FullStyle': selectedCase.caseStyle || '',
+      'Case.ShortStyle': selectedCase.landowner || selectedCase.owner || selectedCase.caseStyle || '',
+      'Case.Caption': selectedCase.caseStyle || selectedCase.landowner || selectedCase.owner || '',
+      'Case.CaptionWithNumber': [selectedCase.caseStyle || selectedCase.landowner || selectedCase.owner || '', selectedCase.caseNumber ? `Case No. ${selectedCase.caseNumber}` : ''].filter(Boolean).join(' · '),
+      'Case.DateOfTaking': displayDate(selectedCase.dateOfTaking), LegalDescription: selectedCase.propertyDescription || '', OpposingCounsel: selectedCase.opposingCounsel || '',
+      'Case.CourtHeading': selectedCase.county ? `IN THE CIRCUIT COURT OF ${selectedCase.county.toUpperCase()} COUNTY, ARKANSAS` : 'IN THE CIRCUIT COURT OF ARKANSAS',
+      'Case.CaseNumberLine': selectedCase.caseNumber ? `CASE NO. ${selectedCase.caseNumber}` : 'CASE NO.',
+      'Case.DefendantLines': selectedCase.landowner || selectedCase.owner || '',
       AttorneyName: orgDefaults.attorneyName || '', BarNumber: orgDefaults.barNumber || '', AttorneyPhone: orgDefaults.phone || '', AttorneyEmail: orgDefaults.email || '',
       OrgAddressLine1: orgDefaults.addressLine1 || '', OrgAddressLine2: orgDefaults.addressLine2 || ''
     }
@@ -9698,7 +9763,26 @@ function App() {
                     {consolidatedCaseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                   </select>
                 </label>
-                <label className="full-span"><span>Case Style</span><textarea value={caseDraft.caseStyle || ''} onChange={(event) => patchCaseDraft({ caseStyle: event.target.value })} placeholder="Full case caption, e.g. State of Arkansas ex rel. Arkansas State Highway Commission v. John Doe, et al." /></label>
+                <div className="full-span structured-case-style-editor">
+                  <div className="field-label-row"><span>Structured Full Case Style</span><span className="helper-text">Each line is preserved when merged into a DOCX template.</span></div>
+                  <div className="form-grid top-gap-small">
+                    <label><span>Court heading</span><input value={structuredCaseStyle().court} onChange={(event) => patchStructuredCaseStyle({ court: event.target.value })} placeholder="IN THE CIRCUIT COURT OF ..." /></label>
+                    <label><span>Division</span><input value={structuredCaseStyle().division} onChange={(event) => patchStructuredCaseStyle({ division: event.target.value })} placeholder="CIVIL DIVISION" /></label>
+                    <label><span>Plaintiff</span><input value={structuredCaseStyle().plaintiff} onChange={(event) => patchStructuredCaseStyle({ plaintiff: event.target.value })} placeholder="ARKANSAS STATE HIGHWAY COMMISSION" /></label>
+                    <label><span>Plaintiff designation</span><input value={structuredCaseStyle().plaintiffDesignation} onChange={(event) => patchStructuredCaseStyle({ plaintiffDesignation: event.target.value })} placeholder="PLAINTIFF" /></label>
+                    <label><span>Versus line</span><input value={structuredCaseStyle().versus} onChange={(event) => patchStructuredCaseStyle({ versus: event.target.value })} /></label>
+                    <label><span>Case number line</span><input value={structuredCaseStyle().caseNumber} onChange={(event) => patchStructuredCaseStyle({ caseNumber: event.target.value })} placeholder="CASE NO. ..." /></label>
+                    <label className="full-span"><span>Defendants / parties</span><textarea value={structuredCaseStyle().defendants} onChange={(event) => patchStructuredCaseStyle({ defendants: event.target.value })} placeholder="One party per line" /></label>
+                    <label><span>Defendant designation</span><input value={structuredCaseStyle().defendantDesignation} onChange={(event) => patchStructuredCaseStyle({ defendantDesignation: event.target.value })} placeholder="DEFENDANTS" /></label>
+                  </div>
+                  <p className="helper-text top-gap-small">Legacy one-line case styles remain editable. Use the structured lines for court captions and multi-party styles; the saved value remains backward-compatible plain text with preserved line breaks.</p>
+                  <div className="form-grid top-gap-small">
+                    <label><span>Caption alignment</span><select value={String(caseStyleFormatting()[0]?.alignment || 'center')} onChange={(event) => patchCaseStyleFormatting({ alignment: event.target.value })}><option value="left">Left</option><option value="center">Centered</option><option value="right">Right</option></select></label>
+                    <label><span>Caption font size</span><select value={String(caseStyleFormatting()[0]?.fontSize || 12)} onChange={(event) => patchCaseStyleFormatting({ fontSize: Number(event.target.value) })}><option value="10">10 pt</option><option value="11">11 pt</option><option value="12">12 pt</option><option value="14">14 pt</option></select></label>
+                    <label className="toggle-inline"><span>Bold caption</span><input type="checkbox" checked={Boolean(caseStyleFormatting()[0]?.bold ?? true)} onChange={(event) => patchCaseStyleFormatting({ bold: event.target.checked })} /></label>
+                  </div>
+                </div>
+                <label className="full-span"><span>Full Legal Description</span><textarea value={caseDraft.propertyDescription || ''} onChange={(event) => patchCaseDraft({ propertyDescription: event.target.value })} placeholder="Full legal description of the property at issue" /></label>
                 <label className="full-span"><span>Case Folder Path</span><input value={caseDraft.caseFolderPath || ''} onChange={(event) => patchCaseDraft({ caseFolderPath: event.target.value })} placeholder={String.raw`\\fileserver\share\JobNumber\Tract`} /></label>
               </div>
             </section>
@@ -11658,7 +11742,10 @@ function App() {
               <div className="settings-subpanel">
                 <p className="helper-text">Edit the document in Word, then upload it — merge fields and optional section blocks are read from the file automatically. Advanced configuration (issue-tag links, generation-time prompts) is available per template below.</p>
               </div>
-              <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
+              <div className="button-row compact-actions">
+                <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
+                <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
+              </div>
 
               <h4 className="top-gap">{platformUploadKeyLocked ? `Upload New Version of "${platformUploadDraft.title}"` : 'Upload a New Template'}</h4>
               <div className="form-grid top-gap-small">

@@ -159,6 +159,33 @@ public sealed class DocxSectionMergerTests
     }
 
     [Fact]
+    public void DottedAndHumanReadableFieldsMergeAcrossRuns()
+    {
+        using var stream = new MemoryStream();
+        using (var document = WordprocessingDocument.Create(stream, WordprocessingDocumentType.Document, true))
+        {
+            var main = document.AddMainDocumentPart();
+            main.Document = new Document(new Body(
+                new Paragraph(new Run(new Text("{{"), new Text("Case.Caption"), new Text("}}"))),
+                new Paragraph(new Run(new Text("{{Case Status}}")))));
+            main.Document.Save();
+        }
+
+        var context = MergeContextBuilder.Build(new Dictionary<string, string>
+        {
+            ["Case.Caption"] = "Arkansas State Highway Commission v. Smith",
+            ["Case Status"] = "Active Litigation"
+        }, []);
+
+        var merged = DocxSectionMerger.Render(stream.ToArray(), context, out var missing);
+        var text = DocumentGenerationEngine.ExtractEditableTextFromDocx(merged);
+
+        Assert.Contains("Arkansas State Highway Commission v. Smith", text);
+        Assert.Contains("Active Litigation", text);
+        Assert.Empty(missing);
+    }
+
+    [Fact]
     public void UnclosedSectionThrowsRatherThanSilentlyMisrenderingTheDocument()
     {
         using var stream = new MemoryStream();

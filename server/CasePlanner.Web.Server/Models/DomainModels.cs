@@ -81,6 +81,9 @@ public sealed class CaseRecord
     // merge/token coupling - this repo has no existing case-field-to-document-token mechanism to
     // hook into, so this is scoped as a field + client-side copy affordance only.
     public string? CaseStyle { get; set; }
+    // JSON formatting metadata for structured case-style lines. CaseStyle remains the
+    // backward-compatible plain-text projection used by legacy exports and callers.
+    public string? CaseStyleFormattingJson { get; set; }
     // Test-build feedback batch, item 8: opposing counsel's phone/email/address as free text, not
     // separate structured fields - mirrors OpposingCounsel (the older plain-string field, now
     // superseded in the client UI by the OpposingAttorney child-table list) in staying a simple

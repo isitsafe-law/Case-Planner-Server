@@ -16,7 +16,7 @@ public sealed class MergeTagRegistryTests
             ClosedDate = "2026-06-01", TrialDate = "2026-07-29", TrialEndDate = "2026-07-31", NextAction = "Prepare exhibit list",
             NextActionDue = "2026-07-10", DepositAmount = 1000, WholePropertyAcres = 10, AcquisitionAcres = 2, TaxOwedAmount = 25,
             FapNumber = "FAP-1", ParcelNumber = "P-1", Judge = "Judge Test", Division = "Division 1", AssignedAttorney = "A. Attorney",
-            OpposingCounsel = "C. Counsel", OpposingCounselContact = "counsel@example.com", ServiceStatus = "Perfected", ServicePerfectedDate = "2026-02-01"
+            OpposingCounsel = "C. Counsel", OpposingCounselContact = "counsel@example.com", PropertyDescription = "A tract of land in Pulaski County.", ServiceStatus = "Perfected", ServicePerfectedDate = "2026-02-01"
         };
         var org = new OrgDefaults
         {
@@ -72,6 +72,70 @@ public sealed class MergeTagRegistryTests
 
         Assert.Equal("Pulaski", result);
         Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void LegacyAndHumanReadableCaseAliasesResolveToCanonicalValues()
+    {
+        var caseRecord = new CaseRecord
+        {
+            CaseNumber = "60CV-26-1234", CaseStatus = "Active Litigation",
+            CaseStyle = "Arkansas State Highway Commission v. Smith", DateOfTaking = "2026-01-03",
+            OpposingCounsel = "C. Counsel"
+        };
+        var tokens = DocumentGenerationEngine.BuildTokens(caseRecord, new OrgDefaults(), new Dictionary<string, string>());
+
+        var result = DocumentGenerationEngine.FillTemplate(
+            "{{CaseCaption}} | {{Case Caption}} | {{CaseCaptionWithNumber}} | {{Case Caption With Number}} | " +
+            "{{CaseStatus}} | {{Case Status}} | {{DateOfTaking}} | {{Date of Taking}} | " +
+            "{{FullCaseStyle}} | {{Full Case Style}} | {{ShortCaseStyle}} | {{Short Case Style}} | {{Opposing Counsel}}",
+            tokens, out var missing);
+
+        Assert.DoesNotContain("[MISSING:", result);
+        Assert.Empty(missing);
+        Assert.Contains("Active Litigation", result);
+        Assert.Contains("January 3, 2026", result);
+        Assert.Contains("C. Counsel", result);
+    }
+
+    [Fact]
+    public void LegalDescriptionMergeFieldUsesTheCasePropertyDescription()
+    {
+        var tokens = DocumentGenerationEngine.BuildTokens(
+            new CaseRecord { PropertyDescription = "The full legal description appears here." },
+            new OrgDefaults(), new Dictionary<string, string>());
+
+        var result = DocumentGenerationEngine.FillTemplate("{{LegalDescription}}", tokens, out var missing);
+
+        Assert.Equal("The full legal description appears here.", result);
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void FormattedHeaderFieldsProvideCourtNumberAndPartyLines()
+    {
+        var tokens = DocumentGenerationEngine.BuildTokens(
+            new CaseRecord { County = "Saline", CaseNumber = "63CV-25-2234", Landowner = "Legacy Name" },
+            new OrgDefaults(), new Dictionary<string, string>(), canonicalDefendants:
+            [new CaseDefendantRecord { Name = "First Party", SortOrder = 0 }, new CaseDefendantRecord { Name = "Second Party", SortOrder = 1 }]);
+
+        var result = DocumentGenerationEngine.FillTemplate(
+            "{{Case.CourtHeading}}\n{{Case.CaseNumberLine}}\n{{Case.DefendantLines}}", tokens, out var missing);
+
+        Assert.Contains("IN THE CIRCUIT COURT OF SALINE COUNTY, ARKANSAS", result);
+        Assert.Contains("CASE NO. 63CV-25-2234", result);
+        Assert.Contains("First Party\nSecond Party\n\tDEFENDANTS", result);
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void PastedDefendantLinesInCaseStyleDriveTheFormattedPartyField()
+    {
+        var tokens = DocumentGenerationEngine.BuildTokens(
+            new CaseRecord { CaseStyle = "Fixed heading\nCASE NO. 1\nPasted Party One\nPasted Party Two\nDEFENDANTS" },
+            new OrgDefaults(), new Dictionary<string, string>());
+
+        Assert.Equal("Pasted Party One\nPasted Party Two\n\tDEFENDANTS", tokens["Case.DefendantLines"]);
     }
 
     [Fact]

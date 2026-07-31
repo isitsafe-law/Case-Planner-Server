@@ -30,6 +30,7 @@ public sealed class CaseAttorneyAssignmentTests : IAsyncLifetime
         var assignment = Assert.Single(assignments, row => row.Id == saved.Id);
         Assert.Equal("Supporting", assignment.Role);
         Assert.Contains(assignments, row => row.Name == "Primary Attorney" && row.Role == "Primary");
+        Assert.Equal(caseRecord.Id, await _fixture.Repository.GetChildCaseIdAsync("case-attorney", saved.Id));
         var reloaded = Assert.Single(await _fixture.Repository.GetCasesAsync("ASSIGNMENT-1", "", "", "", true));
         Assert.Equal("Primary Attorney", reloaded.AssignedAttorney);
 

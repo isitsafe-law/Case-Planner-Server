@@ -15,14 +15,24 @@ public sealed class MergeContext
     public IReadOnlyDictionary<string, string> Fields { get; }
     public IReadOnlySet<string> SelectedSections { get; }
     public IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>> Loops { get; }
+    public CaseStyleFormatting? CaseStyleFormatting { get; }
 
     public MergeContext(
         IReadOnlyDictionary<string, string> fields,
         IReadOnlySet<string> selectedSections,
-        IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? loops = null)
+        IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? loops = null,
+        CaseStyleFormatting? caseStyleFormatting = null)
     {
         Fields = fields;
         SelectedSections = selectedSections;
         Loops = loops ?? new Dictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>(StringComparer.OrdinalIgnoreCase);
+        CaseStyleFormatting = caseStyleFormatting;
     }
+}
+
+public sealed class CaseStyleFormatting
+{
+    public bool Bold { get; set; } = true;
+    public string Alignment { get; set; } = "center";
+    public int FontSize { get; set; } = 12;
 }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using CasePlanner.Web.Server.Models;
 using DocumentFormat.OpenXml;
@@ -11,6 +12,44 @@ namespace CasePlanner.Web.Server.Services;
 // callers assemble the CaseRecord/OrgDefaults/manual inputs and pass them in.
 public static partial class DocumentGenerationEngine
 {
+    public static CaseStyleFormatting? ParseCaseStyleFormatting(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            var first = JsonSerializer.Deserialize<List<CaseStyleFormatting>>(json)?.FirstOrDefault();
+            return first is null ? null : new CaseStyleFormatting
+            {
+                Bold = first.Bold,
+                Alignment = first.Alignment is "left" or "right" ? first.Alignment : "center",
+                FontSize = Math.Clamp(first.FontSize, 8, 24)
+            };
+        }
+        catch (JsonException) { return null; }
+    }
+    // Templates created before the current dotted naming convention used compact or
+    // human-readable names. Keep those templates usable without duplicating catalog rows.
+    internal static readonly IReadOnlyDictionary<string, string> LegacyTokenAliases =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CaseCaption"] = "Case.Caption",
+            ["Case Caption"] = "Case.Caption",
+            ["CaseCaptionWithNumber"] = "Case.CaptionWithNumber",
+            ["Case Caption With Number"] = "Case.CaptionWithNumber",
+            ["CaseStatus"] = "Case.Status",
+            ["Case Status"] = "Case.Status",
+            ["DateOfTaking"] = "Case.DateOfTaking",
+            ["Date of Taking"] = "Case.DateOfTaking",
+            ["FullCaseStyle"] = "Case.FullStyle",
+            ["Full Case Style"] = "Case.FullStyle",
+            ["ShortCaseStyle"] = "Case.ShortStyle",
+            ["Short Case Style"] = "Case.ShortStyle",
+            ["Opposing Counsel"] = "OpposingCounsel",
+            ["PropertyDescription"] = "LegalDescription",
+            ["Legal Description"] = "LegalDescription",
+            ["Case.LegalDescription"] = "LegalDescription",
+        };
+
     public static byte[] CreateDocxFromText(string text)
     {
         using var stream = new MemoryStream();
@@ -39,9 +78,13 @@ public static partial class DocumentGenerationEngine
         new() { Key = "Tract", Label = "Tract", Category = "Case", Description = "Tract identifier." },
         new() { Key = "ProjectName", Label = "Project Name", Category = "Case", Description = "Project name from the case record." },
         new() { Key = "DefendantNames", Label = "Defendant / Landowner Names", Category = "Case", Description = "Landowner if present, otherwise owner." },
+        new() { Key = "Case.CourtHeading", Label = "Court Heading", Category = "Case", Description = "Court heading assembled from the case county." },
+        new() { Key = "Case.CaseNumberLine", Label = "Case Number Line", Category = "Case", Description = "CASE NO. line for a formatted caption." },
+        new() { Key = "Case.DefendantLines", Label = "Defendant / Party Lines", Category = "Case", Description = "Canonical parties separated by line breaks for a formatted Word header." },
         new() { Key = "DepositAmount", Label = "Deposit Amount", Category = "Case", Description = "Initial deposit amount." },
         new() { Key = "FilingDate", Label = "Filing Date", Category = "Case", Description = "Formatted filing date." },
         new() { Key = "Case.DateOfTaking", Label = "Date of Taking", Category = "Case", Description = "Formatted date of taking." },
+        new() { Key = "LegalDescription", Label = "Full Legal Description", Category = "Case", Description = "Full legal/property description stored on the case." },
         new() { Key = "Case.TrialDate", Label = "Jury Trial Date", Category = "Events and Deadlines", Description = "Controlling jury trial start date." },
         new() { Key = "Case.TrialEndDate", Label = "Jury Trial End Date", Category = "Events and Deadlines", Description = "Optional jury trial end date." },
         new() { Key = "Workflow.NextAction", Label = "Next Action", Category = "Events and Deadlines", Description = "Current next action." },
@@ -73,7 +116,7 @@ public static partial class DocumentGenerationEngine
         new() { Key = "ChiefLegalCounselName", Label = "Chief Legal Counsel Name", Category = "Organization", Description = "Chief legal counsel name from document defaults." }
     ];
 
-    public static Dictionary<string, string> BuildTokens(CaseRecord c, OrgDefaults org, Dictionary<string, string> manualInputs, IEnumerable<DocumentTemplateField>? manualFieldDefs = null, IEnumerable<CaseDefendantRecord>? canonicalDefendants = null)
+    public static Dictionary<string, string> BuildTokens(CaseRecord c, OrgDefaults org, Dictionary<string, string> manualInputs, IEnumerable<DocumentTemplateField>? manualFieldDefs = null, IEnumerable<CaseDefendantRecord>? canonicalDefendants = null, IEnumerable<OpposingAttorneyRecord>? opposingAttorneys = null)
     {
         var canonicalNames = canonicalDefendants?
             .Where(defendant => !string.IsNullOrWhiteSpace(defendant.Name))
@@ -89,6 +132,18 @@ public static partial class DocumentGenerationEngine
             ? (string.IsNullOrWhiteSpace(defendantNames) ? "" : $"Arkansas State Highway Commission v. {defendantNames}")
             : c.CaseStyle!;
         var shortStyle = !string.IsNullOrWhiteSpace(defendantNames) ? defendantNames : fullStyle;
+        var opposingCounsel = opposingAttorneys?
+            .Where(attorney => !string.IsNullOrWhiteSpace(attorney.Name))
+            .OrderBy(attorney => attorney.SortOrder)
+            .ThenBy(attorney => attorney.Id)
+            .Select(attorney => attorney.Name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        var opposingCounselValue = opposingCounsel.Count > 0 ? string.Join("; ", opposingCounsel) : (c.OpposingCounsel ?? "");
+        var pastedDefendantLines = ExtractPastedDefendantLines(c.CaseStyle);
+        var formattedDefendantLines = pastedDefendantLines.Count > 0
+            ? pastedDefendantLines
+            : (canonicalNames.Count > 0 ? canonicalNames : (string.IsNullOrWhiteSpace(defendantNames) ? [] : [defendantNames]));
         var tokens = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["County"] = c.County ?? "",
@@ -97,6 +152,9 @@ public static partial class DocumentGenerationEngine
             ["Tract"] = c.Tract ?? "",
             ["ProjectName"] = c.ProjectName ?? "",
             ["DefendantNames"] = defendantNames,
+            ["Case.CourtHeading"] = string.IsNullOrWhiteSpace(c.County) ? "IN THE CIRCUIT COURT OF ARKANSAS" : $"IN THE CIRCUIT COURT OF {c.County.ToUpperInvariant()} COUNTY, ARKANSAS",
+            ["Case.CaseNumberLine"] = string.IsNullOrWhiteSpace(c.CaseNumber) ? "CASE NO." : $"CASE NO. {c.CaseNumber}",
+            ["Case.DefendantLines"] = string.Join("\n", formattedDefendantLines) + "\n\tDEFENDANTS",
             ["Case.Status"] = c.CaseStatus ?? "",
             ["Case.FullStyle"] = fullStyle,
             ["Case.ShortStyle"] = shortStyle,
@@ -105,6 +163,8 @@ public static partial class DocumentGenerationEngine
             ["DepositAmount"] = c.DepositAmount?.ToString("N2", CultureInfo.InvariantCulture) ?? "",
             ["FilingDate"] = FormatReadableDate(c.FilingDate),
             ["Case.DateOfTaking"] = FormatReadableDate(c.DateOfTaking),
+            ["LegalDescription"] = c.PropertyDescription ?? "",
+            ["Case.LegalDescription"] = c.PropertyDescription ?? "",
             ["Case.TrialDate"] = FormatReadableDate(c.TrialDate),
             ["Case.TrialEndDate"] = FormatReadableDate(c.TrialEndDate),
             ["Workflow.NextAction"] = c.NextAction ?? "",
@@ -121,7 +181,7 @@ public static partial class DocumentGenerationEngine
             ["Court.Judge"] = c.Judge ?? "",
             ["Court.Division"] = c.Division ?? "",
             ["AssignedAttorney"] = c.AssignedAttorney ?? "",
-            ["OpposingCounsel"] = c.OpposingCounsel ?? "",
+            ["OpposingCounsel"] = opposingCounselValue,
             ["OpposingCounselContact"] = c.OpposingCounselContact ?? "",
             ["Service.Status"] = c.ServiceStatus ?? "",
             ["Service.PerfectedDate"] = FormatReadableDate(c.ServicePerfectedDate),
@@ -145,7 +205,26 @@ public static partial class DocumentGenerationEngine
             tokens[key] = dateFieldKeys.Contains(key) ? FormatReadableDate(value) : (value ?? "");
         }
 
+        foreach (var (alias, canonical) in LegacyTokenAliases)
+        {
+            if (tokens.TryGetValue(canonical, out var value)) tokens[alias] = value;
+        }
+
         return tokens;
+    }
+
+    private static List<string> ExtractPastedDefendantLines(string? caseStyle)
+    {
+        if (string.IsNullOrWhiteSpace(caseStyle)) return [];
+        var lines = caseStyle.Replace("\r\n", "\n").Split('\n').ToList();
+        var designation = lines.FindIndex(line => string.Equals(line.Trim(), "DEFENDANTS", StringComparison.OrdinalIgnoreCase));
+        if (designation < 1) return [];
+        var caseNumber = lines.FindIndex(line => line.Contains("CASE NO.", StringComparison.OrdinalIgnoreCase));
+        var start = caseNumber >= 0 ? caseNumber + 1 : Math.Max(0, designation - 1);
+        return lines.Skip(start).Take(designation - start)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
     }
 
     // Build-plan step 5 (Merge Field Catalog): a downloadable .docx listing every known field as a
@@ -198,7 +277,7 @@ public static partial class DocumentGenerationEngine
 
     public static List<string> ExtractTokens(string templateText) =>
         TokenPattern.Matches(templateText)
-            .Select(match => match.Groups[1].Value)
+            .Select(match => match.Groups[1].Value.Trim())
             .Distinct(StringComparer.Ordinal)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToList();
@@ -210,11 +289,13 @@ public static partial class DocumentGenerationEngine
     {
         var discovered = discoveredTags
             .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag.Trim())
             .Distinct(StringComparer.Ordinal)
             .OrderBy(tag => tag, StringComparer.Ordinal)
             .ToList();
         var known = GetAllTemplateTags().Select(tag => tag.Key)
             .Concat(additionalKnownTags ?? [])
+            .Concat(LegacyTokenAliases.Keys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return new MergeTagAudit
@@ -235,7 +316,7 @@ public static partial class DocumentGenerationEngine
         var missing = new SortedSet<string>(StringComparer.Ordinal);
         var result = TokenPattern.Replace(templateText, match =>
         {
-            var name = match.Groups[1].Value;
+            var name = match.Groups[1].Value.Trim();
             if (!string.IsNullOrWhiteSpace(FindTokenValue(tokens, name)))
             {
                 return FindTokenValue(tokens, name)!;
@@ -336,7 +417,7 @@ public static partial class DocumentGenerationEngine
 
         var replaced = TokenPattern.Replace(combined, match =>
         {
-            var name = match.Groups[1].Value;
+            var name = match.Groups[1].Value.Trim();
             if (!string.IsNullOrWhiteSpace(FindTokenValue(tokens, name)))
             {
                 return FindTokenValue(tokens, name)!;
@@ -361,8 +442,17 @@ public static partial class DocumentGenerationEngine
 
     private static string? FindTokenValue(IReadOnlyDictionary<string, string> tokens, string name)
     {
+        name = name.Trim();
         if (tokens.TryGetValue(name, out var exact)) return exact;
-        return tokens.FirstOrDefault(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+        var insensitive = tokens.FirstOrDefault(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(insensitive.Key)) return insensitive.Value;
+        if (LegacyTokenAliases.TryGetValue(name, out var canonical))
+        {
+            if (tokens.TryGetValue(canonical, out var aliased)) return aliased;
+            return tokens.FirstOrDefault(pair => string.Equals(pair.Key, canonical, StringComparison.OrdinalIgnoreCase)).Value;
+        }
+
+        return null;
     }
 
     // Body + every header/footer part - anywhere text (and therefore a token) can live in a docx.
@@ -381,6 +471,6 @@ public static partial class DocumentGenerationEngine
         }
     }
 
-    [GeneratedRegex(@"\{\{([A-Za-z0-9_.]+)\}\}")]
+    [GeneratedRegex(@"\{\{([A-Za-z0-9_. -]+)\}\}")]
     private static partial Regex TokenRegex();
 }

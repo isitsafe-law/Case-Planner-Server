@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -21,7 +22,7 @@ namespace CasePlanner.Web.Server.Services;
 // include/exclude toggle - see MergeContext.
 public static partial class DocxSectionMerger
 {
-    [GeneratedRegex(@"\{\{(\w+)\}\}")]
+    [GeneratedRegex(@"\{\{([A-Za-z0-9_. -]+)\}\}")]
     private static partial Regex FieldRegex();
 
     [GeneratedRegex(@"^\{\{#(\w+)\}\}$")]
@@ -207,7 +208,7 @@ public static partial class DocxSectionMerger
 
         var replacements = matches.Select(match =>
         {
-            var rawTag = match.Groups[1].Value;
+            var rawTag = match.Groups[1].Value.Trim();
             if (context.Fields.TryGetValue(rawTag, out var value) && !string.IsNullOrWhiteSpace(value))
             {
                 return ApplyTagCase(rawTag, value);
@@ -260,7 +261,43 @@ public static partial class DocxSectionMerger
 
             text.Text = sb.ToString();
             text.Space = SpaceProcessingModeValues.Preserve;
+            if (matches.Count > 0 && context.CaseStyleFormatting is not null && matches[0].Groups[1].Value.Contains("Case.FullStyle", StringComparison.OrdinalIgnoreCase))
+            {
+                var style = context.CaseStyleFormatting;
+                var paragraphProperties = paragraph.GetFirstChild<ParagraphProperties>() ?? paragraph.PrependChild(new ParagraphProperties());
+                paragraphProperties.Justification = new Justification { Val = style.Alignment switch { "left" => JustificationValues.Left, "right" => JustificationValues.Right, _ => JustificationValues.Center } };
+                var runProperties = text.Parent?.GetFirstChild<RunProperties>() ?? text.Parent?.PrependChild(new RunProperties());
+                if (runProperties is not null)
+                {
+                    runProperties.Bold = style.Bold ? new Bold() : null;
+                    runProperties.FontSize = new FontSize { Val = (style.FontSize * 2).ToString(CultureInfo.InvariantCulture) };
+                    runProperties.RunFonts = new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" };
+                }
+            }
             runStart = runEnd;
+        }
+
+        // Word stores a line break as w:br, not a literal newline inside w:t. Expand
+        // structured case-style/legal-description values after token replacement so a
+        // multi-line value does not collapse into one paragraph in the generated document.
+        foreach (var text in paragraph.Descendants<Text>().ToList())
+        {
+            var normalized = text.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+            if (!normalized.Contains('\n', StringComparison.Ordinal) && !normalized.Contains('\t', StringComparison.Ordinal)) continue;
+            var parent = text.Parent;
+            if (parent is null) continue;
+            var parts = normalized.Split('\n');
+            for (var i = 0; i < parts.Length; i++)
+            {
+                var segments = parts[i].Split('\t');
+                for (var j = 0; j < segments.Length; j++)
+                {
+                    if (segments[j].Length > 0) text.InsertBeforeSelf(new Text(segments[j]) { Space = SpaceProcessingModeValues.Preserve });
+                    if (j < segments.Length - 1) text.InsertBeforeSelf(new TabChar());
+                }
+                if (i < parts.Length - 1) text.InsertBeforeSelf(new Break());
+            }
+            text.Remove();
         }
     }
 

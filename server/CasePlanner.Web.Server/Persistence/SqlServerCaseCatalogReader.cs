@@ -216,7 +216,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["attorney_fees_awarded"] = model.AttorneyFeesAwarded ? 1L : 0L, ["attorney_fees_amount"] = model.AttorneyFeesAmount,
         ["judge"] = Null(model.Judge), ["division"] = Null(model.Division),
         ["fap_number"] = Null(model.FapNumber), ["parcel_number"] = Null(model.ParcelNumber),
-        ["case_style"] = Null(model.CaseStyle), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
+        ["case_style"] = Null(model.CaseStyle), ["case_style_formatting_json"] = Null(model.CaseStyleFormattingJson), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
         ["case_folder_path"] = Null(model.CaseFolderPath),
         ["settlement_authorized_ceiling"] = model.SettlementAuthorizedCeiling,
         // Pre-filing sign-off/Settlement Authority final implementation, item 4: only ever written
@@ -298,7 +298,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                final_judgment_amount, disposition_type, taking_type, district,
                answer_filed, answer_filed_date,
                attorney_fees_awarded, attorney_fees_amount, judge, division,
-               fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
+               fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path, case_style_formatting_json,
                settlement_authorized_ceiling,
                COALESCE(originated_in_system, 1),
                row_version

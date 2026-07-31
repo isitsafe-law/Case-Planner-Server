@@ -1120,7 +1120,7 @@ public sealed partial class CasePlannerRepository
                    final_judgment_amount, disposition_type, taking_type, district,
                    answer_filed, answer_filed_date,
                    attorney_fees_awarded, attorney_fees_amount, judge, division,
-                   fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
+                   fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path, case_style_formatting_json,
                    settlement_authorized_ceiling,
                    COALESCE(originated_in_system, 1)
             FROM cases
@@ -1330,7 +1330,7 @@ public sealed partial class CasePlannerRepository
             "document-export"=>"document_exports","risk-offer"=>"risk_analysis_offer_log",
             "service-log"=>"service_log_entries","publication-entry"=>"publication_dates","discovery"=>"discovery_tracking",
             "opposing-attorney"=>"case_opposing_attorneys","legal-assistant"=>"case_legal_assistants",
-            "defendant"=>"case_defendants",
+            "defendant"=>"case_defendants","case-attorney"=>"case_attorney_assignments",
             _=>throw new ArgumentException("Unknown child record kind.",nameof(childKind))
         };
         await using var connection=new SqliteConnection(ConnectionString);await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText=$"SELECT case_id FROM {table} WHERE id=@id";command.Parameters.AddWithValue("@id",id);var value=await command.ExecuteScalarAsync();return value is null?null:Convert.ToInt64(value);
@@ -6923,6 +6923,7 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "fap_number", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "parcel_number", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_style", "TEXT");
+        await AddColumnIfMissingAsync(connection, "cases", "case_style_formatting_json", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "opposing_counsel_contact", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_folder_path", "TEXT");
         await AddColumnIfMissingAsync(connection, "case_defendants", "party_role", "TEXT NOT NULL DEFAULT 'Defendant'");
@@ -9615,7 +9616,7 @@ public sealed partial class CasePlannerRepository
                     final_judgment_amount, disposition_type, taking_type, district,
                     answer_filed, answer_filed_date,
                     attorney_fees_awarded, attorney_fees_amount, judge, division,
-                    fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
+                    fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path, case_style_formatting_json,
                     settlement_authorized_ceiling,
                     originated_in_system,
                     created_at, updated_at
@@ -9639,7 +9640,7 @@ public sealed partial class CasePlannerRepository
                     @final_judgment_amount, @disposition_type, @taking_type, @district,
                     @answer_filed, @answer_filed_date,
                     @attorney_fees_awarded, @attorney_fees_amount, @judge, @division,
-                    @fap_number, @parcel_number, @case_style, @opposing_counsel_contact, @case_folder_path,
+                    @fap_number, @parcel_number, @case_style, @opposing_counsel_contact, @case_folder_path, @case_style_formatting_json,
                     @settlement_authorized_ceiling,
                     @originated_in_system,
                     @created_at, @updated_at
@@ -9732,6 +9733,7 @@ public sealed partial class CasePlannerRepository
                     fap_number=@fap_number,
                     parcel_number=@parcel_number,
                     case_style=@case_style,
+                    case_style_formatting_json=@case_style_formatting_json,
                     opposing_counsel_contact=@opposing_counsel_contact,
                     case_folder_path=@case_folder_path,
                     settlement_authorized_ceiling=@settlement_authorized_ceiling,
@@ -9847,6 +9849,7 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@fap_number", DbValue(model.FapNumber));
         cmd.Parameters.AddWithValue("@parcel_number", DbValue(model.ParcelNumber));
         cmd.Parameters.AddWithValue("@case_style", DbValue(model.CaseStyle));
+        cmd.Parameters.AddWithValue("@case_style_formatting_json", DbValue(model.CaseStyleFormattingJson));
         cmd.Parameters.AddWithValue("@opposing_counsel_contact", DbValue(model.OpposingCounselContact));
         cmd.Parameters.AddWithValue("@case_folder_path", DbValue(model.CaseFolderPath));
         cmd.Parameters.AddWithValue("@settlement_authorized_ceiling", model.SettlementAuthorizedCeiling.HasValue ? model.SettlementAuthorizedCeiling.Value : DBNull.Value);

@@ -114,15 +114,16 @@ internal static class CaseRecordDataMapper
             // Manager/Administrator Dashboard Milestone 3 - appended after case_folder_path, same
             // FieldCount-guard pattern as every block above; row_version (SQL Server only) shifted
             // from ordinal 89 to 90 to make room for this column.
-            SettlementAuthorizedCeiling = reader.FieldCount > 89 ? Decimal(reader, 89) : null,
+            CaseStyleFormattingJson = reader.FieldCount > 89 ? String(reader, 89) : null,
+            SettlementAuthorizedCeiling = reader.FieldCount > 90 ? Decimal(reader, 90) : null,
             // Pre-filing sign-off/Settlement Authority final implementation, item 4 - appended after
             // settlement_authorized_ceiling, same FieldCount-guard pattern as every block above;
             // row_version (SQL Server only) shifted from ordinal 90 to 91 to make room. Missing
             // column (older queries not yet updated) defaults to true - "originated in system" is
             // the correct assumption for any case a caller doesn't explicitly know is imported.
-            OriginatedInSystem = reader.FieldCount <= 90 || Bool(reader, 90),
-            RowVersion = reader.FieldCount > 91 && !reader.IsDBNull(91)
-                ? Convert.ToBase64String((byte[])reader.GetValue(91))
+            OriginatedInSystem = reader.FieldCount <= 91 || Bool(reader, 91),
+            RowVersion = reader.FieldCount > 92 && !reader.IsDBNull(92)
+                ? Convert.ToBase64String((byte[])reader.GetValue(92))
                 : null
         };
     }

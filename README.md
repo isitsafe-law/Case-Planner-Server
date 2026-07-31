@@ -173,6 +173,8 @@ Data-quality reporting now flags orphaned or duplicate attorney assignments and 
 
 It also flags assignment names that do not match an active Staff Directory attorney, including legacy or deactivated names that need deliberate review before a future identity migration.
 
+Diagnostics findings can be exported to CSV with their definitions, suggested actions, counts, and sample case IDs for review or IT handoff.
+
 The portable Diagnostics page now displays active data-quality findings and supports refreshing them. Assignment and Service Log integrity checks are visible there alongside the existing backup, write-safety, and document-template diagnostics.
 
 Case list rows and open-case headers now show the primary attorney separately from supporting attorneys, keeping the view compact while making shared responsibility visible.

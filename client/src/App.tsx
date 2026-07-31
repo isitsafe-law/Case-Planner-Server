@@ -8833,6 +8833,19 @@ function App() {
     )
   }
 
+  function exportDataQualityCsv() {
+    if (!dataQualityReport) return
+    const escape = (value: string) => `"${value.replaceAll('"', '""')}"`
+    const rows = [['Data Quality Findings'], [`Generated: ${dataQualityReport.generatedAt}`], [], ['Key', 'Severity', 'Finding', 'Count', 'Additional cases', 'Definition', 'Suggested action', 'Sample case IDs'], ...dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => [issue.key, issue.severity, issue.label, String(issue.count), String(issue.additionalCaseCount), issue.definition, issue.suggestedAction, issue.sampleCaseIds.join('; ')])]
+    const csv = rows.map((row) => row.map(escape).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `Case_Planner_Data_Quality_${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function runPortableValidation() {
     try {
       setErrorMessage('')
@@ -11415,7 +11428,7 @@ function App() {
               ) : <p>Diagnostics are loading.</p>}
               {dataQualityReport && (
                 <div className="settings-subpanel top-gap-small">
-                  <div className="panel-header"><div><h3>Data Quality Findings</h3><p className="helper-text">Review-only checks for migration and document-readiness issues. No finding changes data automatically.</p></div><button onClick={() => void api<DataQualityReport>('/api/data-quality').then(setDataQualityReport)}>Refresh Findings</button></div>
+                  <div className="panel-header"><div><h3>Data Quality Findings</h3><p className="helper-text">Review-only checks for migration and document-readiness issues. No finding changes data automatically.</p></div><div className="button-row compact-actions"><button onClick={() => void api<DataQualityReport>('/api/data-quality').then(setDataQualityReport)}>Refresh Findings</button><button onClick={exportDataQualityCsv} disabled={!dataQualityReport.issues.some((issue) => issue.count > 0)}>Export CSV</button></div></div>
                   {dataQualityReport.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text top-gap-small">No current findings.</p> : (
                     <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Finding</th><th>Severity</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>
                       {dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td>{issue.label}</td><td>{issue.severity}</td><td>{issue.count}{issue.additionalCaseCount > 0 ? ` (+${issue.additionalCaseCount} more)` : ''}</td><td>{issue.suggestedAction}</td></tr>)}

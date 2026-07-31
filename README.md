@@ -153,6 +153,8 @@ On startup, legacy nonblank `cases.trial_date` values are reconciled into a Jury
 
 The current SQLite model retains the legacy primary assigned-attorney projection and explicit case legal-assistant rows while the additive attorney-assignment relation is adopted. The canonical Service Log party reference is optional; historical free-text service party names are preserved and no destructive consolidation is performed automatically.
 
+Document generation now uses ordered, de-duplicated canonical case defendants for `DefendantNames` and the basic Arkansas State Highway Commission case style when those party rows exist. Older matters without canonical defendant rows continue using the legacy landowner/owner fallback.
+
 Service Log now has an additive nullable reference to `case_defendants`. New entries can select a canonical case party while preserving the party-name snapshot; older free-text entries are not automatically rewritten. The SQL Server runtime store now supports the same bridge, with deployment validation still deferred.
 
 Case attorney assignments now have an additive SQLite/API foundation with `Primary` and `Supporting` roles and an Edit Case control. The legacy `cases.assigned_attorney` field remains the compatibility projection for dashboards, calendars, permissions, and exports until those consumers are migrated together.

@@ -9,6 +9,7 @@ This is the portable-first contract for document generation. The same cases shou
 | Required input | Required runtime input is blank | Generation returns a clear validation error; no output or history row is created |
 | Optional input | Optional input is blank | Draft generates successfully |
 | Missing case value | A merge field has no source value | Draft generates with a missing marker and reports the field |
+| Canonical parties | A case has multiple canonical defendants | Defendant names and the basic case style use ordered, de-duplicated party names |
 | Unknown tag | Template contains an unregistered merge tag | Draft does not silently stop; the missing tag is reported |
 | Completeness audit | `GET /api/document-platform/templates/{key}/completeness` | Active template tags are classified as canonical, declared runtime inputs, or unknown before generation |
 | Legacy tag capitalization | Generate a template containing `{{COUNTY}}` when the canonical tag is `County` | The value resolves normally; no false missing field is recorded |

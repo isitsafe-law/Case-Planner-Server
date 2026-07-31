@@ -73,9 +73,18 @@ public static partial class DocumentGenerationEngine
         new() { Key = "ChiefLegalCounselName", Label = "Chief Legal Counsel Name", Category = "Organization", Description = "Chief legal counsel name from document defaults." }
     ];
 
-    public static Dictionary<string, string> BuildTokens(CaseRecord c, OrgDefaults org, Dictionary<string, string> manualInputs, IEnumerable<DocumentTemplateField>? manualFieldDefs = null)
+    public static Dictionary<string, string> BuildTokens(CaseRecord c, OrgDefaults org, Dictionary<string, string> manualInputs, IEnumerable<DocumentTemplateField>? manualFieldDefs = null, IEnumerable<CaseDefendantRecord>? canonicalDefendants = null)
     {
-        var defendantNames = !string.IsNullOrWhiteSpace(c.Landowner) ? c.Landowner! : (c.Owner ?? "");
+        var canonicalNames = canonicalDefendants?
+            .Where(defendant => !string.IsNullOrWhiteSpace(defendant.Name))
+            .OrderBy(defendant => defendant.SortOrder)
+            .ThenBy(defendant => defendant.Id)
+            .Select(defendant => defendant.Name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        var defendantNames = canonicalNames.Count > 0
+            ? string.Join("; ", canonicalNames)
+            : (!string.IsNullOrWhiteSpace(c.Landowner) ? c.Landowner! : (c.Owner ?? ""));
         var fullStyle = string.IsNullOrWhiteSpace(c.CaseStyle)
             ? (string.IsNullOrWhiteSpace(defendantNames) ? "" : $"Arkansas State Highway Commission v. {defendantNames}")
             : c.CaseStyle!;

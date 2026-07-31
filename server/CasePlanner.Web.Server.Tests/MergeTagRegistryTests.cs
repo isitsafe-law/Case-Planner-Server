@@ -73,4 +73,23 @@ public sealed class MergeTagRegistryTests
         Assert.Equal("Pulaski", result);
         Assert.Empty(missing);
     }
+
+    [Fact]
+    public void CanonicalDefendantsDriveMultiPartyStyleAndPreserveLegacyFallback()
+    {
+        var caseRecord = new CaseRecord { Landowner = "Legacy Landowner" };
+        var org = new OrgDefaults();
+        var defendants = new[]
+        {
+            new CaseDefendantRecord { Id = 2, Name = "Second Heir", SortOrder = 1 },
+            new CaseDefendantRecord { Id = 1, Name = "Primary Heir", SortOrder = 0 },
+            new CaseDefendantRecord { Id = 3, Name = "Second Heir", SortOrder = 2 },
+        };
+
+        var tokens = DocumentGenerationEngine.BuildTokens(caseRecord, org, new Dictionary<string, string>(), canonicalDefendants: defendants);
+
+        Assert.Equal("Primary Heir; Second Heir", tokens["DefendantNames"]);
+        Assert.Equal("Arkansas State Highway Commission v. Primary Heir; Second Heir", tokens["Case.FullStyle"]);
+        Assert.Equal("Legacy Landowner", DocumentGenerationEngine.BuildTokens(caseRecord, org, new Dictionary<string, string>())["DefendantNames"]);
+    }
 }

@@ -772,7 +772,8 @@ public sealed partial class CasePlannerRepository
             var dashboardDeadlines=(await GetDeadlinesAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
             var dashboardHearings=(await GetHearingsAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
             var dashboardPostures=(await GetDiscoveryPosturesAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
-            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters);
+            var actionabilityPolicy = await GetDashboardActionabilityPolicyAsync();
+            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters,policy: actionabilityPolicy);
         }
 #pragma warning disable CS0162
         bool Allowed(long caseId) => allowedCaseIds is null || allowedCaseIds.Contains(caseId);
@@ -10022,7 +10023,7 @@ public sealed partial class CasePlannerRepository
             ScopeDefinition = "Open includes Pipeline, Filed / Service Pending, Active Litigation, Settlement Pending, and Trial Preparation; Triage and Resolved / Closed are excluded.",
         };
 
-        async Task<DataQualityIssue> Issue(string key, string severity, string label, string definition, string action, string countSql, string sampleSql)
+        async Task<DataQualityIssue> Issue(string key, string area, string severity, string label, string definition, string action, string countSql, string sampleSql)
         {
             await using var countCommand = connection.CreateCommand();
             countCommand.CommandText = countSql;
@@ -10032,81 +10033,81 @@ public sealed partial class CasePlannerRepository
             command.CommandText = sampleSql;
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync()) samples.Add(reader.GetInt64(0));
-            return new DataQualityIssue { Key = key, Severity = severity, Label = label, Count = count, Definition = definition, SuggestedAction = action, SampleCaseIds = samples, AdditionalCaseCount = Math.Max(0, count - samples.Count) };
+            return new DataQualityIssue { Key = key, Area = area, Severity = severity, Label = label, Count = count, Definition = definition, SuggestedAction = action, SampleCaseIds = samples, AdditionalCaseCount = Math.Max(0, count - samples.Count) };
         }
 
         report.Issues.Add(await Issue(
-            "pipeline-unassigned", "Warning", "Pipeline cases without a current holder",
+            "pipeline-unassigned", "Workflow", "Warning", "Pipeline cases without a current holder",
             "Open Pipeline cases whose current_holder is blank.",
             "Assign a legal assistant, attorney, counsel reviewer, or filing staff holder.",
             "SELECT COUNT(*) FROM cases WHERE COALESCE(case_status,'Pipeline')='Pipeline' AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(current_holder,'')='';",
             "SELECT id FROM cases WHERE COALESCE(case_status,'Pipeline')='Pipeline' AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(current_holder,'')='' ORDER BY id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "missing-case-style", "Info", "Open cases without a case style",
+            "missing-case-style", "Case records", "Info", "Open cases without a case style",
             "Open cases with no persisted CaseStyle value.",
             "Review party names and generate or enter the case style.",
             "SELECT COUNT(*) FROM cases WHERE COALESCE(case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(case_style,'')='';",
             "SELECT id FROM cases WHERE COALESCE(case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND status NOT IN ('Closed','Complete','Triage') AND COALESCE(case_style,'')='' ORDER BY id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "missing-parties", "Warning", "Open cases without party rows",
+            "missing-parties", "Case records", "Warning", "Open cases without party rows",
             "Open cases with no case_defendants rows and no legacy owner/landowner value.",
             "Add the known defendants/interest holders before generating captions or pleadings.",
             "SELECT COUNT(*) FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='';",
             "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='' ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "jury-trial-event-missing", "Info", "Cases with a jury-trial date but no jury-trial event",
+            "jury-trial-event-missing", "Events", "Info", "Cases with a jury-trial date but no jury-trial event",
             "Open cases with the authoritative case-level trial_date but no matching Jury Trial event in the hearings catalog.",
             "Add or reconcile the calendar event if the matter should appear in the shared calendar.",
             "SELECT COUNT(*) FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(c.trial_date,'')<>'' AND NOT EXISTS (SELECT 1 FROM hearings h WHERE h.case_id=c.id AND h.event_type='Jury Trial');",
             "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(c.trial_date,'')<>'' AND NOT EXISTS (SELECT 1 FROM hearings h WHERE h.case_id=c.id AND h.event_type='Jury Trial') ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "jury-trial-event-no-case-date", "Info", "Jury-trial events without a case-level trial date",
+            "jury-trial-event-no-case-date", "Events", "Info", "Jury-trial events without a case-level trial date",
             "Open Jury Trial events that have no authoritative cases.trial_date value.",
             "Review the event and enter the case-level jury-trial date when it is actually set; the case-level date remains authoritative.",
             "SELECT COUNT(*) FROM hearings h JOIN cases c ON c.id=h.case_id WHERE h.event_type='Jury Trial' AND COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(h.hearing_date,'')<>'' AND COALESCE(c.trial_date,'')='';",
             "SELECT c.id FROM hearings h JOIN cases c ON c.id=h.case_id WHERE h.event_type='Jury Trial' AND COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND COALESCE(h.hearing_date,'')<>'' AND COALESCE(c.trial_date,'')='' ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "jury-trial-conflict", "Warning", "Conflicting jury-trial dates",
+            "jury-trial-conflict", "Events", "Warning", "Conflicting jury-trial dates",
             "A case-level trial_date differs from its Jury Trial event date.",
             "Choose the controlling date and update the other representation.",
             "SELECT COUNT(*) FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10);",
             "SELECT c.id FROM cases c JOIN hearings h ON h.case_id=c.id AND h.event_type='Jury Trial' WHERE COALESCE(c.trial_date,'')<>'' AND COALESCE(h.hearing_date,'')<>'' AND substr(c.trial_date,1,10)<>substr(h.hearing_date,1,10) ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "attorney-assignment-orphan", "Warning", "Attorney assignments without a case",
+            "attorney-assignment-orphan", "Assignments", "Warning", "Attorney assignments without a case",
             "Attorney-assignment rows whose case_id does not resolve to an existing case.",
             "Review the assignment row before any provider migration; do not backfill or delete it automatically.",
             "SELECT COUNT(*) FROM case_attorney_assignments a LEFT JOIN cases c ON c.id=a.case_id WHERE c.id IS NULL;",
             "SELECT a.case_id FROM case_attorney_assignments a LEFT JOIN cases c ON c.id=a.case_id WHERE c.id IS NULL ORDER BY a.case_id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "attorney-assignment-duplicate", "Info", "Duplicate attorney assignments on a case",
+            "attorney-assignment-duplicate", "Assignments", "Info", "Duplicate attorney assignments on a case",
             "A case has more than one active assignment row for the same normalized attorney name.",
             "Keep the intended role/order and remove only the duplicate after review.",
             "SELECT COUNT(*) FROM (SELECT case_id, lower(trim(name)) FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1);",
             "SELECT case_id FROM case_attorney_assignments GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1 ORDER BY case_id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "attorney-assignment-primary-missing", "Warning", "Cases missing a Primary assignment row",
+            "attorney-assignment-primary-missing", "Assignments", "Warning", "Cases missing a Primary assignment row",
             "Cases with a nonblank legacy assigned-attorney value but no matching Primary assignment row.",
             "Review the case and add or reconcile its Primary assignment before relying on assignment-aware reports.",
             "SELECT COUNT(*) FROM cases c WHERE COALESCE(trim(c.assigned_attorney),'')<>'' AND NOT EXISTS (SELECT 1 FROM case_attorney_assignments a WHERE a.case_id=c.id AND lower(trim(a.role))='primary');",
             "SELECT c.id FROM cases c WHERE COALESCE(trim(c.assigned_attorney),'')<>'' AND NOT EXISTS (SELECT 1 FROM case_attorney_assignments a WHERE a.case_id=c.id AND lower(trim(a.role))='primary') ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "attorney-assignment-not-in-directory", "Warning", "Attorney assignments not in the active Staff Directory",
+            "attorney-assignment-not-in-directory", "Assignments", "Warning", "Attorney assignments not in the active Staff Directory",
             "Assignment rows whose name does not match an active attorneys directory record.",
             "Confirm the person, update the assignment to the current directory name, or preserve it as a reviewed legacy assignment.",
             "SELECT COUNT(*) FROM case_attorney_assignments a LEFT JOIN attorneys directory ON lower(trim(directory.name))=lower(trim(a.name)) AND directory.is_active=1 WHERE directory.id IS NULL;",
             "SELECT a.case_id FROM case_attorney_assignments a LEFT JOIN attorneys directory ON lower(trim(directory.name))=lower(trim(a.name)) AND directory.is_active=1 WHERE directory.id IS NULL ORDER BY a.case_id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
-            "service-log-party-reference-mismatch", "Warning", "Service entries with invalid canonical party references",
+            "service-log-party-reference-mismatch", "Service", "Warning", "Service entries with invalid canonical party references",
             "Service Log rows whose optional case_defendant_id is missing or belongs to another case.",
             "Review the canonical party link; preserve the party-name snapshot when the historical entry cannot be safely matched.",
             "SELECT COUNT(*) FROM service_log_entries s LEFT JOIN case_defendants d ON d.id=s.case_defendant_id AND d.case_id=s.case_id WHERE s.case_defendant_id IS NOT NULL AND d.id IS NULL;",
@@ -10114,7 +10115,7 @@ public sealed partial class CasePlannerRepository
 
         var templateIssue = new DataQualityIssue
         {
-            Key = "missing-template-files", Severity = "Critical", Label = "Active document templates with missing files",
+            Key = "missing-template-files", Area = "Documents", Severity = "Critical", Label = "Active document templates with missing files",
             Definition = "Active document template versions whose stored file path does not resolve on this machine.",
             SuggestedAction = "Restore the template file, move the package with its templates folder, or re-upload the template.",
         };
@@ -10131,14 +10132,14 @@ public sealed partial class CasePlannerRepository
 
         var invalidTemplateIssue = new DataQualityIssue
         {
-            Key = "invalid-document-template-files", Severity = "Critical", Label = "Active document templates that cannot be opened",
+            Key = "invalid-document-template-files", Area = "Documents", Severity = "Critical", Label = "Active document templates that cannot be opened",
             Definition = "Active document template files that exist but cannot be parsed as valid DOCX packages.",
             SuggestedAction = "Restore the original DOCX, replace the file, or upload a new valid version before generating documents.",
         };
 
         var unknownTagIssue = new DataQualityIssue
         {
-            Key = "unknown-document-template-tags", Severity = "Warning", Label = "Active document templates with unknown merge tags",
+            Key = "unknown-document-template-tags", Area = "Documents", Severity = "Warning", Label = "Active document templates with unknown merge tags",
             Definition = "Active document templates containing merge tags that are neither in the canonical registry nor declared runtime inputs.",
             SuggestedAction = "Open the template completeness report and replace the tag with a canonical field or declare the intended runtime input.",
         };
@@ -10209,6 +10210,40 @@ public sealed partial class CasePlannerRepository
             };
             await SetAppSettingAsync(connection, tx, "prefiling_review_settings_v1", JsonSerializer.Serialize(settings));
             return settings;
+        });
+    }
+
+    public async Task<DashboardActionabilityPolicy> GetDashboardActionabilityPolicyAsync()
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var json = await GetAppSettingAsync(connection, "dashboard_actionability_policy_v1");
+        if (string.IsNullOrWhiteSpace(json)) return new DashboardActionabilityPolicy();
+        try { return JsonSerializer.Deserialize<DashboardActionabilityPolicy>(json) ?? new DashboardActionabilityPolicy(); }
+        catch (JsonException) { return new DashboardActionabilityPolicy(); }
+    }
+
+    public async Task<DashboardActionabilityPolicy> SaveDashboardActionabilityPolicyAsync(SaveDashboardActionabilityPolicyRequest request)
+    {
+        if (request.MomentumStaleDays < 1 || request.PipelineStalledDays < 1 || request.DiscoveryCutoffLookaheadDays < 1
+            || request.TrialPreparationLookaheadDays < 1 || request.TrialWatchLookaheadDays < 1)
+            throw new ArgumentException("Actionability thresholds must be at least 1 day.");
+        if (request.MomentumStaleDays > 365 || request.PipelineStalledDays > 365 || request.DiscoveryCutoffLookaheadDays > 365
+            || request.TrialPreparationLookaheadDays > 365 || request.TrialWatchLookaheadDays > 730)
+            throw new ArgumentException("Actionability thresholds exceed the supported range.");
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var policy = new DashboardActionabilityPolicy
+            {
+                MomentumStaleDays = request.MomentumStaleDays,
+                PipelineStalledDays = request.PipelineStalledDays,
+                DiscoveryCutoffLookaheadDays = request.DiscoveryCutoffLookaheadDays,
+                TrialPreparationLookaheadDays = request.TrialPreparationLookaheadDays,
+                TrialWatchLookaheadDays = request.TrialWatchLookaheadDays,
+                UpdatedAt = DateTime.UtcNow.ToString("O"),
+            };
+            await SetAppSettingAsync(connection, tx, "dashboard_actionability_policy_v1", JsonSerializer.Serialize(policy));
+            return policy;
         });
     }
 

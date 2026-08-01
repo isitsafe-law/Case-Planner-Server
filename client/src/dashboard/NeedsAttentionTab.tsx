@@ -7,8 +7,8 @@ import { formatCurrencyOrDash } from './dashboardAggregation'
 import { computePreFilingStallInfo } from './preFilingStallDetection'
 import type { PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 
-export const DEFAULT_ACTIVITY_THRESHOLD_DAYS = 14
-export const DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS = 7
+export const DEFAULT_ACTIVITY_THRESHOLD_DAYS = 60
+export const DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS = 60
 
 // The four rule "types", in the fixed group order the combined list is sorted by (see
 // buildNeedsAttentionRows's own sort-order comment below). Three other candidate rules from the
@@ -242,33 +242,19 @@ export function NeedsAttentionTab({
 }) {
   const [activityThresholdDays, setActivityThresholdDays] = useState(DEFAULT_ACTIVITY_THRESHOLD_DAYS)
   const [preFilingStallThresholdDays, setPreFilingStallThresholdDays] = useState(DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS)
-  const [settingsMessage, setSettingsMessage] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    void fetch('/api/prefiling-review/settings')
-      .then((response) => response.ok ? response.json() as Promise<{ defaultStagnationDays?: number }> : Promise.reject(new Error('Unable to load saved dashboard settings.')))
+    void fetch('/api/dashboard/actionability-policy')
+      .then((response) => response.ok ? response.json() as Promise<{ momentumStaleDays?: number; pipelineStalledDays?: number }> : Promise.reject(new Error('Unable to load saved actionability policy.')))
       .then((settings) => {
-        if (!cancelled && Number.isFinite(settings.defaultStagnationDays)) setPreFilingStallThresholdDays(Math.max(1, settings.defaultStagnationDays || DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS))
+        if (cancelled) return
+        if (Number.isFinite(settings.momentumStaleDays)) setActivityThresholdDays(Math.max(1, settings.momentumStaleDays || DEFAULT_ACTIVITY_THRESHOLD_DAYS))
+        if (Number.isFinite(settings.pipelineStalledDays)) setPreFilingStallThresholdDays(Math.max(1, settings.pipelineStalledDays || DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS))
       })
-      .catch(() => { /* local preview may be running against an older server */ })
+      .catch(() => { /* defaults remain usable if an older server is running */ })
     return () => { cancelled = true }
   }, [])
-
-  async function saveDashboardSettings() {
-    setSettingsMessage('')
-    try {
-      const response = await fetch('/api/prefiling-review/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ defaultStagnationDays: preFilingStallThresholdDays, caseWeight: 1, stageWeight: 1, eventWeight: 1, urgencyWeight: 1 }),
-      })
-      if (!response.ok) throw new Error('Unable to save dashboard settings.')
-      setSettingsMessage('Saved division-wide pre-filing threshold.')
-    } catch (error) {
-      setSettingsMessage(error instanceof Error ? error.message : 'Unable to save dashboard settings.')
-    }
-  }
 
   const rows = useMemo(
     () => buildNeedsAttentionRows(
@@ -281,31 +267,12 @@ export function NeedsAttentionTab({
   return (
     <div>
       <div className="inline-quick-form" style={{ marginBottom: '0.85rem' }}>
-        <label>
-          <span>Pre-filing stall threshold (days)</span>
-          <input
-            type="number"
-            min={1}
-            value={preFilingStallThresholdDays}
-            onChange={(event) => setPreFilingStallThresholdDays(Math.max(1, Number(event.target.value) || 1))}
-          />
-        </label>
-        <label>
-          <span>No-activity threshold (days)</span>
-          <input
-            type="number"
-            min={1}
-            value={activityThresholdDays}
-            onChange={(event) => setActivityThresholdDays(Math.max(1, Number(event.target.value) || 1))}
-          />
-        </label>
-        <Btn onClick={() => void saveDashboardSettings()}>Save threshold</Btn>
+        <span className="helper-text">Shared policy: pipeline stall after {preFilingStallThresholdDays} days · no meaningful activity after {activityThresholdDays} days</span>
         <Btn onClick={() => exportCsv(rows)} disabled={rows.length === 0}>Export CSV</Btn>
       </div>
       <p className="helper-text" style={{ marginBottom: '0.6rem' }}>
-        The pre-filing threshold is saved as the division-wide default. The activity threshold remains a view-only setting.
+        These values come from Settings → Dashboard Actionability. Change the shared defaults there; overdue legal and operational conditions remain visible.
       </p>
-      {settingsMessage && <p className="helper-text" role="status">{settingsMessage}</p>}
 
       {rows.length === 0 ? (
         <EmptyState title="Nothing needs attention right now." description="No case currently trips the pre-filing stall, service, activity, or fee-shift checks below the thresholds above." />

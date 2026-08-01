@@ -757,6 +757,20 @@ public sealed class SavePrefilingReviewSettingsRequest : PrefilingReviewSettings
 {
 }
 
+public class DashboardActionabilityPolicy
+{
+    public int MomentumStaleDays { get; set; } = 60;
+    public int PipelineStalledDays { get; set; } = 60;
+    public int DiscoveryCutoffLookaheadDays { get; set; } = 45;
+    public int TrialPreparationLookaheadDays { get; set; } = 60;
+    public int TrialWatchLookaheadDays { get; set; } = 180;
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class SaveDashboardActionabilityPolicyRequest : DashboardActionabilityPolicy
+{
+}
+
 public sealed class UpcomingWorkItemRecord
 {
     public string Key { get; set; } = "";
@@ -1029,6 +1043,7 @@ public sealed class ActionQueueItem
     // 1 (Immediate) - 4 (Planned Work). Lower is more urgent.
     public int PriorityLevel { get; set; }
     public string Reason { get; set; } = "";
+    public string? TriggerThreshold { get; set; }
     public string PostureSummary { get; set; } = "";
     public string RecommendedNextAction { get; set; } = "";
     public string? ReviewDate { get; set; }
@@ -1660,6 +1675,7 @@ public sealed class DiagnosticsSnapshot
 public sealed class DataQualityIssue
 {
     public string Key { get; set; } = "";
+    public string Area { get; set; } = "";
     public string Severity { get; set; } = "Info";
     public string Label { get; set; } = "";
     public int Count { get; set; }

@@ -82,6 +82,10 @@ Document-generation diagnostics also expose `/api/document-platform/templates/{k
 An actual restore reports the selected backup and the automatically created pre-restore safety backup. Keep that safety backup until the restored database has been reviewed.
 
 Manager data-quality findings now distinguish the total affected-case count from the small sample of direct case links shown in the UI. This keeps the portable report actionable without loading every affected case into the dashboard at once.
+Findings are also classified by review area (Workflow, Case records, Events, Assignments, Service, or Documents). The manager dashboard supports area and severity filters, and CSV exports include the classification so follow-up can be routed without changing records automatically.
+
+The current dashboard actionability contract is documented in `docs/dashboard-actionability-policy.md`. The SQLite preview now provides Settings → Dashboard Actionability for shared timing defaults and displays a clear “Why this is here” explanation on Action Queue rows. Attorney-specific overrides remain deferred until Entra identity is available; fixed overdue and access/lifecycle rules remain non-suppressible.
+Manager Needs Attention uses the same stored momentum and pipeline-stall defaults, avoiding separate hidden thresholds.
 
 The report also flags incomplete jury-trial synchronization without changing dates automatically. `cases.trial_date` remains authoritative; the hearings catalog supplies shared calendar events until a future source-of-truth migration is deliberately approved.
 

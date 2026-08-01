@@ -47,7 +47,7 @@ type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'actionability' | 'developer'
 
 export type CaseRecord = {
   id: number
@@ -807,6 +807,7 @@ type DocumentTemplateAdminSummary = {
 
 type DataQualityIssue = {
   key: string
+  area: string
   severity: string
   label: string
   count: number
@@ -820,6 +821,14 @@ type DataQualityReport = {
   generatedAt: string
   scopeDefinition: string
   issues: DataQualityIssue[]
+}
+type DashboardActionabilityPolicy = {
+  momentumStaleDays: number
+  pipelineStalledDays: number
+  discoveryCutoffLookaheadDays: number
+  trialPreparationLookaheadDays: number
+  trialWatchLookaheadDays: number
+  updatedAt?: string | null
 }
 type DocumentTemplateCompletenessReport = {
   templateKey: string
@@ -1572,6 +1581,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'staff', label: 'Attorneys & Staff' },
   { key: 'countyReference', label: 'County & Publication Reference' },
   { key: 'notifications', label: 'Notifications' },
+  { key: 'actionability', label: 'Dashboard Actionability' },
   { key: 'about', label: 'About / IT Notes' },
   // Dev-only - strip this section (and the Developer settings category below) before a real release.
   { key: 'developer', label: 'Developer' },
@@ -1583,7 +1593,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Work Planning', sections: ['checklistTemplates', 'deadlineTemplates'] },
   { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
-  { label: 'Staff', sections: ['staff', 'notifications'] },
+  { label: 'Staff', sections: ['staff', 'notifications', 'actionability'] },
   { label: 'County & Publication Reference', sections: ['countyReference'] },
   { label: 'Diagnostics and Help', sections: ['diagnostics', 'about'] },
   // Dev-only category - strip before a real release.
@@ -2495,6 +2505,8 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(defaultNotificationPreferences)
   const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false)
+  const [actionabilityPolicy, setActionabilityPolicy] = useState<DashboardActionabilityPolicy>({ momentumStaleDays: 60, pipelineStalledDays: 60, discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })
+  const [actionabilityPolicySaving, setActionabilityPolicySaving] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmOptions | null>(null)
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null)
   // "Email me" master checkbox (Notifications settings panel) - client-only convenience, not a
@@ -3601,6 +3613,7 @@ function App() {
   // panel, not something that needs to stay fresh in the background.
   useEffect(() => {
     if (settingsSection === 'notifications') void loadNotificationPreferences()
+    if (settingsSection === 'actionability') void loadActionabilityPolicy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsSection])
 
@@ -3664,6 +3677,26 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save notification preferences.')
     } finally {
       setNotificationPreferencesSaving(false)
+    }
+  }
+
+  async function loadActionabilityPolicy() {
+    try {
+      setActionabilityPolicy(await api<DashboardActionabilityPolicy>('/api/dashboard/actionability-policy'))
+    } catch {
+      // Defaults remain visible when the policy endpoint is unavailable.
+    }
+  }
+
+  async function saveActionabilityPolicy() {
+    setActionabilityPolicySaving(true)
+    try {
+      setActionabilityPolicy(await api<DashboardActionabilityPolicy>('/api/dashboard/actionability-policy', { method: 'PUT', body: JSON.stringify(actionabilityPolicy) }))
+      setErrorMessage('')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save dashboard actionability policy.')
+    } finally {
+      setActionabilityPolicySaving(false)
     }
   }
 
@@ -8896,7 +8929,7 @@ function App() {
   function exportDataQualityCsv() {
     if (!dataQualityReport) return
     const escape = (value: string) => `"${value.replaceAll('"', '""')}"`
-    const rows = [['Data Quality Findings'], [`Generated: ${dataQualityReport.generatedAt}`], [], ['Key', 'Severity', 'Finding', 'Count', 'Additional cases', 'Definition', 'Suggested action', 'Sample case IDs'], ...dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => [issue.key, issue.severity, issue.label, String(issue.count), String(issue.additionalCaseCount), issue.definition, issue.suggestedAction, issue.sampleCaseIds.join('; ')])]
+    const rows = [['Data Quality Findings'], [`Generated: ${dataQualityReport.generatedAt}`], [], ['Key', 'Area', 'Severity', 'Finding', 'Count', 'Additional cases', 'Definition', 'Suggested action', 'Sample case IDs'], ...dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => [issue.key, issue.area, issue.severity, issue.label, String(issue.count), String(issue.additionalCaseCount), issue.definition, issue.suggestedAction, issue.sampleCaseIds.join('; ')])]
     const csv = rows.map((row) => row.map(escape).join(',')).join('\r\n')
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
@@ -11498,8 +11531,8 @@ function App() {
                 <div className="settings-subpanel top-gap-small">
                   <div className="panel-header"><div><h3>Data Quality Findings</h3><p className="helper-text">Review-only checks for migration and document-readiness issues. No finding changes data automatically.</p></div><div className="button-row compact-actions"><button onClick={() => void api<DataQualityReport>('/api/data-quality').then(setDataQualityReport)}>Refresh Findings</button><button onClick={exportDataQualityCsv} disabled={!dataQualityReport.issues.some((issue) => issue.count > 0)}>Export CSV</button></div></div>
                   {dataQualityReport.issues.filter((issue) => issue.count > 0).length === 0 ? <p className="helper-text top-gap-small">No current findings.</p> : (
-                    <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Finding</th><th>Severity</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>
-                      {dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td>{issue.label}</td><td>{issue.severity}</td><td>{issue.count}{issue.additionalCaseCount > 0 ? ` (+${issue.additionalCaseCount} more)` : ''}</td><td>{issue.suggestedAction}</td></tr>)}
+                    <div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Area</th><th>Finding</th><th>Severity</th><th>Count</th><th>Suggested action</th></tr></thead><tbody>
+                      {dataQualityReport.issues.filter((issue) => issue.count > 0).map((issue) => <tr key={issue.key}><td>{issue.area}</td><td><strong>{issue.label}</strong><div className="ui-sub">{issue.definition}</div></td><td>{issue.severity}</td><td>{issue.count}{issue.additionalCaseCount > 0 ? ` (+${issue.additionalCaseCount} more)` : ''}</td><td>{issue.suggestedAction}</td></tr>)}
                     </tbody></table></div>
                   )}
                 </div>
@@ -12382,6 +12415,24 @@ function App() {
                   {notificationPreferencesSaving ? 'Saving…' : 'Save'}
                 </button>
               </div>
+            </Panel>
+          )}
+
+          {settingsSection === 'actionability' && (
+            <Panel title="Dashboard Actionability">
+              <p className="helper-text">These are shared SQLite-preview defaults for when dashboard signals appear. The settings change attention timing, not the underlying legal or operational dates. Overdue court, service, and hard-deadline items remain visible.</p>
+              <div className="form-grid top-gap-small">
+                <label><span>Stale review after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.momentumStaleDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, momentumStaleDays: Number(event.target.value) }))} /><small>Default: 60. Applies when there is no waiting follow-up date.</small></label>
+                <label><span>Pipeline stall after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.pipelineStalledDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, pipelineStalledDays: Number(event.target.value) }))} /><small>Default: 60. Used for pipeline monitoring flags.</small></label>
+                <label><span>Discovery cutoff lookahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.discoveryCutoffLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, discoveryCutoffLookaheadDays: Number(event.target.value) }))} /><small>Default: 45. Past cutoffs remain urgent.</small></label>
+                <label><span>Trial preparation lookahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.trialPreparationLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialPreparationLookaheadDays: Number(event.target.value) }))} /><small>Default: 60. Does not change the jury trial date.</small></label>
+                <label><span>Trial Watch lookahead (days)</span><input type="number" min={1} max={730} value={actionabilityPolicy.trialWatchLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialWatchLookaheadDays: Number(event.target.value) }))} /><small>Default: 180. Manually marked Trial Track remains eligible.</small></label>
+              </div>
+              <div className="button-row compact-actions top-gap-small">
+                <button className="primary" disabled={actionabilityPolicySaving} onClick={() => void saveActionabilityPolicy()}>{actionabilityPolicySaving ? 'Saving…' : 'Save defaults'}</button>
+                <button disabled={actionabilityPolicySaving} onClick={() => setActionabilityPolicy({ momentumStaleDays: 60, pipelineStalledDays: 60, discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })}>Reset form</button>
+              </div>
+              <p className="helper-text top-gap-small">Attorney-specific preferences will be layered on after Entra identity is enabled. Until then, these are shared local defaults.</p>
             </Panel>
           )}
 

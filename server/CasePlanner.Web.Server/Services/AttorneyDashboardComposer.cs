@@ -9,9 +9,10 @@ public static class AttorneyDashboardComposer
     public static AttorneyDashboardResponse Compose(
         IEnumerable<CaseRecord> caseSource,IEnumerable<DeadlineItem> deadlineSource,
         IEnumerable<HearingRecord> hearingSource,IEnumerable<DiscoveryPosture> postureSource,
-        AttorneyDashboardFilters filters,DateOnly? asOf=null)
+        AttorneyDashboardFilters filters,DateOnly? asOf=null,DashboardActionabilityPolicy? policy=null)
     {
         var today=asOf??DateOnly.FromDateTime(DateTime.Today);
+        policy ??= new DashboardActionabilityPolicy();
         // Database collations differ (SQLite binary ordering versus SQL Server's configured
         // collation), so establish a provider-neutral order before building UI sections.
         var allCases=caseSource.OrderBy(c=>c.CaseName,StringComparer.OrdinalIgnoreCase).ThenBy(c=>c.Id).ToList();
@@ -27,7 +28,7 @@ public static class AttorneyDashboardComposer
             var pipeline=string.Equals(c.CaseStatus,"Pipeline",StringComparison.OrdinalIgnoreCase)
                 ||string.Equals(c.MatterType,"PreFilingTract",StringComparison.OrdinalIgnoreCase);
             var days=AttorneyDashboardEngine.DaysSinceMeaningfulActivity(c,today);
-            return new Evaluated(c,pipeline,days,pipeline?null:AttorneyDashboardEngine.EvaluateMomentumStatus(c,today,days),pipeline?null:postures.GetValueOrDefault(c.Id));
+            return new Evaluated(c,pipeline,days,pipeline?null:AttorneyDashboardEngine.EvaluateMomentumStatus(c,today,days,policy.MomentumStaleDays),pipeline?null:postures.GetValueOrDefault(c.Id));
         }).ToList();
 
         bool Matches(Evaluated matter)
@@ -52,10 +53,10 @@ public static class AttorneyDashboardComposer
         var summary=new AttorneyDashboardSummaryCounts
         {
             NeedsJudgment=evaluated.Count(m=>!m.IsPreFiling
-                ?AttorneyDashboardEngine.EvaluateFiledCase(m.Case,m.Posture,deadlineGroups.GetValueOrDefault(m.Case.Id,[]),hearingGroups.GetValueOrDefault(m.Case.Id,[]),today)?.ActionCategory=="Decide"
+                ?AttorneyDashboardEngine.EvaluateFiledCase(m.Case,m.Posture,deadlineGroups.GetValueOrDefault(m.Case.Id,[]),hearingGroups.GetValueOrDefault(m.Case.Id,[]),today,policy)?.ActionCategory=="Decide"
                 :string.Equals(m.Case.CurrentHolder,"Attorney",StringComparison.OrdinalIgnoreCase)),
             Stalled=evaluated.Count(m=>m.Momentum=="Stalled"),
-            DiscoveryUnset=evaluated.Count(m=>!m.IsPreFiling&&AttorneyDashboardEngine.EvaluateDiscoveryConditions(m.Posture,today).Contains("Strategy not selected")),
+            DiscoveryUnset=evaluated.Count(m=>!m.IsPreFiling&&AttorneyDashboardEngine.EvaluateDiscoveryConditions(m.Posture,today,policy.DiscoveryCutoffLookaheadDays).Contains("Strategy not selected")),
             OnMyDesk=evaluated.Count(m=>string.Equals(m.Case.CurrentHolder,"Attorney",StringComparison.OrdinalIgnoreCase)),
             TrialTrack=evaluated.Count(m=>m.Case.TrialTrack),
             MissingNextReview=evaluated.Count(m=>!m.IsPreFiling&&string.IsNullOrWhiteSpace(m.Case.WaitingOn)
@@ -78,7 +79,7 @@ public static class AttorneyDashboardComposer
                     PipelineStage=c.PipelineStage,DateSentToCurrentHolder=c.DateSentToCurrentHolder,Priority=c.Priority,
                     NextReviewDate=c.NextReviewDate,CurrentIssue=c.CurrentIssue,LastFollowUpDate=c.WaitingFollowUpDate,
                     LastUpdated=c.UpdatedAt,FlagReason=bucket=="Waiting"
-                        ?AttorneyDashboardEngine.WaitingMonitorReason(c,today,matter.DaysSince)
+                        ?AttorneyDashboardEngine.WaitingMonitorReason(c,today,matter.DaysSince,policy.PipelineStalledDays)
                         :AttorneyDashboardEngine.MyDeskFlagReason(c)
                 };
                 pipeline.Add(row);if(bucket=="MyDesk")myDesk.Add(row);else waiting.Add(row);
@@ -86,11 +87,11 @@ public static class AttorneyDashboardComposer
                 continue;
             }
 
-            var action=AttorneyDashboardEngine.EvaluateFiledCase(c,matter.Posture,deadlineGroups.GetValueOrDefault(c.Id,[]),hearingGroups.GetValueOrDefault(c.Id,[]),today);
+            var action=AttorneyDashboardEngine.EvaluateFiledCase(c,matter.Posture,deadlineGroups.GetValueOrDefault(c.Id,[]),hearingGroups.GetValueOrDefault(c.Id,[]),today,policy);
             if(action is not null)actions.Add(action);
             momentum.Add(new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),MomentumStatus=matter.Momentum??"Moving",DaysSinceMeaningfulActivity=matter.DaysSince??0,WaitingOn=c.WaitingOn,WaitingFollowUpDate=c.WaitingFollowUpDate});
-            foreach(var condition in AttorneyDashboardEngine.EvaluateDiscoveryConditions(matter.Posture,today))Increment(discovery,condition,c,matter.Posture);
-            if(AttorneyDashboardEngine.IsTrialWatchEligible(c,today,AttorneyDashboardEngine.DefaultTrialWatchDays))trials.Add(Trial(c,matter.Posture,today));
+            foreach(var condition in AttorneyDashboardEngine.EvaluateDiscoveryConditions(matter.Posture,today,policy.DiscoveryCutoffLookaheadDays))Increment(discovery,condition,c,matter.Posture);
+            if(AttorneyDashboardEngine.IsTrialWatchEligible(c,today,policy.TrialWatchLookaheadDays))trials.Add(Trial(c,matter.Posture,today));
         }
 
         actions=actions.OrderBy(a=>a.PriorityLevel).ThenBy(a=>Date(a.ReviewDate)??DateOnly.MaxValue).ThenByDescending(a=>a.DaysSinceMeaningfulActivity??0).ToList();

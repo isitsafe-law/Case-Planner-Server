@@ -31,11 +31,11 @@ public static class AttorneyDashboardEngine
     private const int Priority3Momentum = 3;
     private const int Priority4Planned = 4;
 
-    private sealed record Signal(int Priority, string ActionCategory, string Reason, string NextAction, string? ReviewDate, long? RelatedDeadlineId = null);
+    private sealed record Signal(int Priority, string ActionCategory, string Reason, string NextAction, string? ReviewDate, long? RelatedDeadlineId = null, string? Threshold = null);
 
     // ---------- Momentum ----------
 
-    public static string EvaluateMomentumStatus(CaseRecord c, DateOnly today, int? daysSinceMeaningfulActivity)
+    public static string EvaluateMomentumStatus(CaseRecord c, DateOnly today, int? daysSinceMeaningfulActivity, int staleDays = MomentumStaleDays)
     {
         var hasWaitingRecord = !string.IsNullOrWhiteSpace(c.WaitingOn);
         if (hasWaitingRecord)
@@ -50,7 +50,7 @@ public static class AttorneyDashboardEngine
             return followUp >= today ? "Waiting Appropriately" : "Review Required";
         }
 
-        if (daysSinceMeaningfulActivity is { } days && days >= MomentumStaleDays)
+        if (daysSinceMeaningfulActivity is { } days && days >= staleDays)
         {
             return "Stalled";
         }
@@ -71,7 +71,7 @@ public static class AttorneyDashboardEngine
 
     // ---------- Discovery Control ----------
 
-    public static List<string> EvaluateDiscoveryConditions(DiscoveryPosture? posture, DateOnly today)
+    public static List<string> EvaluateDiscoveryConditions(DiscoveryPosture? posture, DateOnly today, int cutoffLookaheadDays = DiscoveryCutoffLookaheadDays)
     {
         var conditions = new List<string>();
         var strategy = posture?.Strategy ?? "Strategy not selected";
@@ -129,7 +129,7 @@ public static class AttorneyDashboardEngine
         if (DateOnly.TryParse(posture.DiscoveryCutoffDate, out var cutoff))
         {
             var daysOut = cutoff.DayNumber - today.DayNumber;
-            if (daysOut <= DiscoveryCutoffLookaheadDays)
+            if (daysOut <= cutoffLookaheadDays)
             {
                 conditions.Add("Discovery cutoff approaching");
             }
@@ -181,8 +181,9 @@ public static class AttorneyDashboardEngine
         DiscoveryPosture? posture,
         IReadOnlyList<DeadlineItem> openDeadlines,
         IReadOnlyList<HearingRecord> hearings,
-        DateOnly today)
+        DateOnly today, DashboardActionabilityPolicy? policy = null)
     {
+        policy ??= new DashboardActionabilityPolicy();
         if (DateOnly.TryParse(c.DeferredUntil, out var deferredUntil) && deferredUntil > today)
         {
             return null;
@@ -190,19 +191,19 @@ public static class AttorneyDashboardEngine
 
         var signals = new List<Signal>();
         var daysSince = DaysSinceMeaningfulActivity(c, today);
-        var momentum = EvaluateMomentumStatus(c, today, daysSince);
+        var momentum = EvaluateMomentumStatus(c, today, daysSince, policy.MomentumStaleDays);
 
         AddOverdueDeadlineSignal(signals, openDeadlines, today);
-        AddCourtEventSignal(signals, c, hearings, today);
+        AddCourtEventSignal(signals, c, hearings, today, policy.TrialPreparationLookaheadDays);
         if (posture?.IsComplete != true)
         {
             AddDiscoveryStrategySignal(signals, posture);
-            AddDiscoveryCutoffSignal(signals, posture, today);
+            AddDiscoveryCutoffSignal(signals, posture, today, policy.DiscoveryCutoffLookaheadDays);
             AddDiscoveryOtherSignals(signals, posture, today);
         }
-        AddMomentumSignal(signals, c, momentum, daysSince, today);
+        AddMomentumSignal(signals, c, momentum, daysSince, today, policy.MomentumStaleDays);
         AddMissingReviewSignal(signals, c, momentum);
-        AddTrialPrepSignal(signals, c, today);
+        AddTrialPrepSignal(signals, c, today, policy.TrialPreparationLookaheadDays);
 
         if (signals.Count == 0)
         {
@@ -220,6 +221,7 @@ public static class AttorneyDashboardEngine
             ActionCategory = primary.ActionCategory,
             PriorityLevel = primary.Priority,
             Reason = primary.Reason,
+            TriggerThreshold = primary.Threshold,
             PostureSummary = string.IsNullOrWhiteSpace(c.ShortPostureSummary) ? primary.Reason : c.ShortPostureSummary,
             RecommendedNextAction = primary.NextAction,
             ReviewDate = primary.ReviewDate ?? c.NextReviewDate ?? c.NextActionDue,
@@ -245,11 +247,11 @@ public static class AttorneyDashboardEngine
         signals.Add(new Signal(Priority1Immediate, "Act", $"Missed court deadline: {overdue.Title}", "Resolve the missed deadline immediately", overdue.DueDate, overdue.Id));
     }
 
-    private static void AddCourtEventSignal(List<Signal> signals, CaseRecord c, IReadOnlyList<HearingRecord> hearings, DateOnly today)
+    private static void AddCourtEventSignal(List<Signal> signals, CaseRecord c, IReadOnlyList<HearingRecord> hearings, DateOnly today, int lookaheadDays)
     {
         DateOnly? soonest = null;
         string? label = null;
-        if (DateOnly.TryParse(c.TrialDate, out var trial) && trial >= today && trial <= today.AddDays(TrialPrepLookaheadDays))
+        if (DateOnly.TryParse(c.TrialDate, out var trial) && trial >= today && trial <= today.AddDays(lookaheadDays))
         {
             soonest = trial;
             label = "Trial";
@@ -258,7 +260,7 @@ public static class AttorneyDashboardEngine
         foreach (var hearing in hearings)
         {
             if (DateOnly.TryParse(hearing.HearingDate, out var hearingDate) && hearingDate >= today
-                && hearingDate <= today.AddDays(TrialPrepLookaheadDays) && (soonest is null || hearingDate < soonest))
+                && hearingDate <= today.AddDays(lookaheadDays) && (soonest is null || hearingDate < soonest))
             {
                 soonest = hearingDate;
                 label = string.IsNullOrWhiteSpace(hearing.Title) ? "Hearing" : hearing.Title;
@@ -273,7 +275,7 @@ public static class AttorneyDashboardEngine
         var daysOut = eventDate.DayNumber - today.DayNumber;
         var priority = daysOut <= 14 ? Priority1Immediate : Priority4Planned;
         signals.Add(new Signal(priority, "Prepare", $"{label} approaching in {daysOut} day{(daysOut == 1 ? "" : "s")}",
-            "Confirm trial-preparation readiness (witnesses, exhibits, discovery status)", eventDate.ToString("yyyy-MM-dd")));
+            "Confirm trial-preparation readiness (witnesses, exhibits, discovery status)", eventDate.ToString("yyyy-MM-dd"), Threshold: $"Trial preparation lookahead: {lookaheadDays} days"));
     }
 
     private static void AddDiscoveryStrategySignal(List<Signal> signals, DiscoveryPosture? posture)
@@ -285,7 +287,7 @@ public static class AttorneyDashboardEngine
         }
     }
 
-    private static void AddDiscoveryCutoffSignal(List<Signal> signals, DiscoveryPosture? posture, DateOnly today)
+    private static void AddDiscoveryCutoffSignal(List<Signal> signals, DiscoveryPosture? posture, DateOnly today, int cutoffLookaheadDays)
     {
         if (posture is null || posture.IsComplete || !DateOnly.TryParse(posture.DiscoveryCutoffDate, out var cutoff))
         {
@@ -297,9 +299,9 @@ public static class AttorneyDashboardEngine
         {
             signals.Add(new Signal(Priority1Immediate, "Escalate", "Discovery cutoff has passed with the current plan incomplete", "Resolve outstanding discovery before the cutoff issue compounds", posture.DiscoveryCutoffDate));
         }
-        else if (daysOut <= DiscoveryCutoffLookaheadDays)
+        else if (daysOut <= cutoffLookaheadDays)
         {
-            signals.Add(new Signal(Priority1Immediate, "Act", $"Discovery cutoff in {daysOut} day{(daysOut == 1 ? "" : "s")} threatens the current plan", "Complete or accelerate remaining discovery before the cutoff", posture.DiscoveryCutoffDate));
+            signals.Add(new Signal(Priority1Immediate, "Act", $"Discovery cutoff in {daysOut} day{(daysOut == 1 ? "" : "s")} threatens the current plan", "Complete or accelerate remaining discovery before the cutoff", posture.DiscoveryCutoffDate, Threshold: $"Discovery cutoff lookahead: {cutoffLookaheadDays} days"));
         }
     }
 
@@ -323,11 +325,11 @@ public static class AttorneyDashboardEngine
         }
     }
 
-    private static void AddMomentumSignal(List<Signal> signals, CaseRecord c, string momentum, int? daysSince, DateOnly today)
+    private static void AddMomentumSignal(List<Signal> signals, CaseRecord c, string momentum, int? daysSince, DateOnly today, int staleDays)
     {
         if (momentum == "Stalled")
         {
-            signals.Add(new Signal(Priority3Momentum, "Review", $"No meaningful litigation activity for {daysSince} days", "Review case status and record a decision or next step", c.NextReviewDate));
+            signals.Add(new Signal(Priority3Momentum, "Review", $"No meaningful litigation activity for {daysSince} days", "Review case status and record a decision or next step", c.NextReviewDate, Threshold: $"Stale review threshold: {staleDays} days"));
         }
         else if (momentum == "Review Required")
         {
@@ -355,7 +357,7 @@ public static class AttorneyDashboardEngine
         }
     }
 
-    private static void AddTrialPrepSignal(List<Signal> signals, CaseRecord c, DateOnly today)
+    private static void AddTrialPrepSignal(List<Signal> signals, CaseRecord c, DateOnly today, int lookaheadDays)
     {
         if (!c.TrialTrack || !DateOnly.TryParse(c.TrialDate, out var trial))
         {
@@ -363,9 +365,9 @@ public static class AttorneyDashboardEngine
         }
 
         var daysOut = trial.DayNumber - today.DayNumber;
-        if (daysOut is >= 0 and <= TrialPrepLookaheadDays)
+        if (daysOut is >= 0 && daysOut <= lookaheadDays)
         {
-            signals.Add(new Signal(Priority4Planned, "Prepare", $"Trial in {daysOut} day{(daysOut == 1 ? "" : "s")} - preparation milestone window", "Confirm witness list, exhibit list, and final valuation position", trial.ToString("yyyy-MM-dd")));
+            signals.Add(new Signal(Priority4Planned, "Prepare", $"Trial in {daysOut} day{(daysOut == 1 ? "" : "s")} - preparation milestone window", "Confirm witness list, exhibit list, and final valuation position", trial.ToString("yyyy-MM-dd"), Threshold: $"Trial preparation lookahead: {lookaheadDays} days"));
         }
     }
 
@@ -378,7 +380,7 @@ public static class AttorneyDashboardEngine
 
     // Reason a Waiting tract should still surface for monitoring (spec's explicit exception
     // list), or null for a plain "waiting, nothing to see" row that stays off the action queue.
-    public static string? WaitingMonitorReason(CaseRecord c, DateOnly today, int? daysSincePipelineMovement)
+    public static string? WaitingMonitorReason(CaseRecord c, DateOnly today, int? daysSincePipelineMovement, int stalledDays = PipelineStalledDays)
     {
         if (DateOnly.TryParse(c.WaitingFollowUpDate, out var followUp) && followUp <= today)
         {
@@ -395,7 +397,7 @@ public static class AttorneyDashboardEngine
             return "Missing current holder or stage";
         }
 
-        if (daysSincePipelineMovement is { } days && days >= PipelineStalledDays)
+        if (daysSincePipelineMovement is { } days && days >= stalledDays)
         {
             return $"No pipeline movement for {days} days - needs a general status review";
         }

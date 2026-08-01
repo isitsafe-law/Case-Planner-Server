@@ -317,6 +317,26 @@ public class AttorneyDashboardEngineTests
     }
 
     [Fact]
+    public void MomentumThresholdCanBeAdjustedWithoutChangingWaitingRules()
+    {
+        var status = AttorneyDashboardEngine.EvaluateMomentumStatus(MakeCase(), Today, 31, staleDays: 30);
+
+        Assert.Equal("Stalled", status);
+    }
+
+    [Fact]
+    public void PipelineStallThresholdCanBeAdjusted()
+    {
+        var caseRecord = MakeCase();
+        caseRecord.CurrentHolder = "Deputy Chief Counsel";
+        caseRecord.PipelineStage = "Attorney Review";
+
+        var reason = AttorneyDashboardEngine.WaitingMonitorReason(caseRecord, Today, 15, stalledDays: 14);
+
+        Assert.Contains("No pipeline movement", reason);
+    }
+
+    [Fact]
     public void TrialWatch_NotEligible_WhenTrialBeyondWindow()
     {
         var c = MakeCase(x => x.TrialDate = "2028-01-01");

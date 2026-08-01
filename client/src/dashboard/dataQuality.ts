@@ -1,5 +1,6 @@
 export type DataQualityIssue = {
   key: string
+  area: string
   severity: string
   label: string
   count: number
@@ -14,6 +15,8 @@ export type DataQualityReport = {
   scopeDefinition: string
   issues: DataQualityIssue[]
 }
+
+export const DATA_QUALITY_AREAS = ['Workflow', 'Case records', 'Events', 'Assignments', 'Service', 'Documents'] as const
 
 export const METRIC_DEFINITIONS = [
   ['Open cases', 'Cases whose consolidated status is not Triage or Resolved / Closed and whose legacy status is not Closed or Complete.'],

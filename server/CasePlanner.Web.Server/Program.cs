@@ -777,6 +777,12 @@ app.MapPut("/api/prefiling-review/settings", async (SavePrefilingReviewSettingsR
     try { return Results.Ok(await review.SaveSettingsAsync(request, token)); }
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+app.MapGet("/api/dashboard/actionability-policy", async (CasePlannerRepository repository) => Results.Ok(await repository.GetDashboardActionabilityPolicyAsync()));
+app.MapPut("/api/dashboard/actionability-policy", async (SaveDashboardActionabilityPolicyRequest request, CasePlannerRepository repository) =>
+{
+    try { return Results.Ok(await repository.SaveDashboardActionabilityPolicyAsync(request)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 
 app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());

@@ -191,7 +191,10 @@ public static partial class DocumentGenerationEngine
 
         foreach (var (alias, canonical) in LegacyTokenAliases)
         {
-            if (tokens.TryGetValue(canonical, out var value)) tokens[alias] = value;
+            // Preserve an explicit runtime value (for example a required manual
+            // document field) over a legacy alias fallback from the case record.
+            if (!tokens.ContainsKey(alias) && tokens.TryGetValue(canonical, out var value))
+                tokens[alias] = value;
         }
 
         return tokens;

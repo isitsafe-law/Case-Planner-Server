@@ -72,6 +72,11 @@ The By Attorney view reports transparent workload signals—open tracts, pipelin
 
 The Division Overview's data-quality table includes representative affected-case links when the finding is case-specific. It shows up to three direct case links and a count of additional affected records; the full issue count remains the authoritative metric.
 The same section can export all current findings, definitions, counts, suggested actions, and sample case IDs to CSV for management follow-up.
+Findings are classified into Workflow, Case records, Events, Assignments, Service, and Documents. The manager view can filter findings by area or severity and shows an affected-record total. These classifications are review labels only; the application does not automatically repair case data.
+
+Dashboard actionability rules are documented in [docs/dashboard-actionability-policy.md](docs/dashboard-actionability-policy.md). It defines current triggers, exclusions, thresholds, explanations, and the planned separation between fixed operational rules, configurable defaults, and attorney presentation preferences.
+The SQLite preview exposes the shared defaults under Settings → Dashboard Actionability. Changes affect momentum, pipeline stall, discovery cutoff, trial preparation, and Trial Watch timing; overdue legal or operational conditions remain visible.
+The Manager Needs Attention view reads the same stored momentum and pipeline-stall defaults rather than maintaining separate hidden thresholds.
 
 The top-level Calendar is the shared case-event view. It defaults to the signed-in attorney when Entra identity is available; SQLite preview mode provides an all-attorney view for testing. It supports 30/60/90/120/180-day and See All ranges, attorney scope, event-type filters, multi-day events, and links back to cases. Events are intentionally not Work Queue items; Work Queue contains tasks, deadlines, discovery, and service work. The manager calendar uses the same event catalog and permission-filtered event feed.
 

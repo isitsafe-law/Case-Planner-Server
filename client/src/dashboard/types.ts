@@ -43,6 +43,7 @@ export type ActionQueueItem = {
   actionCategory: ActionCategory
   priorityLevel: number
   reason: string
+  triggerThreshold?: string | null
   postureSummary: string
   recommendedNextAction: string
   reviewDate: string | null

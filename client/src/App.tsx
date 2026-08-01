@@ -1210,6 +1210,20 @@ const reportColumnOptions = [
   { key: 'caseAgeDays', label: 'Age / duration (days)' },
 ] as const
 type ReportColumnKey = typeof reportColumnOptions[number]['key']
+type SavedReportDefinition = {
+  id: string
+  name: string
+  status: string
+  county: string
+  district: string
+  search: string
+  dateOpenedFrom: string
+  dateOpenedTo: string
+  columns: ReportColumnKey[]
+  sortColumn: ReportColumnKey
+  sortDirection: 'asc' | 'desc'
+  updatedAt: string
+}
 
 // Columns that hold numbers/dates/case numbers get the mono data face + tabular figures in the
 // Preview table; free-text columns (name, status, holder, next action...) stay in the UI font.
@@ -2296,6 +2310,8 @@ function App() {
   const [reportColumns, setReportColumns] = useState<ReportColumnKey[]>(['caseName', 'caseNumber', 'county', 'caseStatus', 'currentHolder', 'nextAction', 'trialDate'])
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [savedReports, setSavedReports] = useState<SavedReportDefinition[]>([])
+  const [savedReportName, setSavedReportName] = useState('')
   // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
   // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting),
   // 'cycleTime' is Report C (Cycle-Time Reporting).
@@ -6343,12 +6359,36 @@ function App() {
     if (value === 'previousYear') { start.setFullYear(today.getFullYear() - 1, 0, 1); today.setFullYear(today.getFullYear() - 1, 11, 31) }
     setReportOpenedFrom(iso(start)); setReportOpenedTo(iso(today))
   }
+  async function loadSavedReports() {
+    try { setSavedReports(await api<SavedReportDefinition[]>('/api/reports/saved')) }
+    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load saved reports.') }
+  }
+  function applySavedReport(report: SavedReportDefinition) {
+    setReportStatusFilter(report.status); setReportCountyFilter(report.county); setReportDistrictFilter(report.district)
+    setReportSearch(report.search); setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo)
+    setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportPreset('')
+    setMessage(`Loaded report: ${report.name}`)
+  }
+  async function saveCurrentReport() {
+    if (!savedReportName.trim()) { setErrorMessage('Enter a name for the saved report.'); return }
+    try {
+      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection }) })
+      setSavedReports((current) => [saved, ...current.filter((report) => report.id !== saved.id)])
+      setSavedReportName(''); setMessage(`Saved report: ${saved.name}`)
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to save the report.') }
+  }
+  async function deleteSavedReport(report: SavedReportDefinition) {
+    if (!(await confirmAction({ title: 'Delete saved report?', message: `Remove "${report.name}"?`, confirmLabel: 'Delete', danger: true }))) return
+    try { await api(`/api/reports/saved/${report.id}`, { method: 'DELETE' }); setSavedReports((current) => current.filter((item) => item.id !== report.id)); setMessage('Saved report deleted.') }
+    catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the saved report.') }
+  }
   useEffect(() => {
     if (page !== 'reports') return
     const params = new URLSearchParams({ includeClosed: String(reportStatusFilter === '__closed'), status: reportStatusFilter === '__closed' ? '' : reportStatusFilter, county: reportCountyFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo })
     if (reportStatusFilter === '__closed') params.set('status', 'Closed')
     void api<CaseRecord[]>(`/api/cases?${params.toString()}`).then(setReportServerRows).catch(() => setReportServerRows([]))
   }, [page, reportStatusFilter, reportCountyFilter, reportSearch, reportOpenedFrom, reportOpenedTo])
+  useEffect(() => { if (page === 'reports') void loadSavedReports() }, [page])
 
   const reportRows = useMemo(() => {
     const query = reportSearch.trim().toLocaleLowerCase()
@@ -11104,6 +11144,14 @@ function App() {
           {reportView === 'export' && (
           <div className="rep-grid top-gap-small">
             <div className="rep-rail">
+              <CollapsiblePanel title={`Saved reports · ${savedReports.length}`}>
+                <div className="rep-fields">
+                  <label><span>Report name</span><input value={savedReportName} onChange={(event) => setSavedReportName(event.target.value)} placeholder="e.g. Upcoming trials" /></label>
+                </div>
+                <div className="button-row compact-actions top-gap-small"><Btn size="sm" variant="primary" onClick={() => void saveCurrentReport()}>Save current view</Btn></div>
+                {savedReports.length > 0 && <div className="table-wrap top-gap-small"><table className="compact-table"><thead><tr><th>Name</th><th>Updated</th><th>Actions</th></tr></thead><tbody>{savedReports.map((report) => <tr key={report.id}><td>{report.name}</td><td>{displayDateTime(report.updatedAt)}</td><td><div className="button-row compact-actions row-actions"><Btn size="sm" onClick={() => applySavedReport(report)}>Load</Btn><Btn size="sm" variant="ghost" onClick={() => void deleteSavedReport(report)}>Delete</Btn></div></td></tr>)}</tbody></table></div>}
+                {savedReports.length === 0 && <p className="helper-text top-gap-small">Save a filtered case-list view for repeat management reports.</p>}
+              </CollapsiblePanel>
               <CollapsiblePanel title="Filters">
                 <div className="rep-fields">
                   <label><span>Case status</span><select value={reportStatusFilter} onChange={(event) => setReportStatusFilter(event.target.value)}><option value="">All open statuses</option>{consolidatedCaseStatuses.filter((status) => status !== 'Triage').map((status) => <option key={status}>{status}</option>)}<option value="__closed">Closed / resolved</option></select></label>

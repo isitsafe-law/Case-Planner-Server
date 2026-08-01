@@ -10187,6 +10187,61 @@ public sealed partial class CasePlannerRepository
             throw new InvalidOperationException("Event end time cannot be before its start time on the same date.");
     }
 
+    public async Task<List<SavedReportDefinition>> GetSavedReportDefinitionsAsync()
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var json = await GetAppSettingAsync(connection, "saved_report_definitions_v1");
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try { return JsonSerializer.Deserialize<List<SavedReportDefinition>>(json) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
+    public async Task<SavedReportDefinition> SaveReportDefinitionAsync(SaveReportDefinitionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name)) throw new InvalidOperationException("Report name is required.");
+        if (request.Columns.Count == 0) throw new InvalidOperationException("Select at least one report column.");
+        var definitions = await GetSavedReportDefinitionsAsync();
+        var existing = definitions.FirstOrDefault(item => string.Equals(item.Id, request.Id, StringComparison.Ordinal));
+        var saved = new SavedReportDefinition
+        {
+            Id = existing?.Id ?? Guid.NewGuid().ToString("N"),
+            Name = request.Name.Trim(),
+            Status = request.Status?.Trim() ?? "",
+            County = request.County?.Trim() ?? "",
+            District = request.District?.Trim() ?? "",
+            Search = request.Search?.Trim() ?? "",
+            DateOpenedFrom = request.DateOpenedFrom?.Trim() ?? "",
+            DateOpenedTo = request.DateOpenedTo?.Trim() ?? "",
+            Columns = request.Columns.Where(column => !string.IsNullOrWhiteSpace(column)).Distinct(StringComparer.Ordinal).ToList(),
+            SortColumn = string.IsNullOrWhiteSpace(request.SortColumn) ? "caseName" : request.SortColumn.Trim(),
+            SortDirection = string.Equals(request.SortDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc",
+            UpdatedAt = DateTimeOffset.UtcNow.ToString("O"),
+        };
+        definitions.RemoveAll(item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal));
+        definitions.Insert(0, saved);
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = connection.BeginTransaction();
+        await SetAppSettingAsync(connection, transaction, "saved_report_definitions_v1", JsonSerializer.Serialize(definitions));
+        await transaction.CommitAsync();
+        return saved;
+    }
+
+    public async Task<bool> DeleteReportDefinitionAsync(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return false;
+        var definitions = await GetSavedReportDefinitionsAsync();
+        var removed = definitions.RemoveAll(item => string.Equals(item.Id, id, StringComparison.Ordinal)) > 0;
+        if (!removed) return false;
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = connection.BeginTransaction();
+        await SetAppSettingAsync(connection, transaction, "saved_report_definitions_v1", JsonSerializer.Serialize(definitions));
+        await transaction.CommitAsync();
+        return true;
+    }
+
     public async Task<PrefilingReviewSettings> GetPrefilingReviewSettingsAsync()
     {
         await using var connection = new SqliteConnection(ConnectionString);

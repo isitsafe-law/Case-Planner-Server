@@ -15,11 +15,18 @@
 3. Add report-specific filter/column/group DTOs and saved definitions backed by migrations. Reports remain read-only and reuse the same case/work selectors.
 4. Add Excel/CSV report services over the projection, preserving numeric/date types in Excel and stable raw values in CSV.
 
+Saved report definitions are now available in the portable SQLite build. They are stored as one versioned
+JSON application setting (`saved_report_definitions_v1`) and contain the report name, case filters, selected
+columns, and sort order. This keeps the feature portable while the application is single-user. A future
+SQL/Entra migration can promote these records to user- or division-scoped rows without changing the report
+definition shape.
+
 ## Build order
 
 - Phase 1: shared open-case and upcoming-work selectors, plus tests against existing Work Queue behavior.
 - Phase 2: compact dashboard upcoming-work view with 5/10 preference, filters, actions, and Work Queue navigation.
-- Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports.
+- Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports. The first
+  saved-definition slice is complete; grouping, seeded reports, and user-scoped sharing remain follow-up work.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

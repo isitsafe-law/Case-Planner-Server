@@ -1759,6 +1759,24 @@ public sealed class MergeTagAudit
     public List<string> BlankValues { get; set; } = [];
 }
 
+public class SavedReportDefinition
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string County { get; set; } = "";
+    public string District { get; set; } = "";
+    public string Search { get; set; } = "";
+    public string DateOpenedFrom { get; set; } = "";
+    public string DateOpenedTo { get; set; } = "";
+    public List<string> Columns { get; set; } = [];
+    public string SortColumn { get; set; } = "caseName";
+    public string SortDirection { get; set; } = "asc";
+    public string UpdatedAt { get; set; } = "";
+}
+
+public sealed class SaveReportDefinitionRequest : SavedReportDefinition { }
+
 public sealed class DocumentTemplateCompletenessReport
 {
     public string TemplateKey { get; set; } = "";

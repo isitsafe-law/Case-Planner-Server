@@ -73,6 +73,8 @@ builder.Services.AddSingleton(documentStorageOptions);
 builder.Services.AddSingleton<IDocumentStorage,FileSystemDocumentStorage>();
 builder.Services.AddSingleton<ITemplateFileStorage,FileSystemTemplateStorage>();
 builder.Services.AddSingleton<CasePlannerRepository>();
+builder.Services.AddSingleton<SqliteReportDefinitionStore>();
+builder.Services.AddSingleton<IReportDefinitionStore>(services => services.GetRequiredService<SqliteReportDefinitionStore>());
 builder.Services.AddSingleton<SqliteCaseChildLookupStore>();
 builder.Services.AddSingleton<SqlServerCaseChildLookupStore>();
 builder.Services.AddSingleton<ICaseChildLookupStore>(services =>
@@ -788,6 +790,15 @@ app.MapGet("/api/dashboard",async(IOperationalWorkspaceQuery workspace,CaseAcces
     Results.Ok(await workspace.GetDashboardAsync(await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/dashboard/upcoming-work",async(string? type,string? urgency,int? limit,IOperationalWorkspaceQuery workspace,CaseAccessService access,CancellationToken token)=>
     Results.Ok(await workspace.GetUpcomingWorkAsync(type??"all",urgency??"All Open",limit??5,await access.GetVisibleCaseIdsAsync(token),token))).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/reports/saved", async (IReportDefinitionStore reports, CancellationToken token) =>
+    Results.Ok(await reports.GetAsync(token)));
+app.MapPost("/api/reports/saved", async (SaveReportDefinitionRequest request, IReportDefinitionStore reports, CancellationToken token) =>
+{
+    try { return Results.Ok(await reports.SaveAsync(request, token)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapDelete("/api/reports/saved/{id}", async (string id, IReportDefinitionStore reports, CancellationToken token) =>
+    Results.Ok(new { deleted = await reports.DeleteAsync(id, token) }));
 app.MapPost("/api/reports/export.xlsx", (ReportExcelRequest request) =>
 {
     using var workbook = new XLWorkbook();

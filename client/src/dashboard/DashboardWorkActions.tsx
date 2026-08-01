@@ -41,21 +41,26 @@ export function DashboardWorkActions({
   }
 
   return (
-    <div className="ui-row-actions ui-row-actions-wrap">
+    <div className="ui-row-actions dashboard-work-actions">
       {item.type === 'task' && onComplete && <Btn size="sm" onClick={() => void run(onComplete)}>Mark done</Btn>}
       {item.type === 'deadline' && onComplete && <Btn size="sm" onClick={() => void run(onComplete)}>Complete</Btn>}
       {item.type === 'discovery' && onDiscovery && <Btn size="sm" onClick={() => void run(onDiscovery)}>Record response</Btn>}
-      {item.type === 'service' && onService && <Btn size="sm" onClick={() => void run(onService)}>Perfect service</Btn>}
-      {(item.type === 'task' || item.type === 'deadline') && onSaveDueDate && (
-        editingDate ? (
-          <span className="inline-quick-form compact-actions">
-            <input type="date" value={dueDate} onChange={(event) => setDueDate(event.currentTarget.value)} aria-label="New due date" />
-            <Btn size="sm" onClick={() => void run(() => onSaveDueDate(dueDate))} disabled={busy || !dueDate}>Save date</Btn>
-            <Btn size="sm" variant="ghost" onClick={() => { setDueDate(item.dueDate ?? ''); setEditingDate(false) }}>Cancel</Btn>
-          </span>
-        ) : <Btn size="sm" variant="ghost" onClick={() => setEditingDate(true)}>Change due date</Btn>
-      )}
-      {showOpen && <Btn size="sm" variant="ghost" onClick={onOpen}>Open &gt;</Btn>}
+      {item.type === 'service' && onService && <Btn size="sm" onClick={() => void run(onService)}>Update service</Btn>}
+      <details className="dashboard-work-actions-menu">
+        <summary aria-label="More work actions">More</summary>
+        <div className="dashboard-work-actions-popover">
+          {(item.type === 'task' || item.type === 'deadline') && onSaveDueDate && (
+            editingDate ? (
+              <span className="inline-quick-form compact-actions">
+                <input type="date" value={dueDate} onChange={(event) => setDueDate(event.currentTarget.value)} aria-label="New due date" />
+                <Btn size="sm" onClick={() => void run(() => onSaveDueDate(dueDate))} disabled={busy || !dueDate}>Save date</Btn>
+                <Btn size="sm" variant="ghost" onClick={() => { setDueDate(item.dueDate ?? ''); setEditingDate(false) }}>Cancel</Btn>
+              </span>
+            ) : <Btn size="sm" variant="ghost" onClick={() => setEditingDate(true)}>Change due date</Btn>
+          )}
+          {showOpen && <Btn size="sm" variant="ghost" onClick={onOpen}>Open case</Btn>}
+        </div>
+      </details>
     </div>
   )
 }

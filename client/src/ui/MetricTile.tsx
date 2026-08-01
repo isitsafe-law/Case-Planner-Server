@@ -12,12 +12,14 @@ export function MetricTile({
   active,
   onClick,
   tone = 'default',
+  hint,
 }: {
   label: string
   value: ReactNode
   active?: boolean
   onClick?: () => void
   tone?: MetricTileTone
+  hint?: string
 }) {
   const classes = ['ui-tile', tone !== 'default' ? `ui-tile-${tone}` : '', active ? 'ui-tile-on' : '']
     .filter(Boolean)
@@ -28,6 +30,7 @@ export function MetricTile({
       <button type="button" className={classes} onClick={onClick} aria-pressed={!!active}>
         <span className="ui-tile-label">{label}</span>
         <span className="ui-tile-value">{value}</span>
+        {hint && <span className="ui-tile-hint">{hint}</span>}
       </button>
     )
   }
@@ -36,6 +39,7 @@ export function MetricTile({
     <div className={classes}>
       <span className="ui-tile-label">{label}</span>
       <span className="ui-tile-value">{value}</span>
+      {hint && <span className="ui-tile-hint">{hint}</span>}
     </div>
   )
 }

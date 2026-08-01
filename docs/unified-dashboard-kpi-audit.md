@@ -16,7 +16,7 @@ This audit records the dashboard source-of-truth review for the first controlled
 | Case Insight | attorney dashboard response | Docket, discovery, momentum, pipeline, trials, projects | Keep as compact planning information |
 | Overdue work | shared `/api/dashboard/upcoming-work` projection | Complete, reschedule, open case | Keep; count and rows use the same eligible-work projection as Work Queue |
 | Due in next seven days | shared projection | Complete, reschedule, open case | Keep; excludes overdue items |
-| Visual summaries | CSS bar summaries over shared work/hard-date records | Bar click opens Work Queue or Calendar | Keep as the first visual package |
+| Visual summaries | Compact count chips and planning row over shared work/hard-date records | Count click opens Work Queue or Calendar | Keep; large bars were removed |
 
 ### Division Overview
 
@@ -41,7 +41,7 @@ This audit records the dashboard source-of-truth review for the first controlled
 4. Action Queue: explainable reason-coded cases that require a decision, review, preparation, or escalation.
 5. Hard Dates Within 90 Days: qualifying hearings, jury trials, depositions, mediations, and court/deadline records; ordinary tasks and follow-up dates are excluded.
 
-The first three are computed from the shared upcoming-work projection. Action Queue remains the provider-neutral attorney dashboard response. Hard-date bars use the same open-case event/deadline catalog already used by the dashboard calendar and are drilled to that calendar with a visible range.
+The first three are computed from the shared upcoming-work projection. Action Queue remains the provider-neutral attorney dashboard response. Compact planning counts use the same open-case event/deadline catalog already used by the dashboard calendar, with events routed to Calendar and deadlines routed to the Work Queue deadline facet.
 
 ### Manager
 
@@ -62,7 +62,7 @@ The first three are computed from the shared upcoming-work projection. Action Qu
 
 ## Proposed layout
 
-Attorney: KPI strip, Work by Urgency, Upcoming Hard Dates, then short Overdue/Due Soon/Action Queue lists and the existing planning tabs.
+Attorney: KPI strip, compact urgency chips/planning row, then short Overdue/Due Soon/Action Queue lists and the existing planning tabs.
 
 Manager: management KPI strip, hard-date/trial summaries, then Needs Attention, Pipeline, By Attorney, Calendar, and data quality. The manager view should not replicate every attorney work reminder.
 
@@ -83,5 +83,4 @@ Historical trend dashboards, custom widgets, predictive scores, attorney product
 
 ## Tests required for this package
 
-Client tests cover accessible bar values, empty states, urgency drill-down, and range selection. Existing server tests cover shared work eligibility, service bands, pipeline aging, and assignment-aware dashboard scope. The next server test additions should assert that management hard-date/trial summaries count records rather than attorney assignment rows.
-
+Client tests cover accessible count values, compact planning routing, urgency drill-down, work-row actions, and range selection. Existing server tests cover shared work eligibility, service bands, pipeline aging, and assignment-aware dashboard scope. The next server test additions should assert that management hard-date/trial summaries count records rather than attorney assignment rows.

@@ -10,7 +10,7 @@ import { ByAttorneyTab } from './ByAttorneyTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
 import { DATA_QUALITY_AREAS, METRIC_DEFINITIONS, type DataQualityReport } from './dataQuality'
 import { api } from '../App'
-import { ManagerDashboardVisuals, buildManagerHardDateBars, buildManagerTrialBars, type ManagerSummaryBar } from './ManagerDashboardVisuals'
+import { ManagerDashboardVisuals, buildManagerHardDateBars, buildManagerTrialBars } from './ManagerDashboardVisuals'
 import { buildNeedsAttentionRows } from './NeedsAttentionTab'
 
 type ManagerDashboardTab = 'calendar' | 'pipeline' | 'byAttorney' | 'needsAttention'
@@ -117,22 +117,6 @@ export function ManagerDashboard({
     setCalendarMinimumDays(minimumDays)
   }
 
-  function openHardDateBar(bar?: ManagerSummaryBar) {
-    const ranges: Record<string, { horizon: CalendarHorizon; minimumDays: number }> = {
-      '0-30': { horizon: 30, minimumDays: 0 },
-      '31-60': { horizon: 60, minimumDays: 31 },
-      '61-90': { horizon: 90, minimumDays: 61 },
-      '91-120': { horizon: 120, minimumDays: 91 },
-      '121-180': { horizon: 180, minimumDays: 121 },
-    }
-    const range = ranges[bar?.key || ''] || { horizon: 90 as CalendarHorizon, minimumDays: 0 }
-    goToCalendar(range.horizon, 'All', 'All', range.minimumDays)
-  }
-
-  function openTrialBar(bar?: ManagerSummaryBar) {
-    goToCalendar(180, 'Jury Trial', bar?.key || 'All')
-  }
-
   return (
     <main className="page">
       <div className="dash-hd">
@@ -156,18 +140,14 @@ export function ManagerDashboard({
       </details>
 
       <ManagerDashboardVisuals
-        allCases={allCases}
-        hearings={hearings}
-        deadlines={deadlines}
-        aging={preFilingMilestonesAging}
         attentionCount={needsAttentionCount}
         hardDateCount={hardDateCount}
         trialCount={juryTrialCount}
         pipelineStallCount={pipelineStallCount}
         serviceRiskCount={serviceRiskCount}
         onAttention={() => setActiveTab('needsAttention')}
-        onHardDates={openHardDateBar}
-        onTrials={openTrialBar}
+        onHardDates={() => goToCalendar(90)}
+        onTrials={() => goToCalendar(180, 'Jury Trial')}
         onPipeline={() => setActiveTab('pipeline')}
         onService={() => setActiveTab('needsAttention')}
       />

@@ -32,21 +32,23 @@ export function GlobalCalendarTab({
   currentUserName,
   onOpenCase,
   initialRange = 90,
+  initialEventType = 'All',
 }: {
   allCases: CaseRecord[]
   fetchEvents: (query: CalendarEventQuery) => Promise<CalendarEventPage>
   currentUserName?: string | null
   onOpenCase: (caseId: number) => void
   initialRange?: CalendarRange
+  initialEventType?: string
 }) {
   const [range, setRange] = useState<CalendarRange>(initialRange)
   const [scope, setScope] = useState(currentUserName ? 'My Events' : 'All Attorneys')
-  const [eventType, setEventType] = useState('All')
+  const [eventType, setEventType] = useState(initialEventType)
   const [eventsPage, setEventsPage] = useState<CalendarEventPage>({ total: 0, limit: 100, offset: 0, items: [] })
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [page, setPage] = useState(0)
-  useEffect(() => { setRange(initialRange); setPage(0) }, [initialRange])
+  useEffect(() => { setRange(initialRange); setEventType(initialEventType); setPage(0) }, [initialRange, initialEventType])
   const caseById = useMemo(() => new Map(allCases.map((record) => [record.id, record])), [allCases])
   const attorneys = useMemo(() => Array.from(new Set(allCases.map((record) => record.assignedAttorney).filter(Boolean) as string[])).sort(), [allCases])
   const availableScopes = currentUserName ? ['My Events', 'All Attorneys', ...attorneys] : ['All Attorneys', ...attorneys]

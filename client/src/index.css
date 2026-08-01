@@ -1855,27 +1855,53 @@ code {
 .trial-watch-primary div, .trial-watch-next { display: grid; gap: .15rem; }
 .trial-watch-primary span, .trial-watch-next span { color: var(--text-muted); font-size: .75rem; }
 .trial-watch-card > button { justify-self: start; }
-.dashboard-visual-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
-.dashboard-visual-panel { min-width: 0; padding: .85rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface-subtle); }
-.dashboard-visual-heading h3 { margin: 0; font-size: .95rem; }
-.dashboard-visual-heading p { margin: .2rem 0 .75rem; color: var(--text-muted); font-size: .78rem; }
-.dashboard-bar-list { display: grid; gap: .45rem; }
-.dashboard-bar-row { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) 2rem; gap: .5rem; align-items: center; width: 100%; padding: .3rem 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.dashboard-bar-row:disabled { cursor: default; }
-.dashboard-bar-row:not(:disabled):hover .dashboard-bar-label { color: var(--accent); }
-.dashboard-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-ctl); }
-.dashboard-bar-label, .dashboard-bar-count { font-size: .8rem; }
-.dashboard-bar-count { text-align: right; font-variant-numeric: tabular-nums; }
-.dashboard-bar-track { display: block; height: .55rem; overflow: hidden; border-radius: 999px; background: var(--border); }
-.dashboard-bar-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
-.dashboard-bar-row:nth-child(1) .dashboard-bar-track span { background: var(--danger); }
-.dashboard-bar-row:nth-child(2) .dashboard-bar-track span { background: var(--warning); }
-.dashboard-bar-detail { grid-column: 2 / 4; color: var(--text-muted); font-size: .72rem; }
-.dashboard-visual-empty { margin: .5rem 0 0; color: var(--text-muted); font-size: .8rem; }
-.dashboard-visual-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.dashboard-compact-summary { display: grid; gap: .55rem; margin: .75rem 0 1rem; }
+.dashboard-compact-row, .dashboard-planning-row { display: flex; flex-wrap: wrap; gap: .45rem; }
+.dashboard-count-chip, .dashboard-planning-card { display: inline-flex; align-items: center; gap: .45rem; min-height: 2.2rem; padding: .4rem .65rem; border: 1px solid var(--border); border-radius: var(--r-ctl); background: var(--surface-muted); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.dashboard-count-chip:hover, .dashboard-planning-card:hover { border-color: var(--accent); }
+.dashboard-count-chip:focus-visible, .dashboard-planning-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dashboard-count-chip strong { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.dashboard-planning-card { display: grid; align-items: start; gap: .1rem; min-width: 12rem; }
+.dashboard-planning-card-wide { flex: 1 1 18rem; }
+.dashboard-planning-card span, .dashboard-planning-card small { color: var(--text-muted); font-size: .75rem; }
+.dashboard-planning-card strong { font-size: .9rem; }
+.dashboard-kpi-strip { flex-wrap: wrap; }
+.ui-tile-hint { display: block; margin-top: .15rem; color: var(--text-muted); font-size: .72rem; font-weight: 400; }
+.dashboard-card-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1rem; align-items: start; }
+.dashboard-card-grid .dash-cols { display: contents; }
+.dashboard-overdue-card { grid-column: 1; grid-row: 1; }
+.dashboard-schedule-card { grid-column: 2; grid-row: 1; }
+.dashboard-due-card { grid-column: 1; grid-row: 2; }
+.dashboard-case-insight-card { grid-column: 2; grid-row: 2; }
+.dashboard-action-queue-card { grid-column: 1 / -1; grid-row: 3; }
+.dashboard-compact-empty { margin: .8rem; color: var(--text-muted); font-size: .85rem; }
+.dashboard-schedule-list { display: grid; }
+.dashboard-schedule-item { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) auto; gap: .65rem; align-items: start; width: 100%; padding: .65rem .8rem; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.dashboard-schedule-item:hover { background: var(--surface-muted); }
+.dashboard-schedule-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dashboard-schedule-date { display: grid; gap: .15rem; font-family: var(--font-data); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.dashboard-schedule-date small, .dashboard-schedule-detail small { color: var(--text-muted); font-family: var(--font-body); font-size: .72rem; }
+.dashboard-schedule-detail { display: grid; gap: .12rem; min-width: 0; }
+.dashboard-schedule-detail span, .dashboard-schedule-detail small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-schedule-destination { color: var(--accent); font-size: .75rem; white-space: nowrap; }
+.dashboard-work-actions { align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
+.dashboard-work-actions-menu { position: relative; }
+.dashboard-work-actions-menu summary { display: inline-flex; align-items: center; min-height: 1.9rem; padding: .25rem .5rem; border: 1px solid var(--border); border-radius: var(--r-ctl); color: var(--text-muted); cursor: pointer; font-size: .8rem; list-style: none; }
+.dashboard-work-actions-menu summary::-webkit-details-marker { display: none; }
+.dashboard-work-actions-menu summary:hover { color: var(--accent); border-color: var(--accent); }
+.dashboard-work-actions-popover { position: absolute; z-index: 3; right: 0; top: calc(100% + .3rem); display: grid; gap: .3rem; min-width: 10rem; padding: .45rem; border: 1px solid var(--border); border-radius: var(--r-ctl); background: var(--surface); box-shadow: var(--shadow); }
+.dashboard-work-actions-popover .inline-quick-form { display: grid; gap: .3rem; }
 @media (max-width: 760px) {
-  .dashboard-visual-grid { grid-template-columns: 1fr; }
-  .dashboard-bar-row { grid-template-columns: 6.5rem minmax(0, 1fr) 2rem; }
+  .dashboard-card-grid { grid-template-columns: 1fr; }
+  .dashboard-card-grid .dashboard-overdue-card,
+  .dashboard-card-grid .dashboard-schedule-card,
+  .dashboard-card-grid .dashboard-due-card,
+  .dashboard-card-grid .dashboard-case-insight-card,
+  .dashboard-card-grid .dashboard-action-queue-card { grid-column: 1; grid-row: auto; }
+  .dashboard-schedule-item { grid-template-columns: 5.7rem minmax(0, 1fr); }
+  .dashboard-schedule-destination { grid-column: 2; }
+  .dashboard-work-actions { justify-content: flex-start; }
+  .dashboard-work-actions-popover { left: 0; right: auto; }
 }
 .pipeline-holder-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .65rem; margin-bottom: .65rem; }
 .pipeline-holder-summary-item { display: grid; gap: .15rem; padding: .6rem .75rem; border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface); }

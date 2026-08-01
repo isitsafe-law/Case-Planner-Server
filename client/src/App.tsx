@@ -10933,7 +10933,7 @@ function App() {
                     </thead>
                     <tbody>
                       {dashboardDueThisWeekItems.length === 0 ? (
-                        <UiEmptyState colSpan={5} title="Nothing due in the next 7 days" hint="Your upcoming work is clear." />
+                        <UiEmptyState colSpan={5} title="Nothing due in the next 7 days" hint="" />
                       ) : dashboardDueThisWeekItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
                           <td><TypeChip kind={item.type} /></td>

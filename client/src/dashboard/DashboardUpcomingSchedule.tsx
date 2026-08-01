@@ -25,7 +25,7 @@ export function DashboardUpcomingSchedule({ items, onEvent, onViewCalendar }: {
     {items.length === 0 ? <p className="dashboard-compact-empty">No upcoming case events.</p> : <div className="dashboard-schedule-list">{items.map((item) => <button key={item.key} type="button" className="dashboard-schedule-item" onClick={() => onEvent(item)} aria-label={`${dateLabel(item)}. ${item.type}. ${item.title}. ${item.caseName}. ${item.daysRemaining} days remaining.`}>
       <span className="dashboard-schedule-date">{dateLabel(item)}<small>{item.daysRemaining === 0 ? 'Today' : `${item.daysRemaining} days`}</small></span>
       <span className="dashboard-schedule-detail"><strong>{item.type}</strong><span>{item.title}</span><small>{item.caseName}{item.assignedAttorney ? ` · ${item.assignedAttorney}` : ''}</small></span>
-      <span className="dashboard-schedule-destination">Calendar →</span>
+      <span className="dashboard-schedule-destination">Calendar</span>
     </button>)}</div>}
   </section>
 }

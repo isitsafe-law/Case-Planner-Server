@@ -15,6 +15,7 @@ public sealed class DataQualityReportTests : IAsyncLifetime
         Assert.Contains(report.Issues, issue => issue.Key == "pipeline-unassigned");
         Assert.Contains(report.Issues, issue => issue.Key == "missing-case-style");
         Assert.Contains(report.Issues, issue => issue.Key == "missing-parties");
+        Assert.Contains(report.Issues, issue => issue.Key == "duplicate-canonical-parties");
         Assert.Contains(report.Issues, issue => issue.Key == "jury-trial-conflict");
         Assert.Contains(report.Issues, issue => issue.Key == "jury-trial-event-missing");
         Assert.Contains(report.Issues, issue => issue.Key == "jury-trial-event-no-case-date");

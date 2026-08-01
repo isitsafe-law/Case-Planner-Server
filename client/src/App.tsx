@@ -2489,6 +2489,14 @@ function App() {
   const [caseAttorneyAssignments, setCaseAttorneyAssignments] = useState<CaseAttorneyAssignment[]>([])
   const [allCaseAttorneyAssignments, setAllCaseAttorneyAssignments] = useState<Record<number, CaseAttorneyAssignment[]>>({})
   const [caseDefendants, setCaseDefendants] = useState<CaseDefendant[]>([])
+  const duplicateCanonicalPartyNames = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const party of caseDefendants) {
+      const normalized = party.name.trim().toLocaleLowerCase()
+      if (normalized) counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
+    }
+    return Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name)
+  }, [caseDefendants])
   const [pipelineHolderApprovals, setPipelineHolderApprovals] = useState<PipelineHolderApproval[]>([])
   // Which gated-holder action (Approve or Return for Revision) is currently expanded for a note
   // and a Confirm/Cancel pair - same "inline confirming state" shape as answerFiledConfirming
@@ -8162,6 +8170,7 @@ function App() {
               <div className="top-gap-small">
                 <div className="button-row compact-actions">
                   <span>Defendants</span>
+                  {duplicateCanonicalPartyNames.length > 0 && <StatusChip tone="warn">Duplicate party name{duplicateCanonicalPartyNames.length === 1 ? '' : 's'} — review before generating</StatusChip>}
                   {caseDefendants.length > 0 && selectedCase.defaultPostureWarning && <StatusChip tone="warn">No answer on file — default posture</StatusChip>}
                 </div>
                 <p className="helper-text">Track each defendant's address, service, and answer status individually — heirs often answer at genuinely different times. Once any defendant rows exist here, the case's default-posture warning above is derived from this list instead of the single global Answer Filed toggle.</p>

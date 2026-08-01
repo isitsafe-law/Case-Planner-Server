@@ -29,6 +29,8 @@ Multiple legal assistants are already supported through explicit case rows, so t
 
 `service_log_entries.party_name` is historical text and must remain available for prior service records. The first additive slice now adds nullable `case_defendant_id`; new entries can select a canonical defendant while the existing party name remains the stored snapshot. Historical rows are not automatically backfilled, and ambiguous/unmatched rows remain untouched. SQLite and SQL Server runtime stores support the bridge; deployment validation remains deferred.
 
+Data Quality now reports duplicate canonical party names within a case. This is observational and does not automatically merge or delete rows, because a duplicate may represent a distinct legal interest or may be referenced by historical service records.
+
 ## Verification
 
 - The Jury Trial legacy sample test confirms SAMPLE-CASE-004 receives exactly one Jury Trial event with the preserved start and end dates.

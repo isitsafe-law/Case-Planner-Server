@@ -10056,6 +10056,13 @@ public sealed partial class CasePlannerRepository
             "SELECT c.id FROM cases c WHERE COALESCE(c.case_status,'Pipeline') NOT IN ('Resolved / Closed','Triage') AND c.status NOT IN ('Closed','Complete','Triage') AND NOT EXISTS (SELECT 1 FROM case_defendants d WHERE d.case_id=c.id) AND COALESCE(c.landowner,c.owner,'')='' ORDER BY c.id LIMIT 20;"));
 
         report.Issues.Add(await Issue(
+            "duplicate-canonical-parties", "Case records", "Warning", "Cases with duplicate canonical party names",
+            "A case has more than one canonical party row with the same normalized name. Duplicate rows can produce repeated caption names or split service tracking.",
+            "Review the party rows, retain the intended role/order, and remove only the duplicate after confirming that no historical service record depends on it.",
+            "SELECT COUNT(*) FROM (SELECT case_id, lower(trim(name)) FROM case_defendants WHERE trim(COALESCE(name,''))<>'' GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1);",
+            "SELECT case_id FROM case_defendants WHERE trim(COALESCE(name,''))<>'' GROUP BY case_id, lower(trim(name)) HAVING COUNT(*) > 1 ORDER BY case_id LIMIT 20;"));
+
+        report.Issues.Add(await Issue(
             "jury-trial-event-missing", "Events", "Info", "Cases with a jury-trial date but no jury-trial event",
             "Open cases with the authoritative case-level trial_date but no matching Jury Trial event in the hearings catalog.",
             "Add or reconcile the calendar event if the matter should appear in the shared calendar.",

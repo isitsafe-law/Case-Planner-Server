@@ -43,6 +43,13 @@ separate case-level systems.
 
 ## Storage and migration
 
+### Template audit visibility
+
+Settings → Document Templates exposes the active-version completeness audit. Unknown tags are treated as
+template drift; valid tags with blank values are reported separately so an administrator can distinguish a
+broken template from a field that is intentionally empty for a particular case. Version history shows the
+active state, creation metadata, and unknown-tag count before an older version is reactivated.
+
 - Built-in templates remain catalog code plus approved source files.
 - Uploaded DOCX templates remain versioned source files with catalog metadata.
 - Reusable discovery content remains versioned discovery data and is assembled at case-generation time.

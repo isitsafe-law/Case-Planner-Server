@@ -11973,8 +11973,10 @@ function App() {
                     </div>
                     {platformCompleteness?.templateKey === selected.template.templateKey && (
                       <div className={`inline-message ${platformCompleteness.passed ? 'success' : 'warn'}`}>
-                        <p><strong>Merge-tag audit:</strong> {platformCompleteness.audit.discoveredTags.length} discovered, {platformCompleteness.audit.knownTags.length} known, {platformCompleteness.runtimeInputTags.length} runtime input(s).</p>
+                        <p><strong>Merge-tag audit for v{platformCompleteness.version}:</strong> {platformCompleteness.audit.discoveredTags.length} discovered, {platformCompleteness.audit.knownTags.length} known, {platformCompleteness.runtimeInputTags.length} runtime input(s).</p>
                         {platformCompleteness.audit.unknownTags.length > 0 && <p>Unknown: {platformCompleteness.audit.unknownTags.join(', ')}</p>}
+                        {platformCompleteness.audit.blankValues.length > 0 && <p>Valid tags with no current value: {platformCompleteness.audit.blankValues.join(', ')}. These will appear as <code>MISSING</code> during generation when the case or runtime input does not supply a value.</p>}
+                        {platformCompleteness.audit.unknownTags.length === 0 && platformCompleteness.audit.blankValues.length === 0 && <p>All discovered tags resolve to a registered field or declared runtime input.</p>}
                       </div>
                     )}
                     <p className="helper-text">A <strong>section</strong> is a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> block in the .docx; new versions detect these automatically, but you can rename a section's label or link it to an issue tag here (linking pre-checks it on the case Documents tab when the case carries that tag). A <strong>runtime input</strong> makes an existing <code>{'{{FieldKey}}'}</code> token prompt the attorney for a value at generation time instead of pulling it from the case record. An <strong>overlap warning</strong> just flags two sections that cover similar ground — it never blocks generation.</p>
@@ -11983,12 +11985,16 @@ function App() {
                     )}
 
                     <h5>Versions</h5>
+                    <p className="helper-text">The active version is used for new drafts. Older versions remain available for audit and can be reactivated; generated documents retain the version used at generation time.</p>
                     <div className="button-row compact-actions">
                       {selected.versions.map((v) => (
-                        <button key={v.id} className={v.isActive ? 'primary' : ''} disabled={v.isActive}
-                          onClick={() => void activatePlatformVersion(selected.template.templateKey, v.version)}>
-                          {v.isActive ? `v${v.version} Active` : `Activate v${v.version}`}
-                        </button>
+                        <span key={v.id} className="button-row compact-actions">
+                          <button className={v.isActive ? 'primary' : ''} disabled={v.isActive}
+                            onClick={() => void activatePlatformVersion(selected.template.templateKey, v.version)}>
+                            {v.isActive ? `v${v.version} Active` : `Activate v${v.version}`}
+                          </button>
+                          <span className="helper-text">{displayDateTime(v.createdAt)}{v.createdBy ? ` · ${v.createdBy}` : ''}{v.unknownTokens.length > 0 ? ` · ${v.unknownTokens.length} unknown tag(s)` : ''}</span>
+                        </span>
                       ))}
                     </div>
 

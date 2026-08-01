@@ -10,8 +10,7 @@ public static class MergeContextBuilder
     public static MergeContext Build(
         IReadOnlyDictionary<string, string> fields,
         IEnumerable<string> selectedSectionKeys,
-        IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? loops = null,
-        CaseStyleFormatting? caseStyleFormatting = null)
+        IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? loops = null)
     {
         var normalizedFields = new Dictionary<string, string>(fields, StringComparer.OrdinalIgnoreCase);
         var normalizedSections = new HashSet<string>(selectedSectionKeys, StringComparer.OrdinalIgnoreCase);
@@ -27,6 +26,6 @@ public static class MergeContextBuilder
             }
         }
 
-        return new MergeContext(normalizedFields, normalizedSections, normalizedLoops, caseStyleFormatting);
+        return new MergeContext(normalizedFields, normalizedSections, normalizedLoops);
     }
 }

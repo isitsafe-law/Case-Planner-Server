@@ -146,7 +146,6 @@ export type CaseRecord = {
   fapNumber?: string | null
   parcelNumber?: string | null
   caseStyle?: string | null
-  caseStyleFormattingJson?: string | null
   opposingCounselContact?: string | null
   caseFolderPath?: string | null
 }
@@ -3966,44 +3965,28 @@ function App() {
     ].join('\n')
   }
 
-  function structuredCaseStyle() {
+  function currentDefendantLines() {
     const lines = (caseDraft.caseStyle || '').replace(/\r\n/g, '\n').split('\n')
-    if (lines.length <= 1) {
-      return { court: '', division: '', plaintiff: lines[0] || '', plaintiffDesignation: '', versus: 'V.', caseNumber: '', defendants: '', defendantDesignation: '' }
+    const designation = lines.findIndex(line => line.trim().toUpperCase() === 'DEFENDANTS')
+    const caseNumber = lines.findIndex(line => line.toUpperCase().includes('CASE NO.'))
+    if (designation < 1) return ''
+    const start = caseNumber >= 0 ? caseNumber + 1 : Math.max(0, designation - 1)
+    return lines.slice(start, designation).join('\n')
+  }
+
+  function patchDefendantLines(value: string) {
+    const lines = (caseDraft.caseStyle || suggestedStructuredCaseStyle()).replace(/\r\n/g, '\n').split('\n')
+    const designation = lines.findIndex(line => line.trim().toUpperCase() === 'DEFENDANTS')
+    const caseNumber = lines.findIndex(line => line.toUpperCase().includes('CASE NO.'))
+    const start = caseNumber >= 0 && designation > caseNumber ? caseNumber + 1 : Math.max(0, designation - 1)
+    if (designation >= 0 && start <= designation) {
+      lines.splice(start, designation - start, ...value.replace(/\r\n/g, '\n').split('\n'))
+      setCaseDraft({ ...caseDraft, caseStyle: lines.join('\n') })
+      return
     }
-    return {
-      court: lines[0] || '', division: lines[1] || '', plaintiff: lines[2] || '',
-      plaintiffDesignation: lines[3] || '', versus: lines[4] || 'V.', caseNumber: lines[5] || '',
-      defendants: lines.slice(6, -1).join('\n'), defendantDesignation: lines.length > 6 ? (lines[lines.length - 1] || '') : ''
-    }
+    setCaseDraft({ ...caseDraft, caseStyle: `${caseDraft.caseStyle || ''}\n${value}\nDEFENDANTS` })
   }
 
-  function caseStyleFormatting() {
-    const lines = (caseDraft.caseStyle || '').replace(/\r\n/g, '\n').split('\n')
-    try {
-      const parsed = JSON.parse(caseDraft.caseStyleFormattingJson || '')
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
-    } catch { /* legacy plain-text style */ }
-    return lines.map(() => ({ bold: true, alignment: 'center', fontSize: 12 }))
-  }
-
-  function patchCaseStyleFormatting(patch: { bold?: boolean; alignment?: string; fontSize?: number }) {
-    const formats = caseStyleFormatting().map((format: { bold?: boolean; alignment?: string; fontSize?: number }) => ({
-      bold: patch.bold ?? Boolean(format.bold), alignment: patch.alignment ?? format.alignment ?? 'center', fontSize: patch.fontSize ?? format.fontSize ?? 12
-    }))
-    setCaseDraft({ ...caseDraft, caseStyleFormattingJson: JSON.stringify(formats) })
-  }
-
-  function patchStructuredCaseStyle(patch: Partial<ReturnType<typeof structuredCaseStyle>>) {
-    const current = structuredCaseStyle()
-    const next = { ...current, ...patch }
-    const lines = [next.court, next.division, next.plaintiff, next.plaintiffDesignation, next.versus, next.caseNumber,
-      ...next.defendants.split(/\r?\n/), next.defendantDesignation]
-    // Preserve fixed positions, spaces, and blank lines while the user is typing. In
-    // particular, do not trim trailing empty rows: a trailing newline in the parties box
-    // is an intentional edit and must survive the controlled-input round trip.
-    setCaseDraft({ ...caseDraft, caseStyle: lines.join('\n') })
-  }
 
   function startEditCaseWithSuggestedStyle() {
     if (!selectedCase.id) return
@@ -9763,24 +9746,9 @@ function App() {
                     {consolidatedCaseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
                   </select>
                 </label>
-                <div className="full-span structured-case-style-editor">
-                  <div className="field-label-row"><span>Structured Full Case Style</span><span className="helper-text">Each line is preserved when merged into a DOCX template.</span></div>
-                  <div className="form-grid top-gap-small">
-                    <label><span>Court heading</span><input value={structuredCaseStyle().court} onChange={(event) => patchStructuredCaseStyle({ court: event.target.value })} placeholder="IN THE CIRCUIT COURT OF ..." /></label>
-                    <label><span>Division</span><input value={structuredCaseStyle().division} onChange={(event) => patchStructuredCaseStyle({ division: event.target.value })} placeholder="CIVIL DIVISION" /></label>
-                    <label><span>Plaintiff</span><input value={structuredCaseStyle().plaintiff} onChange={(event) => patchStructuredCaseStyle({ plaintiff: event.target.value })} placeholder="ARKANSAS STATE HIGHWAY COMMISSION" /></label>
-                    <label><span>Plaintiff designation</span><input value={structuredCaseStyle().plaintiffDesignation} onChange={(event) => patchStructuredCaseStyle({ plaintiffDesignation: event.target.value })} placeholder="PLAINTIFF" /></label>
-                    <label><span>Versus line</span><input value={structuredCaseStyle().versus} onChange={(event) => patchStructuredCaseStyle({ versus: event.target.value })} /></label>
-                    <label><span>Case number line</span><input value={structuredCaseStyle().caseNumber} onChange={(event) => patchStructuredCaseStyle({ caseNumber: event.target.value })} placeholder="CASE NO. ..." /></label>
-                    <label className="full-span"><span>Defendants / parties</span><textarea value={structuredCaseStyle().defendants} onChange={(event) => patchStructuredCaseStyle({ defendants: event.target.value })} placeholder="One party per line" /></label>
-                    <label><span>Defendant designation</span><input value={structuredCaseStyle().defendantDesignation} onChange={(event) => patchStructuredCaseStyle({ defendantDesignation: event.target.value })} placeholder="DEFENDANTS" /></label>
-                  </div>
-                  <p className="helper-text top-gap-small">Legacy one-line case styles remain editable. Use the structured lines for court captions and multi-party styles; the saved value remains backward-compatible plain text with preserved line breaks.</p>
-                  <div className="form-grid top-gap-small">
-                    <label><span>Caption alignment</span><select value={String(caseStyleFormatting()[0]?.alignment || 'center')} onChange={(event) => patchCaseStyleFormatting({ alignment: event.target.value })}><option value="left">Left</option><option value="center">Centered</option><option value="right">Right</option></select></label>
-                    <label><span>Caption font size</span><select value={String(caseStyleFormatting()[0]?.fontSize || 12)} onChange={(event) => patchCaseStyleFormatting({ fontSize: Number(event.target.value) })}><option value="10">10 pt</option><option value="11">11 pt</option><option value="12">12 pt</option><option value="14">14 pt</option></select></label>
-                    <label className="toggle-inline"><span>Bold caption</span><input type="checkbox" checked={Boolean(caseStyleFormatting()[0]?.bold ?? true)} onChange={(event) => patchCaseStyleFormatting({ bold: event.target.checked })} /></label>
-                  </div>
+                <div className="full-span">
+                  <label><span>Defendants / parties</span><textarea value={currentDefendantLines()} onChange={(event) => patchDefendantLines(event.target.value)} placeholder="Paste one defendant or party per line" /></label>
+                  <p className="helper-text top-gap-small">Paste the variable party list here, one name per line. The Word case-header template supplies the court heading, plaintiff, case number, tab stops, and the final DEFENDANTS label.</p>
                 </div>
                 <label className="full-span"><span>Full Legal Description</span><textarea value={caseDraft.propertyDescription || ''} onChange={(event) => patchCaseDraft({ propertyDescription: event.target.value })} placeholder="Full legal description of the property at issue" /></label>
                 <label className="full-span"><span>Case Folder Path</span><input value={caseDraft.caseFolderPath || ''} onChange={(event) => patchCaseDraft({ caseFolderPath: event.target.value })} placeholder={String.raw`\\fileserver\share\JobNumber\Tract`} /></label>

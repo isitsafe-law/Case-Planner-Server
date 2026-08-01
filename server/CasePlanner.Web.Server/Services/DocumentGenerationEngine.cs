@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using CasePlanner.Web.Server.Models;
 using DocumentFormat.OpenXml;
@@ -12,21 +11,6 @@ namespace CasePlanner.Web.Server.Services;
 // callers assemble the CaseRecord/OrgDefaults/manual inputs and pass them in.
 public static partial class DocumentGenerationEngine
 {
-    public static CaseStyleFormatting? ParseCaseStyleFormatting(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try
-        {
-            var first = JsonSerializer.Deserialize<List<CaseStyleFormatting>>(json)?.FirstOrDefault();
-            return first is null ? null : new CaseStyleFormatting
-            {
-                Bold = first.Bold,
-                Alignment = first.Alignment is "left" or "right" ? first.Alignment : "center",
-                FontSize = Math.Clamp(first.FontSize, 8, 24)
-            };
-        }
-        catch (JsonException) { return null; }
-    }
     // Templates created before the current dotted naming convention used compact or
     // human-readable names. Keep those templates usable without duplicating catalog rows.
     internal static readonly IReadOnlyDictionary<string, string> LegacyTokenAliases =

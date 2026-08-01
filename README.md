@@ -147,7 +147,7 @@ Data-quality findings expose a total count plus the number of additional affecte
 
 ## Case record and trial-event notes
 
-Case Style is displayed in the lower Case Record section rather than the top Overview area. Edit Case now provides a structured caption editor for the court heading, division, plaintiff, case-number line, multi-party defendant lines, party designations, alignment, bold, and font size. The saved value remains backward-compatible line-separated text, while formatting metadata is stored separately and applied to DOCX output. The existing `Property Description` field is the full legal description and is available to templates as `{{LegalDescription}}`, `{{PropertyDescription}}`, or `{{Case.LegalDescription}}`.
+Case Style is displayed in the lower Case Record section rather than the top Overview area. Because attorney-authored DOCX templates now supply the fixed caption formatting, Edit Case exposes only the paste-friendly defendants/parties line list for this workflow. The existing `Property Description` field is the full legal description and is available to templates as `{{LegalDescription}}`, `{{PropertyDescription}}`, or `{{Case.LegalDescription}}`.
 
 For a caption with attorney-authored tab stops or mixed alignment, use a DOCX document template as the formatting authority. Keep the fixed court/caption heading in Word and replace only the variable defendant block with `{{Case.DefendantLines}}`. The field emits each canonical defendant on its own left-aligned line, then emits `DEFENDANTS` after a tab on the final line. Upload that DOCX under Settings → Document Templates; the merge engine preserves the template's tab stop and applies the dynamic party values.
 

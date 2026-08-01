@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -261,19 +260,6 @@ public static partial class DocxSectionMerger
 
             text.Text = sb.ToString();
             text.Space = SpaceProcessingModeValues.Preserve;
-            if (matches.Count > 0 && context.CaseStyleFormatting is not null && matches[0].Groups[1].Value.Contains("Case.FullStyle", StringComparison.OrdinalIgnoreCase))
-            {
-                var style = context.CaseStyleFormatting;
-                var paragraphProperties = paragraph.GetFirstChild<ParagraphProperties>() ?? paragraph.PrependChild(new ParagraphProperties());
-                paragraphProperties.Justification = new Justification { Val = style.Alignment switch { "left" => JustificationValues.Left, "right" => JustificationValues.Right, _ => JustificationValues.Center } };
-                var runProperties = text.Parent?.GetFirstChild<RunProperties>() ?? text.Parent?.PrependChild(new RunProperties());
-                if (runProperties is not null)
-                {
-                    runProperties.Bold = style.Bold ? new Bold() : null;
-                    runProperties.FontSize = new FontSize { Val = (style.FontSize * 2).ToString(CultureInfo.InvariantCulture) };
-                    runProperties.RunFonts = new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" };
-                }
-            }
             runStart = runEnd;
         }
 

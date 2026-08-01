@@ -407,8 +407,7 @@ public sealed partial class CasePlannerRepository
 
             var manualFieldDefs = runtimeInputDefs.Select(r => new DocumentTemplateField { Key = r.FieldKey, Label = r.Label, Type = r.FieldType }).ToList();
             var tokens = DocumentGenerationEngine.BuildTokens(workspace.Case, org, runtimeInputValues, manualFieldDefs, workspace.CaseDefendants, workspace.OpposingAttorneys);
-            var caseStyleFormatting = DocumentGenerationEngine.ParseCaseStyleFormatting(workspace.Case.CaseStyleFormattingJson);
-            var context = MergeContextBuilder.Build(tokens, selectedSectionKeys, caseStyleFormatting: caseStyleFormatting);
+            var context = MergeContextBuilder.Build(tokens, selectedSectionKeys);
 
             // Portable builds can be copied to a new folder while the SQLite database still
             // contains an absolute template path from the previous folder. Recover by matching

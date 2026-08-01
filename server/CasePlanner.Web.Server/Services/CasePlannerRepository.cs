@@ -10216,6 +10216,7 @@ public sealed partial class CasePlannerRepository
             Columns = request.Columns.Where(column => !string.IsNullOrWhiteSpace(column)).Distinct(StringComparer.Ordinal).ToList(),
             SortColumn = string.IsNullOrWhiteSpace(request.SortColumn) ? "caseName" : request.SortColumn.Trim(),
             SortDirection = string.Equals(request.SortDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc",
+            GroupColumn = request.GroupColumn?.Trim() ?? "",
             UpdatedAt = DateTimeOffset.UtcNow.ToString("O"),
         };
         definitions.RemoveAll(item => string.Equals(item.Id, saved.Id, StringComparison.Ordinal));

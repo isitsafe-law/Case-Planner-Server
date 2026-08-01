@@ -20,13 +20,16 @@ JSON application setting (`saved_report_definitions_v1`) and contain the report 
 columns, and sort order. This keeps the feature portable while the application is single-user. A future
 SQL/Entra migration can promote these records to user- or division-scoped rows without changing the report
 definition shape.
+The report builder also supports optional grouping by any selected column; grouping is a presentation choice
+and does not alter counts, filters, exports, or the underlying case records.
 
 ## Build order
 
 - Phase 1: shared open-case and upcoming-work selectors, plus tests against existing Work Queue behavior.
 - Phase 2: compact dashboard upcoming-work view with 5/10 preference, filters, actions, and Work Queue navigation.
 - Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports. The first
-  saved-definition slice is complete; grouping, seeded reports, and user-scoped sharing remain follow-up work.
+  saved-definition and presentation-grouping slices are complete; relative dates, seeded reports, and
+  user-scoped sharing remain follow-up work.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

@@ -1222,6 +1222,7 @@ type SavedReportDefinition = {
   columns: ReportColumnKey[]
   sortColumn: ReportColumnKey
   sortDirection: 'asc' | 'desc'
+  groupColumn: ReportColumnKey | ''
   updatedAt: string
 }
 
@@ -2310,6 +2311,7 @@ function App() {
   const [reportColumns, setReportColumns] = useState<ReportColumnKey[]>(['caseName', 'caseNumber', 'county', 'caseStatus', 'currentHolder', 'nextAction', 'trialDate'])
   const [reportSortColumn, setReportSortColumn] = useState<ReportColumnKey>('caseName')
   const [reportSortDirection, setReportSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [reportGroupColumn, setReportGroupColumn] = useState<ReportColumnKey | ''>('')
   const [savedReports, setSavedReports] = useState<SavedReportDefinition[]>([])
   const [savedReportName, setSavedReportName] = useState('')
   // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
@@ -6366,13 +6368,13 @@ function App() {
   function applySavedReport(report: SavedReportDefinition) {
     setReportStatusFilter(report.status); setReportCountyFilter(report.county); setReportDistrictFilter(report.district)
     setReportSearch(report.search); setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo)
-    setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportPreset('')
+    setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || ''); setReportPreset('')
     setMessage(`Loaded report: ${report.name}`)
   }
   async function saveCurrentReport() {
     if (!savedReportName.trim()) { setErrorMessage('Enter a name for the saved report.'); return }
     try {
-      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection }) })
+      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection, groupColumn: reportGroupColumn }) })
       setSavedReports((current) => [saved, ...current.filter((report) => report.id !== saved.id)])
       setSavedReportName(''); setMessage(`Saved report: ${saved.name}`)
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to save the report.') }
@@ -11203,6 +11205,7 @@ function App() {
                 <div className="rep-fields top-gap-small">
                   <label><span>Sort by</span><select value={reportSortColumn} onChange={(event) => setReportSortColumn(event.target.value as ReportColumnKey)}>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label>
                   <label><span>Direction</span><select value={reportSortDirection} onChange={(event) => setReportSortDirection(event.target.value as 'asc' | 'desc')}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+                  <label><span>Group rows by</span><select value={reportGroupColumn} onChange={(event) => setReportGroupColumn(event.target.value as ReportColumnKey | '')}><option value="">No grouping</option>{reportColumns.map((column) => <option key={column} value={column}>{reportColumnOptions.find((option) => option.key === column)?.label}</option>)}</select></label>
                 </div>
               </CollapsiblePanel>
             </div>
@@ -11246,12 +11249,17 @@ function App() {
                       <tbody>
                         {reportRows.length === 0 ? (
                           <UiEmptyState colSpan={reportColumns.length + 1} title="No cases match the current filters" />
-                        ) : reportRows.map((record) => (
-                          <tr key={record.id}>
-                            {reportColumns.map((column) => <td key={column} className={reportDataColumnKeys.has(column) ? 'ui-data' : undefined}>{reportCellValue(record, column) || <span className="ui-cell-faint">—</span>}</td>)}
-                            <td><Btn size="sm" onClick={() => openCase(record.id, 'overview')}>Open Case</Btn></td>
-                          </tr>
-                        ))}
+                        ) : reportRows.map((record, index) => {
+                          const groupValue = reportGroupColumn ? reportCellValue(record, reportGroupColumn) || 'Unspecified' : ''
+                          const previousGroupValue = reportGroupColumn && index > 0 ? reportCellValue(reportRows[index - 1], reportGroupColumn) || 'Unspecified' : null
+                          return <Fragment key={record.id}>
+                            {reportGroupColumn && groupValue !== previousGroupValue && <tr className="report-group-row"><th colSpan={reportColumns.length + 1}>Group: {reportColumnOptions.find((option) => option.key === reportGroupColumn)?.label} · {groupValue}</th></tr>}
+                            <tr>
+                              {reportColumns.map((column) => <td key={column} className={reportDataColumnKeys.has(column) ? 'ui-data' : undefined}>{reportCellValue(record, column) || <span className="ui-cell-faint">—</span>}</td>)}
+                              <td><Btn size="sm" onClick={() => openCase(record.id, 'overview')}>Open Case</Btn></td>
+                            </tr>
+                          </Fragment>
+                        })}
                       </tbody>
                     </table>
                   </div>

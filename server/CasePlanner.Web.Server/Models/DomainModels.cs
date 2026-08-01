@@ -1772,6 +1772,7 @@ public class SavedReportDefinition
     public List<string> Columns { get; set; } = [];
     public string SortColumn { get; set; } = "caseName";
     public string SortDirection { get; set; } = "asc";
+    public string GroupColumn { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
 }
 

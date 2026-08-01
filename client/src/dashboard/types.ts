@@ -230,11 +230,11 @@ export type PipelineHandoffRecord = {
 // Replaces the old 6-key SUMMARY_CARD_KEYS/DashboardSummaryCard filter model - those six abstract
 // categories (needsJudgment/stalled/discoveryUnset/onMyDesk/trialTrack/missingNextReview) are
 // superseded by priority-level tile filtering here, with the same dimensions still reachable via
-// the Case Insight rail (Momentum tab, Discovery tab, Trial tab, and the clickable docket kv rows).
+// the Case Insight rail (Review status tab, Discovery tab, Trial tab, and the clickable docket kv rows).
 export const PRIORITY_TILES: { level: number; label: string; tone: 'danger' | 'warn' | 'default' }[] = [
   { level: 1, label: 'Immediate', tone: 'danger' },
   { level: 2, label: 'Attorney decision', tone: 'warn' },
-  { level: 3, label: 'Momentum', tone: 'default' },
+  { level: 3, label: 'Review status', tone: 'default' },
   { level: 4, label: 'Planned work', tone: 'default' },
 ]
 

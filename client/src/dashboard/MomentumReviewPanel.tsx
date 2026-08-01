@@ -13,7 +13,7 @@ export function MomentumReviewPanel({ entries, onOpenCase }: { entries: Momentum
   const needsAttention = entries.filter((e) => e.momentumStatus === 'Stalled' || e.momentumStatus === 'Review Required')
 
   if (needsAttention.length === 0) {
-    return <EmptyState title="No cases need a momentum review" description="Cases appear here after 60 days without meaningful activity, or when a waiting follow-up date has passed." />
+    return <EmptyState title="No cases need a review" description="Cases appear here after the configured stale-review threshold, or when a waiting follow-up date has passed." />
   }
 
   return (

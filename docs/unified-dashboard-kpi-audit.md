@@ -13,7 +13,7 @@ This audit records the dashboard source-of-truth review for the first controlled
 | Headline/context | `/api/dashboard` plus `/api/dashboard/attorney` | Mostly static | Keep as context; not an actionable KPI |
 | Priority KPI tiles | `attorneyDashboard.actionQueue` | Filters Action Queue by priority | Keep, but supplement with date-based KPIs |
 | Action Queue | `GetAttorneyDashboardAsync` / `AttorneyDashboardEngine` | Case opening, inline decisions, notes, discovery updates | Keep; this is the primary reason-based action list |
-| Case Insight | attorney dashboard response | Docket, discovery, momentum, pipeline, trials, projects | Keep as compact planning information |
+| Case Insight | attorney dashboard response | Docket, discovery, review status, pipeline, trials, projects | Keep as compact secondary information |
 | Overdue work | shared `/api/dashboard/upcoming-work` projection | Complete, reschedule, open case | Keep; count and rows use the same eligible-work projection as Work Queue |
 | Due in next seven days | shared projection | Complete, reschedule, open case | Keep; excludes overdue items |
 | Visual summaries | Compact count chips and planning row over shared work/hard-date records | Count click opens Work Queue or Calendar | Keep; large bars were removed |

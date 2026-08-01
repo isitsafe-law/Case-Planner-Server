@@ -1,36 +1,28 @@
-export type DashboardBar = { key: string; label: string; count: number; detail?: string }
+import type { UpcomingScheduleItem } from './DashboardUpcomingSchedule'
+import { DashboardUpcomingSchedule } from './DashboardUpcomingSchedule'
 
 export type PlanningSummary = {
   juryTrials: number
   events: number
   deadlines: number
-  nextJuryTrial?: { date: string; caseName: string } | null
+  nextJuryTrial?: { date: string; endDate?: string | null; caseName: string; caseId: number; eventId?: number | null; daysRemaining: number } | null
 }
 
-function CountButton({ label, count, onClick }: { label: string; count: number; onClick: () => void }) {
-  return <button type="button" className="dashboard-count-chip" onClick={onClick} aria-label={`${label}: ${count}`}><span>{label}</span><strong>{count}</strong></button>
-}
-
-export function DashboardCompactSummaries({ urgency, planning, onUrgency, onJuryTrials, onEvents, onDeadlines }: {
-  urgency: DashboardBar[]
+export function DashboardCompactSummaries({ planning, onJuryTrial, schedule, onEvent, onViewCalendar }: {
   planning: PlanningSummary
-  onUrgency: (bar: DashboardBar) => void
-  onJuryTrials: () => void
-  onEvents: () => void
-  onDeadlines: () => void
+  onJuryTrial: () => void
+  schedule: UpcomingScheduleItem[]
+  onEvent: (item: UpcomingScheduleItem) => void
+  onViewCalendar: () => void
 }) {
-  return <div className="dashboard-compact-summary">
-    <div className="dashboard-compact-row" aria-label="Work by urgency">
-      {urgency.map((bar) => <CountButton key={bar.key} label={bar.label} count={bar.count} onClick={() => onUrgency(bar)} />)}
-    </div>
-    <div className="dashboard-planning-row" aria-label="Upcoming planning summary">
-      <button type="button" className="dashboard-planning-card dashboard-planning-card-wide" onClick={onJuryTrials}>
-        <span>Next jury trial</span>
-        <strong>{planning.nextJuryTrial ? planning.nextJuryTrial.date : 'None scheduled'}</strong>
-        <small>{planning.nextJuryTrial?.caseName || `${planning.juryTrials} within 180 days`}</small>
-      </button>
-      <CountButton label="Events · 30 days" count={planning.events} onClick={onEvents} />
-      <CountButton label="Deadlines · 30 days" count={planning.deadlines} onClick={onDeadlines} />
-    </div>
+  const trial = planning.nextJuryTrial
+  return <div className="dashboard-planning-column">
+    <button type="button" className="dashboard-next-trial-card" onClick={onJuryTrial} aria-label={trial ? `Next jury trial: ${trial.caseName}, ${trial.date}` : 'No upcoming jury trial'}>
+      <span>Next jury trial</span>
+      <strong>{trial ? trial.date : 'None scheduled'}</strong>
+      <small>{trial ? trial.caseName : `${planning.juryTrials} within 180 days`}</small>
+      {trial && <em>{trial.daysRemaining === 0 ? 'Today' : `${trial.daysRemaining} days remaining`}</em>}
+    </button>
+    <DashboardUpcomingSchedule items={schedule} onEvent={onEvent} onViewCalendar={onViewCalendar} />
   </div>
 }

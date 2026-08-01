@@ -17,8 +17,9 @@ import { EditHistoryList } from './EditHistoryList'
 import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecisionDialog'
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
 import { DashboardWorkActions } from './dashboard/DashboardWorkActions'
-import { DashboardCompactSummaries, type DashboardBar, type PlanningSummary } from './dashboard/DashboardCompactSummaries'
-import { DashboardUpcomingSchedule, type UpcomingScheduleItem } from './dashboard/DashboardUpcomingSchedule'
+import { DashboardCompactSummaries, type PlanningSummary } from './dashboard/DashboardCompactSummaries'
+type DashboardBar = { key: string; label: string; count: number; detail?: string }
+import type { UpcomingScheduleItem } from './dashboard/DashboardUpcomingSchedule'
 import { ProjectWatchRowCard } from './dashboard/ProjectWatchRowCard'
 import { EmptyState } from './dashboard/EmptyState'
 import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
@@ -1892,6 +1893,7 @@ function matchesUrgency(dateValue: string | null | undefined, urgency: string): 
   if (due === null) return false
   const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
   const days = due - today
+  if (urgency === 'Immediate') return days <= 0
   if (urgency === 'Overdue') return days < 0
   if (urgency === 'Due Today') return days === 0
   if (urgency === 'Due in 7 Days') return days >= 0 && days <= 7
@@ -6767,21 +6769,13 @@ function App() {
       if (source) await persistDeadline({ ...source, dueDate }, 'Deadline due date updated.', false)
     }
   }
-  const dashboardUrgencyBars = useMemo<DashboardBar[]>(() => {
+  const dashboardUpcomingWorkItems8To30 = useMemo(() => {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
-    const buckets = [
-      { key: 'overdue', label: 'Overdue', count: 0, detail: '' },
-      { key: 'today', label: 'Due today', count: 0, detail: '' },
-      { key: 'next7', label: 'Next 7 days', count: 0, detail: '' },
-      { key: '8to30', label: '8-30 days', count: 0, detail: '' },
-    ]
-    for (const item of dashboardUpcomingWorkItems) {
-      if (!item.dueDate) continue
+    return dashboardUpcomingWorkItems.filter((item) => {
+      if (!item.dueDate) return false
       const days = DateOnlyFromString(item.dueDate)! - today
-      const bucket = days < 0 ? buckets[0] : days === 0 ? buckets[1] : days <= 7 ? buckets[2] : days <= 30 ? buckets[3] : null
-      if (bucket) bucket.count++
-    }
-    return buckets
+      return days >= 8 && days <= 30
+    })
   }, [dashboardUpcomingWorkItems])
   const dashboardHardDateBars = useMemo<DashboardBar[]>(() => {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
@@ -6813,9 +6807,8 @@ function App() {
     return buckets.map((bucket) => ({ ...bucket, detail: `${bucket.events} event${bucket.events === 1 ? '' : 's'} · ${bucket.deadlines} deadline${bucket.deadlines === 1 ? '' : 's'}` }))
   }, [allCases, queueHearings, queueDeadlines])
   void dashboardHardDateBars
-  function openUrgencyBucket(bar: DashboardBar) {
-    const urgency = bar.key === 'overdue' ? 'Overdue' : bar.key === 'today' ? 'Due Today' : bar.key === 'next7' ? 'Due in 7 Days' : 'Due in 8-30 Days'
-    setWorkQueueUrgency(urgency)
+  function openUpcomingWork() {
+    setWorkQueueUrgency('Due in 8-30 Days')
     setWorkQueueFilter('all')
     setWorkQueueSearch('')
     setPage('queues')
@@ -6830,62 +6823,41 @@ function App() {
     }
     const activeTrialEvents = queueHearings.filter((event) => event.eventType === 'Jury Trial' && openCaseIds.has(event.caseId) && !['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') && inWindow(event.hearingDate, 180))
     const trialCaseIds = new Set(activeTrialEvents.map((event) => event.caseId))
-    const legacyTrials = allCases.filter((record) => openCaseIds.has(record.id) && !trialCaseIds.has(record.id) && inWindow(record.trialDate, 180)).map((record) => ({ date: record.trialDate as string, caseName: record.caseName || record.caseNumber || `Case ${record.id}` }))
-    const nextTrial = [...activeTrialEvents.map((event) => ({ date: event.hearingDate as string, caseName: allCases.find((record) => record.id === event.caseId)?.caseName || `Case ${event.caseId}` })), ...legacyTrials].sort((a, b) => a.date.localeCompare(b.date))[0] || null
+    const legacyTrials = allCases.filter((record) => openCaseIds.has(record.id) && !trialCaseIds.has(record.id) && inWindow(record.trialDate, 180)).map((record) => ({ date: record.trialDate as string, caseName: record.caseName || record.caseNumber || `Case ${record.id}`, caseId: record.id }))
+    const nextTrial = [...activeTrialEvents.map((event) => ({ date: event.hearingDate as string, endDate: event.endDate || null, caseName: allCases.find((record) => record.id === event.caseId)?.caseName || `Case ${event.caseId}`, caseId: event.caseId, eventId: event.id })), ...legacyTrials.map((trial) => ({ ...trial, endDate: null, eventId: null }))].sort((a, b) => a.date.localeCompare(b.date) || a.caseId - b.caseId)[0] || null
     return {
       juryTrials: activeTrialEvents.length + legacyTrials.length,
       events: queueHearings.filter((event) => openCaseIds.has(event.caseId) && !['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') && inWindow(event.hearingDate, 30)).length,
       deadlines: queueDeadlines.filter((deadline) => openCaseIds.has(deadline.caseId) && !isDeadlineDone(deadline) && inWindow(deadline.dueDate, 30)).length,
-      nextJuryTrial: nextTrial ? { date: displayDate(nextTrial.date), caseName: nextTrial.caseName } : null,
+      nextJuryTrial: nextTrial ? { date: displayDate(nextTrial.date), endDate: nextTrial.endDate ? displayDate(nextTrial.endDate) : null, caseName: nextTrial.caseName, caseId: nextTrial.caseId, eventId: nextTrial.eventId, daysRemaining: DateOnlyFromString(nextTrial.date)! - today } : null,
     }
   }, [allCases, queueHearings, queueDeadlines])
   const dashboardUpcomingSchedule = useMemo<UpcomingScheduleItem[]>(() => {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
     const caseById = new Map(allCases.filter(isOpenCase).map((record) => [record.id, record]))
     const items: UpcomingScheduleItem[] = []
+    const nextTrialEventId = dashboardPlanningSummary.nextJuryTrial?.eventId ?? null
+    const nextTrialCaseId = dashboardPlanningSummary.nextJuryTrial?.eventId == null ? dashboardPlanningSummary.nextJuryTrial?.caseId : null
     const add = (item: UpcomingScheduleItem) => { if (item.daysRemaining >= 0 && item.daysRemaining <= 180) items.push(item) }
     for (const event of queueHearings) {
       const record = caseById.get(event.caseId)
       if (!record || !event.hearingDate || ['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') || event.eventType === 'Other') continue
       const date = DateOnlyFromString(event.hearingDate)
-      if (date == null) continue
-      add({ key: `event-${event.id}`, date: displayDate(event.hearingDate), endDate: event.endDate ? displayDate(event.endDate) : null, kind: 'event', type: event.eventType || 'Event', title: event.title || event.eventType || 'Event', caseId: event.caseId, caseName: record.caseName || record.caseNumber || `Case ${record.id}`, daysRemaining: date - today, assignedAttorney: record.assignedAttorney })
-    }
-    for (const deadline of queueDeadlines) {
-      const record = caseById.get(deadline.caseId)
-      if (!record || isDeadlineDone(deadline) || !deadline.dueDate) continue
-      const date = DateOnlyFromString(deadline.dueDate)
-      if (date == null) continue
-      add({ key: `deadline-${deadline.id}`, date: displayDate(deadline.dueDate), kind: 'deadline', type: 'Deadline', title: deadline.title, caseId: deadline.caseId, caseName: record.caseName || record.caseNumber || `Case ${record.id}`, daysRemaining: date - today, assignedAttorney: record.assignedAttorney })
+      const endDate = event.endDate ? DateOnlyFromString(event.endDate) : date
+      if (date == null || endDate == null || endDate < today || (nextTrialEventId != null && event.id === nextTrialEventId) || (nextTrialEventId == null && nextTrialCaseId === event.caseId && event.eventType === 'Jury Trial')) continue
+      add({ key: `event-${event.id}`, date: displayDate(event.hearingDate), endDate: event.endDate ? displayDate(event.endDate) : null, kind: 'event', type: event.eventType || 'Event', title: event.title || event.eventType || 'Event', caseId: event.caseId, caseName: record.caseName || record.caseNumber || `Case ${record.id}`, daysRemaining: Math.max(0, date - today), assignedAttorney: record.assignedAttorney })
     }
     return items.sort((a, b) => a.daysRemaining - b.daysRemaining || a.key.localeCompare(b.key)).slice(0, 5)
-  }, [allCases, queueHearings, queueDeadlines])
+  }, [allCases, queueHearings, dashboardPlanningSummary])
   function openDashboardJuryTrials() {
     setCalendarInitialRange(180)
     setCalendarInitialEventType('Jury Trial')
     setPage('calendar')
   }
-  function openDashboardEvents() {
-    setCalendarInitialRange(30)
-    setCalendarInitialEventType('All')
-    setPage('calendar')
-  }
-  function openDashboardDeadlines() {
-    setWorkQueueFilter('deadlines')
-    setWorkQueueUrgency('Due in 30 Days')
-    setWorkQueueSearch('')
-    setPage('queues')
-  }
   function openScheduleEvent(item: UpcomingScheduleItem) {
     setCalendarInitialRange(180)
     setCalendarInitialEventType(item.type)
     setPage('calendar')
-  }
-  function openScheduleDeadline(item: UpcomingScheduleItem) {
-    setWorkQueueFilter('deadlines')
-    setWorkQueueUrgency('All Open')
-    setWorkQueueSearch(item.title)
-    setPage('queues')
   }
   function openScheduleCalendar() {
     setCalendarInitialRange(180)
@@ -7494,7 +7466,7 @@ function App() {
           ))}
           <FilterSep />
           <select aria-label="Urgency" value={workQueueUrgency} onChange={(event) => setWorkQueueUrgency(event.target.value)}>
-            {['All Open', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 8-30 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}
+            {['All Open', 'Immediate', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 8-30 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}
           </select>
           <select aria-label="Sort" value={workQueueSort} onChange={(event) => setWorkQueueSort(event.target.value as QueueSortMode)}>
             <option value="dueAsc">Due date ↑</option>
@@ -10723,18 +10695,10 @@ function App() {
             <LoadingSkeleton rows={6} />
           ) : attorneyDashboard && (
             <>
-              <div className="ui-tiles" style={{ marginBottom: '1rem' }}>
-                {PRIORITY_TILES.map((tile) => (
-                  <MetricTile
-                    key={tile.level}
-                    label={tile.label}
-                    value={priorityQueueCounts[tile.level] ?? 0}
-                    tone={tile.tone}
-                    hint={tile.label === 'Immediate' ? 'Overdue or due today' : tile.label === 'Attorney decision' ? 'Cases needing judgment' : tile.label === 'Momentum' ? 'Stalled or review needed' : 'Planned work to advance'}
-                    active={activeQueueTiles.has(tile.level)}
-                    onClick={() => toggleQueueTile(tile.level)}
-                  />
-                ))}
+              <div className="ui-tiles dashboard-kpi-strip" style={{ marginBottom: '1rem' }}>
+                <MetricTile label="Immediate" value={dashboardOverdueItems.length + dashboardUpcomingWorkItems.filter((item) => item.dueDate === new Date().toISOString().slice(0, 10)).length} tone="danger" hint="Overdue or due today" onClick={() => { setWorkQueueUrgency('Immediate'); setWorkQueueFilter('all'); setWorkQueueSearch(''); setPage('queues') }} />
+                <MetricTile label="Attorney decision" value={priorityQueueCounts[2] ?? 0} tone="warn" hint="Cases requiring your decision" active={activeQueueTiles.has(2)} onClick={() => toggleQueueTile(2)} />
+                <MetricTile label="Upcoming work" value={dashboardUpcomingWorkItems8To30.length} hint="Open work due in 8–30 days" onClick={openUpcomingWork} />
                 <MetricTile label="Jury trials" value={dashboardPlanningSummary.juryTrials} hint="Within 180 days" onClick={openDashboardJuryTrials} />
                 {attorneyDashboard.triageCaseCount > 0 && <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />}
               </div>
@@ -10762,8 +10726,6 @@ function App() {
                   </aside>
                 </>
               )}
-
-              <DashboardCompactSummaries urgency={dashboardUrgencyBars} planning={dashboardPlanningSummary} onUrgency={openUrgencyBucket} onJuryTrials={openDashboardJuryTrials} onEvents={openDashboardEvents} onDeadlines={openDashboardDeadlines} />
 
               <div className="dashboard-card-grid">
               <div className="dash-cols">
@@ -10856,7 +10818,7 @@ function App() {
                     {([
                       { key: 'docket', label: 'Docket' },
                       { key: 'discovery', label: 'Discovery' },
-                      { key: 'momentum', label: 'Momentum' },
+                      { key: 'momentum', label: 'Review status' },
                       { key: 'pipeline', label: 'Pipeline' },
                       { key: 'trial', label: 'Trials' },
                       { key: 'projects', label: 'Projects' },
@@ -10950,7 +10912,7 @@ function App() {
                 {dashboardOverdueItems.length > 10 && <p className="footnote" style={{ padding: '0.5rem 0.9rem' }}>and {dashboardOverdueItems.length - 10} more...</p>}
               </div>
 
-              <DashboardUpcomingSchedule items={dashboardUpcomingSchedule} onEvent={openScheduleEvent} onDeadline={openScheduleDeadline} onViewCalendar={openScheduleCalendar} />
+              <DashboardCompactSummaries planning={dashboardPlanningSummary} onJuryTrial={openDashboardJuryTrials} schedule={dashboardUpcomingSchedule} onEvent={openScheduleEvent} onViewCalendar={openScheduleCalendar} />
 
               <div className="ui-table-panel dashboard-due-card">
                 <div className="panel-hd">

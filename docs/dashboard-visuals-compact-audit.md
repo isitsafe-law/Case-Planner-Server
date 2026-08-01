@@ -21,11 +21,11 @@ Status: implemented baseline, 2026-08-01
 - Retain the useful information as compact count controls: urgency counts, jury trials, events, and deadlines. Counts are buttons, not proportional bars.
 - Add a short planning row showing the next jury trial and compact event/deadline counts.
 - Route event counts to Calendar and deadline counts to Work Queue's deadline facet. Mixed summaries must have separate controls.
-- Keep the actionable Overdue, Due Soon, and Action Queue lists as the main dashboard body.
+- Keep Action Queue first, followed by actionable Overdue and Due Soon lists as the main dashboard body.
 - Keep the manager KPI strip; remove the manager bar charts and leave exception lists/tabs as the detail destination.
 - Make case names clickable and keep only the primary action visible in each row. Secondary actions remain available through a compact overflow menu.
 
-The implementation now uses a responsive attorney card grid: Overdue Work and Upcoming Schedule share the first row, Due Soon and Case Insight share the second row, and Action Queue receives the full-width working row. Upcoming Schedule shows up to five actual records with date, type, case, days remaining, and destination. KPI tiles include short explanatory hints; no attorney dashboard chart remains.
+The implementation now uses a responsive attorney card grid: Action Queue is first, followed by Overdue Work, Due Soon, and a compact planning column containing Next Jury Trial above an event-only Upcoming Schedule. Upcoming Schedule shows up to five actual case events with date, type, case, days remaining, and Calendar routing. KPI tiles use short explanatory hints; no attorney dashboard chart or urgency-chip row remains.
 
 ## Layout and accessibility
 

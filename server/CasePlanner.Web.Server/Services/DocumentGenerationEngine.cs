@@ -138,7 +138,7 @@ public static partial class DocumentGenerationEngine
             ["DefendantNames"] = defendantNames,
             ["Case.CourtHeading"] = string.IsNullOrWhiteSpace(c.County) ? "IN THE CIRCUIT COURT OF ARKANSAS" : $"IN THE CIRCUIT COURT OF {c.County.ToUpperInvariant()} COUNTY, ARKANSAS",
             ["Case.CaseNumberLine"] = string.IsNullOrWhiteSpace(c.CaseNumber) ? "CASE NO." : $"CASE NO. {c.CaseNumber}",
-            ["Case.DefendantLines"] = string.Join("\n", formattedDefendantLines) + "\n\tDEFENDANTS",
+            ["Case.DefendantLines"] = string.Join("\n", formattedDefendantLines) + "\tDEFENDANTS",
             ["Case.Status"] = c.CaseStatus ?? "",
             ["Case.FullStyle"] = fullStyle,
             ["Case.ShortStyle"] = shortStyle,

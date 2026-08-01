@@ -124,7 +124,7 @@ public sealed class MergeTagRegistryTests
 
         Assert.Contains("IN THE CIRCUIT COURT OF SALINE COUNTY, ARKANSAS", result);
         Assert.Contains("CASE NO. 63CV-25-2234", result);
-        Assert.Contains("First Party\nSecond Party\n\tDEFENDANTS", result);
+        Assert.Contains("First Party\nSecond Party\tDEFENDANTS", result);
         Assert.Empty(missing);
     }
 
@@ -135,7 +135,7 @@ public sealed class MergeTagRegistryTests
             new CaseRecord { CaseStyle = "Fixed heading\nCASE NO. 1\nPasted Party One\nPasted Party Two\nDEFENDANTS" },
             new OrgDefaults(), new Dictionary<string, string>());
 
-        Assert.Equal("Pasted Party One\nPasted Party Two\n\tDEFENDANTS", tokens["Case.DefendantLines"]);
+        Assert.Equal("Pasted Party One\nPasted Party Two\tDEFENDANTS", tokens["Case.DefendantLines"]);
     }
 
     [Fact]

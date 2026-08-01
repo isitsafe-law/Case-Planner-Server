@@ -3,7 +3,6 @@ import type { CaseRecord } from '../App'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
 import { EmptyState } from './EmptyState'
-import { formatCurrencyOrDash } from './dashboardAggregation'
 import { computePreFilingStallInfo } from './preFilingStallDetection'
 import type { PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 
@@ -132,26 +131,14 @@ export function staleActivityRow(record: CaseRecord, thresholdDays: number, now:
   }
 }
 
-// Rule (c): fee-shift exposure reference. Jury-verdict scope only - Ark. Code Ann. § 27-67-317(b)'s
-// 20%-above threshold never applies to a settlement, only a jury verdict - so this is a forward-
-// looking reference figure only ("if a jury verdict here exceeded this figure..."), never a claim
-// that a verdict has occurred or that fees are owed.
+// Fee-shift exposure is intentionally not emitted here. The case record currently contains the
+// deposit but not the comparison valuation/result needed to establish the statutory condition. A
+// Trial Preparation stage alone is not a fee-shift fact, so the old reference row was misleading.
+// Keep this function as a compatibility seam until Needs Attention can consume the authoritative
+// risk-analysis inputs.
 export function feeShiftReferenceRow(record: CaseRecord): NeedsAttentionRow | null {
-  if ((record.caseStatus || 'Pipeline') !== 'Trial Preparation') return null
-  if (record.depositAmount == null) return null
-  const thresholdFigure = record.depositAmount * 1.2
-  return {
-    key: `feeshift-${record.id}`,
-    ruleType: 'feeShift',
-    reason: `Trial Preparation - fee-shift reference: deposit ${formatCurrencyOrDash(record.depositAmount)}, 20%-above figure ${formatCurrencyOrDash(thresholdFigure)}`,
-    age: null,
-    attorney: record.assignedAttorney || 'Unassigned',
-    caseId: record.id,
-    jobNumber: record.jobNumber || '',
-    tract: record.tract || '',
-    caseName: record.caseName,
-    sortSecondary: record.depositAmount,
-  }
+  void record
+  return null
 }
 
 const RULE_ORDER: RuleType[] = ['preFilingStall', 'service', 'activity', 'feeShift']
@@ -188,11 +175,6 @@ export function buildNeedsAttentionRows(
     const row = staleActivityRow(record, activityThresholdDays, now)
     if (row) rows.push(row)
   }
-  for (const record of allCases) {
-    const row = feeShiftReferenceRow(record)
-    if (row) rows.push(row)
-  }
-
   return rows.sort((a, b) => {
     const groupDiff = RULE_ORDER.indexOf(a.ruleType) - RULE_ORDER.indexOf(b.ruleType)
     if (groupDiff !== 0) return groupDiff
@@ -226,7 +208,7 @@ const RULE_TYPE_LABEL: Record<RuleType, string> = {
   preFilingStall: 'Pre-Filing Stall',
   service: 'Service',
   activity: 'Activity',
-  feeShift: 'Fee-Shift Reference',
+  feeShift: 'Fee-Shift Review',
 }
 
 export function NeedsAttentionTab({
@@ -275,7 +257,7 @@ export function NeedsAttentionTab({
       </p>
 
       {rows.length === 0 ? (
-        <EmptyState title="Nothing needs attention right now." description="No case currently trips the pre-filing stall, service, activity, or fee-shift checks below the thresholds above." />
+        <EmptyState title="Nothing needs attention right now." description="No case currently trips the pre-filing stall, service, or activity checks below the shared thresholds." />
       ) : (
         <div className="table-wrap">
           <table className="ui-table compact-table">

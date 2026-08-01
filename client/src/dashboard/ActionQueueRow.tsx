@@ -96,9 +96,8 @@ export function ActionQueueRow({
       <tr className="ui-queue-detail-row">
         <td></td>
         <td colSpan={3}>
-          <div className="ui-sub ui-queue-why"><strong>Why this is here:</strong> {item.reason}</div>
           {item.triggerThreshold && <div className="ui-sub"><strong>Policy:</strong> {item.triggerThreshold}</div>}
-          {item.postureSummary && <div className="ui-sub">{item.postureSummary}</div>}
+          {item.postureSummary && item.postureSummary !== item.reason && <div className="ui-sub">{item.postureSummary}</div>}
           {item.recommendedNextAction && <div className="ui-sub ui-sub-recommend">Recommended: {item.recommendedNextAction}</div>}
           {(item.currentHolder || item.daysSinceMeaningfulActivity !== null || item.relatedWarningCount > 1) && (
             <div className="ui-row-actions ui-row-actions-wrap ui-queue-meta">

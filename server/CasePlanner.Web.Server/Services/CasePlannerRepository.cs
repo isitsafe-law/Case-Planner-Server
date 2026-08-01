@@ -1282,7 +1282,7 @@ public sealed partial class CasePlannerRepository
         var today = DateOnly.FromDateTime(DateTime.Today);
         bool Allowed(long caseId) => allowedCaseIds is null || allowedCaseIds.Contains(caseId);
         var cases = (await GetCasesAsync("", "", "", "", true)).Where(c => Allowed(c.Id)).ToList();
-        var eligibleCases = cases.Where(IsOpenCase).ToDictionary(c => c.Id);
+        var eligibleCases = cases.Where(ActionableWorkQueryRules.IsOpenCase).ToDictionary(c => c.Id);
         var deadlines = await GetDeadlinesAsync(null);
         var checklist = await GetChecklistItemsAsync(null);
         var discovery = await GetDiscoveryItemsAsync(null);
@@ -1292,34 +1292,31 @@ public sealed partial class CasePlannerRepository
         bool Eligible(long caseId, string itemType)
         {
             if (!eligibleCases.TryGetValue(caseId, out var record)) return false;
-            if (record.DeferredUntil is not null && DateOnly.TryParse(record.DeferredUntil, out var deferred) && deferred > today) return false;
-            return record.CaseStatus != "Pipeline" || itemType == "service";
+            return !ActionableWorkQueryRules.IsDeferred(record, today);
         }
 
         void Add(string key, long caseId, string title, string itemType, string? dueDate, string tab)
         {
             if (!Eligible(caseId, itemType) || (type is not null && type != "all" && type != itemType)) return;
-            DateOnly? due = DateOnly.TryParse(dueDate, out var parsed) ? parsed : null;
+            var due = ActionableWorkQueryRules.ParseDate(dueDate);
             var days = due.HasValue ? due.Value.DayNumber - today.DayNumber : (int?)null;
-            var itemUrgency = !days.HasValue ? "No Due Date" : days < 0 ? "Overdue" : days == 0 ? "Due Today" : days <= 7 ? "Next 7 Days" : days <= 14 ? "Next 14 Days" : days <= 30 ? "Next 30 Days" : "Later";
+            var itemUrgency = ActionableWorkQueryRules.Classify(due, today);
             var requestedUrgency = urgency ?? "All Open";
-            var matches = requestedUrgency == "All Open" || requestedUrgency == itemUrgency || requestedUrgency == "Next 7 Days" && days is >= 0 and <= 7 || requestedUrgency == "Next 14 Days" && days is >= 0 and <= 14 || requestedUrgency == "Next 30 Days" && days is >= 0 and <= 30;
+            var matches = ActionableWorkQueryRules.MatchesUrgency(requestedUrgency, itemUrgency, due, today);
             if (!matches) return;
             rows.Add(new UpcomingWorkItemRecord { Key = key, CaseId = caseId, CaseName = eligibleCases[caseId].CaseName, Title = title, Type = itemType, DueDate = dueDate, Urgency = itemUrgency, IsOverdue = days < 0, Tab = tab });
         }
 
-        foreach (var item in checklist.Where(i => i.Status is not ("Done" or "Complete" or "N/A"))) Add($"task-{item.Id}", item.CaseId, item.Task, "task", item.DueDate, "checklist");
-        foreach (var item in deadlines.Where(i => i.Status is not ("Done" or "Complete"))) Add($"deadline-{item.Id}", item.CaseId, item.Title, "deadline", item.DueDate, "deadlines");
-        foreach (var item in discovery.Where(i => !i.Status.Contains("complete", StringComparison.OrdinalIgnoreCase) && !i.Status.Contains("cancel", StringComparison.OrdinalIgnoreCase))) Add($"discovery-{item.Id}", item.CaseId, item.RequestTitle ?? $"{item.Direction} {item.DiscoveryType}", "discovery", item.FollowUpDate ?? item.DueDate, "discovery");
+        foreach (var item in checklist.Where(ActionableWorkQueryRules.IsIncompleteChecklist)) Add($"task-{item.Id}", item.CaseId, item.Task, "task", item.DueDate, "checklist");
+        foreach (var item in deadlines.Where(ActionableWorkQueryRules.IsIncompleteDeadline)) Add($"deadline-{item.Id}", item.CaseId, item.Title, "deadline", item.DueDate, "deadlines");
+        foreach (var item in discovery.Where(ActionableWorkQueryRules.IsIncompleteDiscovery)) Add($"discovery-{item.Id}", item.CaseId, item.RequestTitle ?? $"{item.Direction} {item.DiscoveryType}", "discovery", item.FollowUpDate ?? item.DueDate, "discovery");
         foreach (var item in service.Where(i => !i.ServicePerfected)) Add($"service-{item.CaseId}", item.CaseId, item.ServiceDeadline120 is null ? "Complete service record" : "Perfect service", "service", item.ServiceDeadline120 ?? item.FilingDate, "details");
         return rows.OrderBy(item => item.IsOverdue ? 0 : item.DueDate is null ? 5 : item.Urgency == "Due Today" ? 1 : item.Urgency == "Next 7 Days" ? 2 : item.Urgency == "Next 14 Days" ? 3 : 4)
             .ThenBy(item => item.DueDate ?? "9999-12-31")
             .ThenBy(item => item.CaseName)
-            .Take(Math.Clamp(limit, 1, 10))
+            .Take(Math.Clamp(limit, 1, 10000))
             .ToList();
     }
-
-    private static bool IsOpenCase(CaseRecord record) => record.CaseStatus is "Pipeline" or "Filed / Service Pending" or "Active Litigation" or "Settlement Pending" or "Trial Preparation" && record.Status is not ("Closed" or "Complete" or "Triage");
 
     public async Task<long?> GetChildCaseIdAsync(string childKind,long id)
     {

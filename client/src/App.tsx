@@ -1177,7 +1177,7 @@ const navItems: { key: PageKey; label: string }[] = [
   { key: 'managerDashboard', label: 'Division Overview' },
   { key: 'calendar', label: 'Calendar' },
   { key: 'cases', label: 'Cases' },
-  { key: 'queues', label: 'Work Queues' },
+  { key: 'queues', label: 'Work Queue' },
   { key: 'reports', label: 'Reports' },
   { key: 'settings', label: 'Settings' },
 ]
@@ -6697,18 +6697,17 @@ function App() {
   const upcomingWorkItems = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
     const caseById = new Map(allCases.map((item) => [item.id, item]))
-    const eligible = (caseId: number, type: UpcomingWorkType) => {
+    const eligible = (caseId: number) => {
       const record = caseById.get(caseId)
       if (!record || record.caseStatus === 'Resolved / Closed' || record.caseStatus === 'Triage' || record.status === 'Closed' || record.status === 'Triage') return false
       if (record.deferredUntil && record.deferredUntil > today) return false
-      if ((record.caseStatus || 'Pipeline') === 'Pipeline' && type !== 'service') return false
       return true
     }
     const items: UpcomingWorkItem[] = []
-    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId, 'task')) items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate: item.dueDate, source: item, tab: 'work' })
-    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId, 'deadline')) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'work' })
-    for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId, 'discovery')) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
-    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId, 'service')) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'servicePublication' })
+    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId)) items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate: item.dueDate, source: item, tab: 'work' })
+    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId)) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'work' })
+    for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId)) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
+    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId)) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'servicePublication' })
     return items.sort((a, b) => {
       const dueA = a.dueDate || '9999-12-31'
       const dueB = b.dueDate || '9999-12-31'
@@ -6719,20 +6718,24 @@ function App() {
   }, [queueChecklist, queueDeadlines, queueDiscovery, queueService, allCases])
   useEffect(() => {
     let cancelled = false
-    // Fixed "all open" fetch - the dashboard no longer exposes type/urgency/limit controls, so the
-    // window is narrowed client-side (see dashboardDueThisWeekItems below) after loading.
-    const params = new URLSearchParams({ type: 'all', urgency: 'All Open', limit: '200' })
+    // Fixed "all open" fetch - the dashboard uses the same server eligibility rules as Work Queue,
+    // then applies its two date windows locally (overdue and today through seven calendar days).
+    const params = new URLSearchParams({ type: 'all', urgency: 'All Open', limit: '10000' })
     void api<Array<Omit<UpcomingWorkItem, 'source'>>>(`/api/dashboard/upcoming-work?${params.toString()}`)
       .then((items) => { if (!cancelled) { setServerUpcomingWorkItems(items.map((item) => ({ ...item, tab: normalizeUpcomingWorkTab(item.tab, item.type) }))); setServerUpcomingWorkLoaded(true) } })
       .catch(() => { if (!cancelled) setServerUpcomingWorkLoaded(false) })
     return () => { cancelled = true }
   }, [])
   const dashboardUpcomingWorkItems = serverUpcomingWorkLoaded ? serverUpcomingWorkItems : upcomingWorkItems
-  // "Due in the next 7 days" window: overdue items stay visible so nothing urgent silently drops
-  // off the dashboard once its due date passes.
+  const dashboardOverdueItems = useMemo(() => {
+    const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
+    return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! < today)
+  }, [dashboardUpcomingWorkItems])
+  // Inclusive date-only window: today through seven calendar days from today. Overdue work has its
+  // own panel and is deliberately excluded here so the two counts and lists never overlap.
   const dashboardDueThisWeekItems = useMemo(() => {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
-    return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! - today <= 7)
+    return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! >= today && DateOnlyFromString(item.dueDate)! - today <= 7)
   }, [dashboardUpcomingWorkItems])
   // Headline strip: "N active cases · X need action now · Y due this week" - N comes from the
   // (non-attorney) dashboard summary, X is the Immediate-priority action-queue count, Y is the
@@ -10767,6 +10770,28 @@ function App() {
 
               <div className="ui-table-panel" style={{ marginTop: '1rem' }}>
                 <div className="panel-hd">
+                  <h3>Overdue work</h3>
+                  <span className="count">{dashboardOverdueItems.length} item{dashboardOverdueItems.length === 1 ? '' : 's'}</span>
+                  <Btn size="sm" variant="ghost" onClick={() => setPage('queues')}>View Work Queue â–¸</Btn>
+                </div>
+                <div className="table-wrap">
+                  <table className="ui-table">
+                    <thead><tr><th style={{ width: 90 }}>Type</th><th>Item</th><th>Case</th><th style={{ width: 130 }}>Due</th><th style={{ width: 170 }}></th></tr></thead>
+                    <tbody>
+                      {dashboardOverdueItems.length === 0 ? <UiEmptyState colSpan={5} title="No overdue work" hint="Incomplete tasks, deadlines, discovery, and service work past due will appear here." /> : dashboardOverdueItems.slice(0, 10).map((item) => (
+                        <tr key={item.key}>
+                          <td><TypeChip kind={item.type} /></td><td>{item.title}</td><td className="ui-sub">{item.caseName}</td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : 'â€”'}</td>
+                          <td><div className="ui-row-actions"><Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, item.tab)}>Open â–¸</Btn></div></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {dashboardOverdueItems.length > 10 && <p className="footnote" style={{ padding: '0.5rem 0.9rem' }}>and {dashboardOverdueItems.length - 10} moreâ€¦</p>}
+              </div>
+
+              <div className="ui-table-panel" style={{ marginTop: '1rem' }}>
+                <div className="panel-hd">
                   <h3>Due in the next 7 days</h3>
                   <span className="count">{dashboardDueThisWeekItems.length} item{dashboardDueThisWeekItems.length === 1 ? '' : 's'}</span>
                   <Btn size="sm" variant="ghost" onClick={() => setPage('queues')}>Full work queue ▸</Btn>
@@ -12424,9 +12449,9 @@ function App() {
               <div className="form-grid top-gap-small">
                 <label><span>Stale review after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.momentumStaleDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, momentumStaleDays: Number(event.target.value) }))} /><small>Default: 60. Applies when there is no waiting follow-up date.</small></label>
                 <label><span>Pipeline stall after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.pipelineStalledDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, pipelineStalledDays: Number(event.target.value) }))} /><small>Default: 60. Used for pipeline monitoring flags.</small></label>
-                <label><span>Discovery cutoff lookahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.discoveryCutoffLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, discoveryCutoffLookaheadDays: Number(event.target.value) }))} /><small>Default: 45. Past cutoffs remain urgent.</small></label>
-                <label><span>Trial preparation lookahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.trialPreparationLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialPreparationLookaheadDays: Number(event.target.value) }))} /><small>Default: 60. Does not change the jury trial date.</small></label>
-                <label><span>Trial Watch lookahead (days)</span><input type="number" min={1} max={730} value={actionabilityPolicy.trialWatchLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialWatchLookaheadDays: Number(event.target.value) }))} /><small>Default: 180. Manually marked Trial Track remains eligible.</small></label>
+                <label><span>Discovery cutoff look-ahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.discoveryCutoffLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, discoveryCutoffLookaheadDays: Number(event.target.value) }))} /><small>Default: 45. Shows an incomplete discovery plan when its recorded cutoff is within this many days. It does not create the cutoff.</small></label>
+                <label><span>Trial preparation look-ahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.trialPreparationLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialPreparationLookaheadDays: Number(event.target.value) }))} /><small>Default: 60. Shows jury-trial cases in the active preparation window; it does not change the jury-trial date or automatically create tasks.</small></label>
+                <label><span>Trial watch look-ahead (days)</span><input type="number" min={1} max={730} value={actionabilityPolicy.trialWatchLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialWatchLookaheadDays: Number(event.target.value) }))} /><small>Default: 180. Shows trial-track cases earlier for staffing and scheduling. It is an awareness view, not a task generator.</small></label>
               </div>
               <div className="button-row compact-actions top-gap-small">
                 <button className="primary" disabled={actionabilityPolicySaving} onClick={() => void saveActionabilityPolicy()}>{actionabilityPolicySaving ? 'Saving…' : 'Save defaults'}</button>

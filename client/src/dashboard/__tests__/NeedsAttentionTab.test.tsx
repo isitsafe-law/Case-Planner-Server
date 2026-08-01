@@ -86,23 +86,9 @@ describe('staleActivityRow (rule b)', () => {
   })
 })
 
-describe('feeShiftReferenceRow (rule c)', () => {
-  it('only applies to Trial Preparation cases', () => {
-    expect(feeShiftReferenceRow(makeCase({ caseStatus: 'Active Litigation', depositAmount: 100000 }))).toBeNull()
-  })
-
-  it('returns null when there is no deposit amount', () => {
-    expect(feeShiftReferenceRow(makeCase({ caseStatus: 'Trial Preparation', depositAmount: null }))).toBeNull()
-  })
-
-  it('computes the deposit-plus-20% figure and frames it as a forward-looking reference only', () => {
-    const row = feeShiftReferenceRow(makeCase({ caseStatus: 'Trial Preparation', depositAmount: 100000 }))
-    expect(row).not.toBeNull()
-    expect(row!.age).toBeNull()
-    expect(row!.reason).toContain('$100,000.00')
-    expect(row!.reason).toContain('$120,000.00')
-    expect(row!.reason.toLowerCase()).not.toContain('verdict has')
-    expect(row!.reason.toLowerCase()).not.toContain('fees are owed')
+describe('feeShiftReferenceRow', () => {
+  it('does not flag Trial Preparation without authoritative comparison data', () => {
+    expect(feeShiftReferenceRow(makeCase({ caseStatus: 'Trial Preparation', depositAmount: 100000 }))).toBeNull()
   })
 })
 

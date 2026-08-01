@@ -62,7 +62,7 @@ describe('ActionQueueRow', () => {
     expect(screen.getByText('Johnson - Tract 14')).toBeInTheDocument()
     expect(screen.getByText('27CV-24-100 · Craighead')).toBeInTheDocument()
     expect(screen.getByText('Decide')).toBeInTheDocument()
-    expect(screen.getAllByText('Discovery strategy not selected')).toHaveLength(2)
+    expect(screen.getAllByText('Discovery strategy not selected')).toHaveLength(1)
     expect(screen.getByText(/Answer filed 42 days ago/)).toBeInTheDocument()
     expect(screen.getByText(/Recommended: Decide whether to serve written discovery/)).toBeInTheDocument()
     expect(screen.getByText(/42 days inactive/)).toBeInTheDocument()

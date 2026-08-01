@@ -103,17 +103,17 @@ public sealed class SqlServerWorkspaceQuery(
         var rows=new List<UpcomingWorkItemRecord>();
         void Add(string key,long caseId,string title,string itemType,string? dueDate,string tab)
         {
-            if(!caseMap.TryGetValue(caseId,out var c)||(type is not null&&type!="all"&&type!=itemType))return;
-            if(Date(c.DeferredUntil) is { } deferred&&deferred>today)return;if(c.CaseStatus=="Pipeline"&&itemType!="service")return;
-            var due=Date(dueDate);var days=due?.DayNumber-today.DayNumber;var level=days is null?"No Due Date":days<0?"Overdue":days==0?"Due Today":days<=7?"Next 7 Days":days<=14?"Next 14 Days":days<=30?"Next 30 Days":"Later";
-            var requested=urgency??"All Open";if(requested!="All Open"&&requested!=level&&!(requested=="Next 7 Days"&&days is >=0 and <=7)&&!(requested=="Next 14 Days"&&days is >=0 and <=14)&&!(requested=="Next 30 Days"&&days is >=0 and <=30))return;
+            if(!caseMap.TryGetValue(caseId,out var c)||!ActionableWorkQueryRules.IsOpenCase(c)||(type is not null&&type!="all"&&type!=itemType))return;
+            if(ActionableWorkQueryRules.IsDeferred(c,today))return;
+            var due=ActionableWorkQueryRules.ParseDate(dueDate);var days=due?.DayNumber-today.DayNumber;var level=ActionableWorkQueryRules.Classify(due,today);
+            var requested=urgency??"All Open";if(!ActionableWorkQueryRules.MatchesUrgency(requested,level,due,today))return;
             rows.Add(new(){Key=key,CaseId=caseId,CaseName=c.CaseName,Title=title,Type=itemType,DueDate=dueDate,Urgency=level,IsOverdue=days<0,Tab=tab});
         }
-        foreach(var x in (await checklist.GetAsync(null,token)).Where(x=>x.Status is not("Done" or "Complete" or "N/A")))Add($"task-{x.Id}",x.CaseId,x.Task,"task",x.DueDate,"checklist");
-        foreach(var x in (await deadlines.GetAsync(null,token)).Where(x=>x.Status is not("Done" or "Complete")))Add($"deadline-{x.Id}",x.CaseId,x.Title,"deadline",x.DueDate,"deadlines");
-        foreach(var x in (await discovery.GetAsync(null,token)).Where(x=>!x.Status.Contains("complete",StringComparison.OrdinalIgnoreCase)&&!x.Status.Contains("cancel",StringComparison.OrdinalIgnoreCase)))Add($"discovery-{x.Id}",x.CaseId,x.RequestTitle??$"{x.Direction} {x.DiscoveryType}","discovery",x.FollowUpDate??x.DueDate,"discovery");
+        foreach(var x in (await checklist.GetAsync(null,token)).Where(ActionableWorkQueryRules.IsIncompleteChecklist))Add($"task-{x.Id}",x.CaseId,x.Task,"task",x.DueDate,"checklist");
+        foreach(var x in (await deadlines.GetAsync(null,token)).Where(ActionableWorkQueryRules.IsIncompleteDeadline))Add($"deadline-{x.Id}",x.CaseId,x.Title,"deadline",x.DueDate,"deadlines");
+        foreach(var x in (await discovery.GetAsync(null,token)).Where(ActionableWorkQueryRules.IsIncompleteDiscovery))Add($"discovery-{x.Id}",x.CaseId,x.RequestTitle??$"{x.Direction} {x.DiscoveryType}","discovery",x.FollowUpDate??x.DueDate,"discovery");
         foreach(var x in await GetServiceQueueAsync(visibleCaseIds,token))if(!x.ServicePerfected)Add($"service-{x.CaseId}",x.CaseId,x.ServiceDeadline120 is null?"Complete service record":"Perfect service","service",x.ServiceDeadline120??x.FilingDate,"details");
-        return rows.OrderBy(x=>Date(x.DueDate)??DateOnly.MaxValue).ThenBy(x=>x.CaseName).Take(Math.Clamp(limit,1,200)).ToList();
+        return rows.OrderBy(x=>ActionableWorkQueryRules.ParseDate(x.DueDate)??DateOnly.MaxValue).ThenBy(x=>x.CaseName).Take(Math.Clamp(limit,1,10000)).ToList();
     }
 
     private async Task<List<IssueTagRecord>> GetIssueTagsAsync(CancellationToken token)

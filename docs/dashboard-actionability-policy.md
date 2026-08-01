@@ -126,5 +126,11 @@ legal/operational overdue signals remain fixed.
 Attorney-specific overrides are intentionally deferred until Entra identity is available. Until then,
 the stored policy is a shared local default for the portable build.
 
+The shared upcoming-work projection now carries `WhyThisIsHere` and `PolicyThreshold` for tasks,
+deadlines, discovery follow-ups, and service work. The dashboard's Overdue Work and Due in the Next
+7 Days rows display those values, so a user can see whether the row is present because it is overdue,
+due today, approaching, missing a due date, or governed by a fixed operational date. SQLite fallback
+data uses the same wording rules when the server projection is temporarily unavailable.
+
 No automatic repair should be performed when a case becomes actionable. The dashboard recommends a
 next step; the attorney remains responsible for reviewing and changing the case record.

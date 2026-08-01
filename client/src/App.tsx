@@ -983,6 +983,8 @@ type UpcomingWorkItem = {
   dueDate?: string | null
   source?: DeadlineItem | ChecklistItem | DiscoveryItem | ServiceQueueItem | Hearing
   tab: CaseTabKey
+  whyThisIsHere?: string
+  policyThreshold?: string | null
 }
 
 // The upcoming-work API still emits the pre-consolidation tab keys ('deadlines', 'checklist',
@@ -2146,6 +2148,17 @@ function isQueueDateOverdue(dateValue?: string | null): boolean {
 function isEventPastOrResolved(item: Hearing): boolean {
   const through = item.endDate || item.hearingDate
   return isQueueDateOverdue(through)
+}
+
+function explainUpcomingWork(itemType: UpcomingWorkType, dueDate: string | null | undefined): { why: string; threshold: string } {
+  const label = itemType === 'deadline' ? 'Deadline' : itemType === 'task' ? 'Task' : itemType === 'discovery' ? 'Discovery follow-up' : 'Service work'
+  if (!dueDate) return { why: `${label} has no due date and needs review.`, threshold: 'No due date recorded' }
+  const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
+  const due = DateOnlyFromString(dueDate)!
+  const days = due - today
+  const timing = days < 0 ? `overdue by ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'}` : days === 0 ? 'due today' : `due in ${days} day${days === 1 ? '' : 's'}`
+  const threshold = itemType === 'deadline' ? 'Fixed legal/operational due date' : itemType === 'discovery' ? 'Recorded discovery follow-up or response date' : itemType === 'service' ? 'Recorded service deadline or filing date' : 'Recorded task due date'
+  return { why: `${label} is ${timing}.`, threshold }
 }
 
 type PortableValidationReport = {
@@ -6713,10 +6726,10 @@ function App() {
       return true
     }
     const items: UpcomingWorkItem[] = []
-    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId)) items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate: item.dueDate, source: item, tab: 'work' })
-    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId)) items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate: item.dueDate, source: item, tab: 'work' })
-    for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId)) items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate: item.followUpDate || item.dueDate, source: item, tab: 'discovery' })
-    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId)) items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate: item.serviceDeadline120 || item.filingDate, source: item, tab: 'servicePublication' })
+    for (const item of queueChecklist) if (!isChecklistDone(item) && eligible(item.caseId)) { const dueDate = item.dueDate; const explanation = explainUpcomingWork('task', dueDate); items.push({ key: `task-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.task, type: 'task', dueDate, whyThisIsHere: explanation.why, policyThreshold: explanation.threshold, source: item, tab: 'work' }) }
+    for (const item of queueDeadlines) if (!isDeadlineDone(item) && eligible(item.caseId)) { const dueDate = item.dueDate; const explanation = explainUpcomingWork('deadline', dueDate); items.push({ key: `deadline-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.title, type: 'deadline', dueDate, whyThisIsHere: explanation.why, policyThreshold: explanation.threshold, source: item, tab: 'work' }) }
+    for (const item of queueDiscovery) if (!item.status.toLowerCase().includes('complete') && !item.status.toLowerCase().includes('cancel') && eligible(item.caseId)) { const dueDate = item.followUpDate || item.dueDate; const explanation = explainUpcomingWork('discovery', dueDate); items.push({ key: `discovery-${item.id}`, caseId: item.caseId, caseName: queueCaseName(item.caseId), title: item.requestTitle || `${item.direction} ${item.discoveryType}`, type: 'discovery', dueDate, whyThisIsHere: explanation.why, policyThreshold: explanation.threshold, source: item, tab: 'discovery' }) }
+    for (const item of queueService) if (!item.servicePerfected && eligible(item.caseId)) { const dueDate = item.serviceDeadline120 || item.filingDate; const explanation = explainUpcomingWork('service', dueDate); items.push({ key: `service-${item.caseId}`, caseId: item.caseId, caseName: item.caseName, title: item.serviceDeadline120 ? 'Perfect service' : 'Complete service record', type: 'service', dueDate, whyThisIsHere: explanation.why, policyThreshold: explanation.threshold, source: item, tab: 'servicePublication' }) }
     return items.sort((a, b) => {
       const dueA = a.dueDate || '9999-12-31'
       const dueB = b.dueDate || '9999-12-31'
@@ -10902,7 +10915,7 @@ function App() {
                     <tbody>
                       {dashboardOverdueItems.length === 0 ? <UiEmptyState colSpan={5} title="No overdue work" hint="Nothing requires immediate follow-up." /> : dashboardOverdueItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
-                          <td><TypeChip kind={item.type} /></td><td>{item.title}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : '-'}</td>
+                          <td><TypeChip kind={item.type} /></td><td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : '-'}</td>
                           <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} /></td>
                         </tr>
                       ))}
@@ -10937,7 +10950,7 @@ function App() {
                       ) : dashboardDueThisWeekItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
                           <td><TypeChip kind={item.type} /></td>
-                          <td>{item.title}</td>
+                          <td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td>
                           <td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td>
                           <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}>{item.dueDate ? displayDate(item.dueDate) : '—'}</td>
                           <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} />

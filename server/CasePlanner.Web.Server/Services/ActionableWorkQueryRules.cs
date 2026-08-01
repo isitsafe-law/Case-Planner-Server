@@ -49,4 +49,27 @@ public static class ActionableWorkQueryRules
         due is { } value && value >= today && value <= today.AddDays(7);
 
     public static bool IsOverdue(DateOnly? due, DateOnly today) => due is { } value && value < today;
+
+    public static (string Why, string? Threshold) ExplainUpcomingWork(string itemType, DateOnly? due, DateOnly today)
+    {
+        var label = itemType switch
+        {
+            "deadline" => "Deadline",
+            "task" => "Task",
+            "discovery" => "Discovery follow-up",
+            "service" => "Service work",
+            _ => "Work item",
+        };
+        if (due is null) return ($"{label} has no due date and needs review.", "No due date recorded");
+        var days = due.Value.DayNumber - today.DayNumber;
+        var timing = days < 0 ? $"overdue by {Math.Abs(days)} day{(Math.Abs(days) == 1 ? "" : "s")}" : days == 0 ? "due today" : $"due in {days} day{(days == 1 ? "" : "s")}";
+        var threshold = itemType switch
+        {
+            "deadline" => "Fixed legal/operational due date",
+            "discovery" => "Recorded discovery follow-up or response date",
+            "service" => "Recorded service deadline or filing date",
+            _ => "Recorded task due date",
+        };
+        return ($"{label} is {timing}.", threshold);
+    }
 }

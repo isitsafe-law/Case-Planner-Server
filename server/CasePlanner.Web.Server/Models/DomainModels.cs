@@ -782,6 +782,8 @@ public sealed class UpcomingWorkItemRecord
     public string Urgency { get; set; } = "No Due Date";
     public bool IsOverdue { get; set; }
     public string Tab { get; set; } = "overview";
+    public string WhyThisIsHere { get; set; } = "";
+    public string? PolicyThreshold { get; set; }
 }
 
 public sealed class ReportExcelRequest

@@ -107,7 +107,8 @@ public sealed class SqlServerWorkspaceQuery(
             if(ActionableWorkQueryRules.IsDeferred(c,today))return;
             var due=ActionableWorkQueryRules.ParseDate(dueDate);var days=due?.DayNumber-today.DayNumber;var level=ActionableWorkQueryRules.Classify(due,today);
             var requested=urgency??"All Open";if(!ActionableWorkQueryRules.MatchesUrgency(requested,level,due,today))return;
-            rows.Add(new(){Key=key,CaseId=caseId,CaseName=c.CaseName,Title=title,Type=itemType,DueDate=dueDate,Urgency=level,IsOverdue=days<0,Tab=tab});
+            var explanation=ActionableWorkQueryRules.ExplainUpcomingWork(itemType,due,today);
+            rows.Add(new(){Key=key,CaseId=caseId,CaseName=c.CaseName,Title=title,Type=itemType,DueDate=dueDate,Urgency=level,IsOverdue=days<0,Tab=tab,WhyThisIsHere=explanation.Why,PolicyThreshold=explanation.Threshold});
         }
         foreach(var x in (await checklist.GetAsync(null,token)).Where(ActionableWorkQueryRules.IsIncompleteChecklist))Add($"task-{x.Id}",x.CaseId,x.Task,"task",x.DueDate,"checklist");
         foreach(var x in (await deadlines.GetAsync(null,token)).Where(ActionableWorkQueryRules.IsIncompleteDeadline))Add($"deadline-{x.Id}",x.CaseId,x.Title,"deadline",x.DueDate,"deadlines");

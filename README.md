@@ -74,7 +74,7 @@ The Division Overview's data-quality table includes representative affected-case
 The same section can export all current findings, definitions, counts, suggested actions, and sample case IDs to CSV for management follow-up.
 Findings are classified into Workflow, Case records, Events, Assignments, Service, and Documents. The manager view can filter findings by area or severity and shows an affected-record total. These classifications are review labels only; the application does not automatically repair case data.
 
-Dashboard actionability rules are documented in [docs/dashboard-actionability-policy.md](docs/dashboard-actionability-policy.md). It defines current triggers, exclusions, thresholds, explanations, and the planned separation between fixed operational rules, configurable defaults, and attorney presentation preferences.
+Dashboard actionability rules are documented in [docs/dashboard-actionability-policy.md](docs/dashboard-actionability-policy.md). It defines current triggers, exclusions, thresholds, explanations, and the planned separation between fixed operational rules, configurable defaults, and attorney presentation preferences. Overdue and seven-day dashboard work rows now include a concise “Why this is here” explanation and the applicable threshold.
 The SQLite preview exposes the shared defaults under Settings → Dashboard Actionability. Changes affect momentum, pipeline stall, discovery cutoff, trial preparation, and Trial Watch timing; overdue legal or operational conditions remain visible.
 The Manager Needs Attention view reads the same stored momentum and pipeline-stall defaults rather than maintaining separate hidden thresholds.
 

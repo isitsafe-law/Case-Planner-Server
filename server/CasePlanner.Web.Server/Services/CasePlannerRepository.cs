@@ -1304,7 +1304,8 @@ public sealed partial class CasePlannerRepository
             var requestedUrgency = urgency ?? "All Open";
             var matches = ActionableWorkQueryRules.MatchesUrgency(requestedUrgency, itemUrgency, due, today);
             if (!matches) return;
-            rows.Add(new UpcomingWorkItemRecord { Key = key, CaseId = caseId, CaseName = eligibleCases[caseId].CaseName, Title = title, Type = itemType, DueDate = dueDate, Urgency = itemUrgency, IsOverdue = days < 0, Tab = tab });
+            var explanation = ActionableWorkQueryRules.ExplainUpcomingWork(itemType, due, today);
+            rows.Add(new UpcomingWorkItemRecord { Key = key, CaseId = caseId, CaseName = eligibleCases[caseId].CaseName, Title = title, Type = itemType, DueDate = dueDate, Urgency = itemUrgency, IsOverdue = days < 0, Tab = tab, WhyThisIsHere = explanation.Why, PolicyThreshold = explanation.Threshold });
         }
 
         foreach (var item in checklist.Where(ActionableWorkQueryRules.IsIncompleteChecklist)) Add($"task-{item.Id}", item.CaseId, item.Task, "task", item.DueDate, "checklist");

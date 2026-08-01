@@ -1888,6 +1888,7 @@ code {
 .dashboard-work-actions-menu summary:hover { color: var(--accent); border-color: var(--accent); }
 .dashboard-work-actions-popover { position: absolute; z-index: 3; right: 0; top: calc(100% + .3rem); display: grid; gap: .3rem; min-width: 10rem; padding: .45rem; border: 1px solid var(--border); border-radius: var(--r-ctl); background: var(--surface); box-shadow: var(--shadow); }
 .dashboard-work-actions-popover .inline-quick-form { display: grid; gap: .3rem; }
+.ui-work-reason { margin-top: .15rem; line-height: 1.25; }
 @media (max-width: 760px) {
   .dashboard-card-grid { grid-template-columns: 1fr; grid-template-areas: 'action' 'overdue' 'due' 'planning' 'insight'; }
   .dashboard-schedule-item { grid-template-columns: 5.7rem minmax(0, 1fr); }

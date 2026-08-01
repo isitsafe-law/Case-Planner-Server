@@ -2435,6 +2435,7 @@ function App() {
   const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
   const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
   const [platformCompleteness, setPlatformCompleteness] = useState<DocumentTemplateCompletenessReport | null>(null)
+  const [platformCompletenessByKey, setPlatformCompletenessByKey] = useState<Record<string, DocumentTemplateCompletenessReport>>({})
   // Forces the Advanced disclosure below to mount fresh (see the CollapsiblePanel `key` at its
   // render site): incremented whenever navigation should open it automatically (the Issue Tags
   // "Used By" link), matched against platformAdvancedAutoOpenKey to decide defaultOpen for that
@@ -5261,6 +5262,21 @@ function App() {
       setPlatformCompleteness(await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${templateKey}/completeness`))
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to audit template merge tags.')
+    }
+  }
+
+  async function auditAllPlatformTemplates() {
+    try {
+      setErrorMessage('')
+      const reports = await Promise.all(platformTemplates.map(async (template) => {
+        const report = await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${template.template.templateKey}/completeness`)
+        return [template.template.templateKey, report] as const
+      }))
+      setPlatformCompletenessByKey(Object.fromEntries(reports))
+      const unknownCount = reports.filter(([, report]) => report.audit.unknownTags.length > 0).length
+      setMessage(unknownCount === 0 ? 'All active document templates passed the merge-tag audit.' : `${unknownCount} active template(s) need merge-tag review.`)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit all document templates.')
     }
   }
 
@@ -11915,6 +11931,7 @@ function App() {
               </div>
               <div className="button-row compact-actions">
                 <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
+                <button className="compact-action-button" onClick={() => void auditAllPlatformTemplates()} disabled={platformTemplates.length === 0}>Audit All Active Templates</button>
                 <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
               </div>
 
@@ -11954,6 +11971,13 @@ function App() {
                   </tbody>
                 </table>
               </div>
+
+              {Object.keys(platformCompletenessByKey).length > 0 && (
+                <div className="inline-message top-gap-small">
+                  <p><strong>Catalog audit:</strong> {Object.values(platformCompletenessByKey).filter((report) => report.passed).length} of {Object.keys(platformCompletenessByKey).length} active template(s) have no unknown merge tags.</p>
+                  <p className="helper-text">Blank values are reported inside each template's audit; they are valid fields that may simply be empty for a particular case.</p>
+                </div>
+              )}
 
               {selectedPlatformTemplateKey && (() => {
                 const selected = platformTemplates.find((t) => t.template.templateKey === selectedPlatformTemplateKey)

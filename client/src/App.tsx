@@ -16,6 +16,7 @@ import { TriageWizard } from './TriageWizard'
 import { EditHistoryList } from './EditHistoryList'
 import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecisionDialog'
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
+import { DashboardWorkActions } from './dashboard/DashboardWorkActions'
 import { ProjectWatchRowCard } from './dashboard/ProjectWatchRowCard'
 import { EmptyState } from './dashboard/EmptyState'
 import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
@@ -988,6 +989,7 @@ function normalizeUpcomingWorkTab(tab: string, type: UpcomingWorkType): CaseTabK
   switch (tab) {
     case 'deadlines':
     case 'checklist':
+      return 'work'
     case 'hearings':
       return 'events'
     case 'details':
@@ -6737,6 +6739,29 @@ function App() {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
     return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! >= today && DateOnlyFromString(item.dueDate)! - today <= 7)
   }, [dashboardUpcomingWorkItems])
+  async function completeDashboardWork(item: UpcomingWorkItem) {
+    if (item.type === 'task') {
+      const source = queueChecklist.find((candidate) => item.key === `task-${candidate.id}`)
+      if (source) await persistChecklist({ ...source, status: 'Done' }, 'Task marked done.', false)
+    } else if (item.type === 'deadline') {
+      const source = queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`)
+      if (source) await persistDeadline({ ...source, status: 'Done' }, 'Deadline marked done.', false)
+    } else if (item.type === 'service') {
+      await markGlobalServicePerfected(item.caseId)
+    } else if (item.type === 'discovery') {
+      const source = queueDiscovery.find((candidate) => item.key === `discovery-${candidate.id}`)
+      if (source) await recordDiscoveryResponse(source)
+    }
+  }
+  async function saveDashboardDueDate(item: UpcomingWorkItem, dueDate: string) {
+    if (item.type === 'task') {
+      const source = queueChecklist.find((candidate) => item.key === `task-${candidate.id}`)
+      if (source) await persistChecklist({ ...source, dueDate }, 'Task due date updated.', false)
+    } else if (item.type === 'deadline') {
+      const source = queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`)
+      if (source) await persistDeadline({ ...source, dueDate }, 'Deadline due date updated.', false)
+    }
+  }
   // Headline strip: "N active cases · X need action now · Y due this week" - N comes from the
   // (non-attorney) dashboard summary, X is the Immediate-priority action-queue count, Y is the
   // "Due in the next 7 days" panel's item count.
@@ -10772,7 +10797,7 @@ function App() {
                 <div className="panel-hd">
                   <h3>Overdue work</h3>
                   <span className="count">{dashboardOverdueItems.length} item{dashboardOverdueItems.length === 1 ? '' : 's'}</span>
-                  <Btn size="sm" variant="ghost" onClick={() => setPage('queues')}>View Work Queue â–¸</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => setPage('queues')}>View Work Queue &gt;</Btn>
                 </div>
                 <div className="table-wrap">
                   <table className="ui-table">
@@ -10780,14 +10805,14 @@ function App() {
                     <tbody>
                       {dashboardOverdueItems.length === 0 ? <UiEmptyState colSpan={5} title="No overdue work" hint="Incomplete tasks, deadlines, discovery, and service work past due will appear here." /> : dashboardOverdueItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
-                          <td><TypeChip kind={item.type} /></td><td>{item.title}</td><td className="ui-sub">{item.caseName}</td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : 'â€”'}</td>
-                          <td><div className="ui-row-actions"><Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, item.tab)}>Open â–¸</Btn></div></td>
+                          <td><TypeChip kind={item.type} /></td><td>{item.title}</td><td className="ui-sub">{item.caseName}</td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : '-'}</td>
+                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} /></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                {dashboardOverdueItems.length > 10 && <p className="footnote" style={{ padding: '0.5rem 0.9rem' }}>and {dashboardOverdueItems.length - 10} moreâ€¦</p>}
+                {dashboardOverdueItems.length > 10 && <p className="footnote" style={{ padding: '0.5rem 0.9rem' }}>and {dashboardOverdueItems.length - 10} more...</p>}
               </div>
 
               <div className="ui-table-panel" style={{ marginTop: '1rem' }}>
@@ -10816,12 +10841,8 @@ function App() {
                           <td>{item.title}</td>
                           <td className="ui-sub">{item.caseName}</td>
                           <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}>{item.dueDate ? displayDate(item.dueDate) : '—'}</td>
-                          <td>
+                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} showOpen={false} />
                             <div className="ui-row-actions">
-                              {item.type === 'task' && <Btn size="sm" onClick={() => { const source = item.source as ChecklistItem | undefined ?? queueChecklist.find((candidate) => item.key === `task-${candidate.id}`); if (source) void persistChecklist({ ...source, status: 'Done' }, 'Task marked done.', false) }}>Mark done</Btn>}
-                              {item.type === 'deadline' && <Btn size="sm" onClick={() => { const source = item.source as DeadlineItem | undefined ?? queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`); if (source) void persistDeadline({ ...source, status: 'Done' }, 'Deadline marked done.', false) }}>Complete</Btn>}
-                              {item.type === 'service' && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Perfect Service</Btn>}
-                              {item.type === 'discovery' && <Btn size="sm" onClick={() => { const source = item.source as DiscoveryItem | undefined ?? queueDiscovery.find((candidate) => item.key === `discovery-${candidate.id}`); if (source) void recordDiscoveryResponse(source) }}>Record Response</Btn>}
                               <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, item.tab)}>Open ▸</Btn>
                             </div>
                           </td>

@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { CaseRecord, Hearing } from '../App'
 import { formatDate } from '../ui/format'
 import { EmptyState } from '../ui/EmptyState'
@@ -74,18 +74,26 @@ export function ManagerCalendarTab({
   horizon,
   onHorizonChange,
   onOpenCase,
+  initialEventType = 'All',
+  initialAttorney = 'All',
+  minimumDays = 0,
 }: {
   allCases: CaseRecord[]
   hearings: Hearing[]
   horizon: CalendarHorizon
   onHorizonChange: (horizon: CalendarHorizon) => void
   onOpenCase: (caseId: number) => void
+  initialEventType?: string
+  initialAttorney?: string
+  minimumDays?: number
 }) {
-  const [eventTypeFilter, setEventTypeFilter] = useState('All')
-  const [attorneyFilter, setAttorneyFilter] = useState('All')
+  const [eventTypeFilter, setEventTypeFilter] = useState(initialEventType)
+  const [attorneyFilter, setAttorneyFilter] = useState(initialAttorney)
+  useEffect(() => { setEventTypeFilter(initialEventType); setAttorneyFilter(initialAttorney) }, [initialEventType, initialAttorney])
 
   const caseById = useMemo(() => new Map(allCases.map((c) => [c.id, c])), [allCases])
   const today = todayEpochDay()
+  const windowStart = today + minimumDays
   const windowEnd = horizon === 'all' ? null : today + horizon
   const isActiveCase = (record?: CaseRecord) => Boolean(record) && (record!.caseStatus || 'Pipeline') !== 'Resolved / Closed' && record!.status !== 'Closed' && record!.status !== 'Complete'
 
@@ -97,7 +105,7 @@ export function ManagerCalendarTab({
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
-      if (day == null || endDay == null || endDay < today || (windowEnd != null && day > windowEnd)) continue
+      if (day == null || endDay == null || day < windowStart || endDay < today || (windowEnd != null && day > windowEnd)) continue
       const record = caseById.get(hearing.caseId)
       if (!isActiveCase(record)) continue
       events.push({
@@ -115,7 +123,7 @@ export function ManagerCalendarTab({
     }
     for (const record of allCases) {
       const day = toEpochDay(record.trialDate)
-      if (recordedTrialCaseIds.has(record.id) || day == null || day < today || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
+      if (recordedTrialCaseIds.has(record.id) || day == null || day < windowStart || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
       events.push({
         key: `trial-${record.id}`,
         caseId: record.id,
@@ -130,7 +138,7 @@ export function ManagerCalendarTab({
       })
     }
     return events.sort((a, b) => a.date.localeCompare(b.date))
-  }, [hearings, allCases, caseById, today, windowEnd])
+  }, [hearings, allCases, caseById, today, windowStart, windowEnd])
 
   // Past-due events are date-derived. A multi-day event remains current until its end date.
   const pastDueEvents = useMemo(() => {

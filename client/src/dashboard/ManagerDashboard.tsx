@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CaseRecord, DeadlineItem, Hearing } from '../App'
 import { Panel } from '../App'
-import { MetricTile } from '../ui/MetricTile'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
 import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
-import { ManagerCalendarTab, countEventsInWindow, type CalendarHorizon } from './ManagerCalendarTab'
+import { ManagerCalendarTab, type CalendarHorizon } from './ManagerCalendarTab'
 import { DivisionPipelineTab } from './DivisionPipelineTab'
 import { ByAttorneyTab } from './ByAttorneyTab'
 import { NeedsAttentionTab } from './NeedsAttentionTab'
 import { DATA_QUALITY_AREAS, METRIC_DEFINITIONS, type DataQualityReport } from './dataQuality'
 import { api } from '../App'
+import { ManagerDashboardVisuals, buildManagerHardDateBars, buildManagerTrialBars, type ManagerSummaryBar } from './ManagerDashboardVisuals'
+import { buildNeedsAttentionRows } from './NeedsAttentionTab'
 
 type ManagerDashboardTab = 'calendar' | 'pipeline' | 'byAttorney' | 'needsAttention'
 
@@ -61,6 +62,9 @@ export function ManagerDashboard({
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
   const [horizon, setHorizon] = useState<CalendarHorizon>(30)
+  const [calendarMinimumDays, setCalendarMinimumDays] = useState(0)
+  const [calendarEventType, setCalendarEventType] = useState('All')
+  const [calendarAttorney, setCalendarAttorney] = useState('All')
   const [dataQuality, setDataQuality] = useState<DataQualityReport | null>(null)
   const [qualityArea, setQualityArea] = useState<string>('All')
   const [qualitySeverity, setQualitySeverity] = useState<string>('All')
@@ -69,10 +73,8 @@ export function ManagerDashboard({
     void api<DataQualityReport>('/api/data-quality').then(setDataQuality).catch(() => setDataQuality(null))
   }, [])
 
-  const eventsNext7 = useMemo(() => countEventsInWindow(allCases, hearings, 7), [allCases, hearings])
-  const eventsNext30 = useMemo(() => countEventsInWindow(allCases, hearings, 30), [allCases, hearings])
-  const needsAttentionCount = useMemo(() => allCases.filter(needsAttention).length, [allCases])
-  const pipelineCount = useMemo(() => allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [allCases])
+  const managementAttentionRows = useMemo(() => buildNeedsAttentionRows(allCases, preFilingMilestones, reviewNotes, 14, 60), [allCases, preFilingMilestones, reviewNotes])
+  const needsAttentionCount = managementAttentionRows.length
   const openCases = useMemo(() => allCases.filter(isOpenForDivision), [allCases])
   const totalOpenCount = openCases.length
   const openPipelineCount = useMemo(() => openCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline').length, [openCases])
@@ -81,6 +83,17 @@ export function ManagerDashboard({
   const caseById = useMemo(() => new Map(allCases.map((record) => [record.id, record])), [allCases])
   const qualityIssues = useMemo(() => (dataQuality?.issues ?? []).filter((issue) => issue.count > 0 && (qualityArea === 'All' || issue.area === qualityArea) && (qualitySeverity === 'All' || issue.severity === qualitySeverity)), [dataQuality, qualityArea, qualitySeverity])
   const qualityFindingCount = useMemo(() => (dataQuality?.issues ?? []).filter((issue) => issue.count > 0).reduce((sum, issue) => sum + issue.count, 0), [dataQuality])
+  const hardDateBars = useMemo(() => buildManagerHardDateBars(allCases, hearings, deadlines), [allCases, hearings, deadlines])
+  const trialBars = useMemo(() => buildManagerTrialBars(allCases, hearings), [allCases, hearings])
+  const hardDateCount = hardDateBars.slice(0, 3).reduce((sum, bar) => sum + bar.count, 0)
+  const juryTrialCount = trialBars.reduce((sum, bar) => sum + bar.count, 0)
+  const pipelineStallCount = useMemo(() => (preFilingMilestonesAging?.cases ?? []).filter((row) => (row.daysSinceMarked ?? 0) > 60).length, [preFilingMilestonesAging])
+  const serviceRiskCount = useMemo(() => allCases.filter((record) => {
+    if (!isOpenForDivision(record) || record.servicePerfected || !record.serviceRequired || !record.filingDate) return false
+    const filing = new Date(`${record.filingDate.slice(0, 10)}T00:00:00`)
+    const age = Math.floor((Date.now() - filing.getTime()) / 86400000)
+    return age >= 90
+  }).length, [allCases])
 
   function exportDataQuality() {
     if (!dataQuality) return
@@ -96,9 +109,28 @@ export function ManagerDashboard({
     })))
   }
 
-  function goToCalendar(nextHorizon?: CalendarHorizon) {
+  function goToCalendar(nextHorizon?: CalendarHorizon, eventType = 'All', attorney = 'All', minimumDays = 0) {
     setActiveTab('calendar')
     if (nextHorizon) setHorizon(nextHorizon)
+    setCalendarEventType(eventType)
+    setCalendarAttorney(attorney)
+    setCalendarMinimumDays(minimumDays)
+  }
+
+  function openHardDateBar(bar?: ManagerSummaryBar) {
+    const ranges: Record<string, { horizon: CalendarHorizon; minimumDays: number }> = {
+      '0-30': { horizon: 30, minimumDays: 0 },
+      '31-60': { horizon: 60, minimumDays: 31 },
+      '61-90': { horizon: 90, minimumDays: 61 },
+      '91-120': { horizon: 120, minimumDays: 91 },
+      '121-180': { horizon: 180, minimumDays: 121 },
+    }
+    const range = ranges[bar?.key || ''] || { horizon: 90 as CalendarHorizon, minimumDays: 0 }
+    goToCalendar(range.horizon, 'All', 'All', range.minimumDays)
+  }
+
+  function openTrialBar(bar?: ManagerSummaryBar) {
+    goToCalendar(180, 'Jury Trial', bar?.key || 'All')
   }
 
   return (
@@ -123,29 +155,22 @@ export function ManagerDashboard({
         )}
       </details>
 
-      <div className="ui-tiles" style={{ marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <MetricTile
-          label="Events next 7 days"
-          value={eventsNext7}
-          active={activeTab === 'calendar' && horizon === 7}
-          onClick={() => goToCalendar(7)}
-        />
-        <MetricTile
-          label="Events next 30 days"
-          value={eventsNext30}
-          active={activeTab === 'calendar' && horizon === 30}
-          onClick={() => goToCalendar(30)}
-        />
-        <MetricTile
-          label="Needs-attention count"
-          value={needsAttentionCount}
-          tone={needsAttentionCount > 0 ? 'danger' : 'default'}
-          active={activeTab === 'needsAttention'}
-          onClick={() => setActiveTab('needsAttention')}
-        />
-        <MetricTile label="Tracts in Pipeline" value={pipelineCount} active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
-        <MetricTile label="Open tracts · division" value={totalOpenCount} />
-      </div>
+      <ManagerDashboardVisuals
+        allCases={allCases}
+        hearings={hearings}
+        deadlines={deadlines}
+        aging={preFilingMilestonesAging}
+        attentionCount={needsAttentionCount}
+        hardDateCount={hardDateCount}
+        trialCount={juryTrialCount}
+        pipelineStallCount={pipelineStallCount}
+        serviceRiskCount={serviceRiskCount}
+        onAttention={() => setActiveTab('needsAttention')}
+        onHardDates={openHardDateBar}
+        onTrials={openTrialBar}
+        onPipeline={() => setActiveTab('pipeline')}
+        onService={() => setActiveTab('needsAttention')}
+      />
       <div className="helper-text management-workload-summary" aria-label="Open tract workload summary">
         {openPipelineCount} pipeline · {openFiledCount} filed · {openNeedsAttentionCount} need attention
       </div>
@@ -168,6 +193,9 @@ export function ManagerDashboard({
                 horizon={horizon}
                 onHorizonChange={setHorizon}
                 onOpenCase={onOpenCase}
+                initialEventType={calendarEventType}
+                initialAttorney={calendarAttorney}
+                minimumDays={calendarMinimumDays}
               />
             </Panel>
           </div>

@@ -17,6 +17,7 @@ import { EditHistoryList } from './EditHistoryList'
 import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecisionDialog'
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
 import { DashboardWorkActions } from './dashboard/DashboardWorkActions'
+import { DashboardVisualSummaries, type DashboardBar } from './dashboard/DashboardVisualSummaries'
 import { ProjectWatchRowCard } from './dashboard/ProjectWatchRowCard'
 import { EmptyState } from './dashboard/EmptyState'
 import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
@@ -1895,6 +1896,7 @@ function matchesUrgency(dateValue: string | null | undefined, urgency: string): 
   if (urgency === 'Due in 7 Days') return days >= 0 && days <= 7
   if (urgency === 'Due in 14 Days') return days >= 0 && days <= 14
   if (urgency === 'Due in 30 Days') return days >= 0 && days <= 30
+  if (urgency === 'Due in 8-30 Days') return days >= 8 && days <= 30
   return true
 }
 
@@ -2264,6 +2266,7 @@ function App() {
     return ['dark', 'system', 'high-contrast', 'high-contrast-light', 'pastel-blue', 'pastel-sage', 'pastel-lavender', 'deep-navy', 'forest', 'slate', 'sunset', 'rose', 'ocean', 'plum', 'amber', 'carbon', 'arctic'].includes(stored || '') ? stored as ThemeMode : 'light'
   })
   const [page, setPage] = useState<PageKey>('dashboard')
+  const [calendarInitialRange, setCalendarInitialRange] = useState<30 | 60 | 90 | 120 | 180 | 'all'>(90)
   const [shutdownBusy, setShutdownBusy] = useState(false)
   const [reportStatusFilter, setReportStatusFilter] = useState('')
   const [reportCountyFilter, setReportCountyFilter] = useState('')
@@ -6762,6 +6765,63 @@ function App() {
       if (source) await persistDeadline({ ...source, dueDate }, 'Deadline due date updated.', false)
     }
   }
+  const dashboardUrgencyBars = useMemo<DashboardBar[]>(() => {
+    const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
+    const buckets = [
+      { key: 'overdue', label: 'Overdue', count: 0, detail: '' },
+      { key: 'today', label: 'Due today', count: 0, detail: '' },
+      { key: 'next7', label: 'Next 7 days', count: 0, detail: '' },
+      { key: '8to30', label: '8-30 days', count: 0, detail: '' },
+    ]
+    for (const item of dashboardUpcomingWorkItems) {
+      if (!item.dueDate) continue
+      const days = DateOnlyFromString(item.dueDate)! - today
+      const bucket = days < 0 ? buckets[0] : days === 0 ? buckets[1] : days <= 7 ? buckets[2] : days <= 30 ? buckets[3] : null
+      if (bucket) bucket.count++
+    }
+    return buckets
+  }, [dashboardUpcomingWorkItems])
+  const dashboardHardDateBars = useMemo<DashboardBar[]>(() => {
+    const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
+    const buckets = [
+      { key: '0-30', label: 'Next 30 days', count: 0, events: 0, deadlines: 0 },
+      { key: '31-60', label: '31-60 days', count: 0, events: 0, deadlines: 0 },
+      { key: '61-90', label: '61-90 days', count: 0, events: 0, deadlines: 0 },
+      { key: '91-120', label: '91-120 days', count: 0, events: 0, deadlines: 0 },
+      { key: '121-180', label: '121-180 days', count: 0, events: 0, deadlines: 0 },
+    ]
+    const add = (date: string | null | undefined, kind: 'event' | 'deadline') => {
+      if (!date) return
+      const days = DateOnlyFromString(date)! - today
+      const index = days < 0 || days > 180 ? -1 : days <= 30 ? 0 : days <= 60 ? 1 : days <= 90 ? 2 : days <= 120 ? 3 : 4
+      if (index < 0) return
+      const bucket = buckets[index]
+      bucket.count++
+      bucket[kind === 'event' ? 'events' : 'deadlines']++
+    }
+    const openCaseIds = new Set(allCases.filter(isOpenCase).map((record) => record.id))
+    for (const event of queueHearings) {
+      if (!openCaseIds.has(event.caseId) || ['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') || event.eventType === 'Other') continue
+      add(event.hearingDate, 'event')
+    }
+    for (const deadline of queueDeadlines) {
+      if (!openCaseIds.has(deadline.caseId) || isDeadlineDone(deadline)) continue
+      add(deadline.dueDate, 'deadline')
+    }
+    return buckets.map((bucket) => ({ ...bucket, detail: `${bucket.events} event${bucket.events === 1 ? '' : 's'} · ${bucket.deadlines} deadline${bucket.deadlines === 1 ? '' : 's'}` }))
+  }, [allCases, queueHearings, queueDeadlines])
+  function openUrgencyBucket(bar: DashboardBar) {
+    const urgency = bar.key === 'overdue' ? 'Overdue' : bar.key === 'today' ? 'Due Today' : bar.key === 'next7' ? 'Due in 7 Days' : 'Due in 8-30 Days'
+    setWorkQueueUrgency(urgency)
+    setWorkQueueFilter('all')
+    setWorkQueueSearch('')
+    setPage('queues')
+  }
+  function openHardDatesCalendar(bar?: DashboardBar) {
+    const range = bar?.key === '0-30' ? 30 : bar?.key === '31-60' ? 60 : bar?.key === '61-90' ? 90 : bar?.key === '91-120' ? 120 : bar?.key === '121-180' ? 180 : 180
+    setCalendarInitialRange(range)
+    setPage('calendar')
+  }
   // Headline strip: "N active cases · X need action now · Y due this week" - N comes from the
   // (non-attorney) dashboard summary, X is the Immediate-priority action-queue count, Y is the
   // "Due in the next 7 days" panel's item count.
@@ -7364,7 +7424,7 @@ function App() {
           ))}
           <FilterSep />
           <select aria-label="Urgency" value={workQueueUrgency} onChange={(event) => setWorkQueueUrgency(event.target.value)}>
-            {['All Open', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}
+            {['All Open', 'Overdue', 'Due Today', 'Due in 7 Days', 'Due in 8-30 Days', 'Due in 14 Days', 'Due in 30 Days', 'No Due Date'].map((option) => <option key={option}>{option}</option>)}
           </select>
           <select aria-label="Sort" value={workQueueSort} onChange={(event) => setWorkQueueSort(event.target.value as QueueSortMode)}>
             <option value="dueAsc">Due date ↑</option>
@@ -10631,6 +10691,8 @@ function App() {
                 </>
               )}
 
+              <DashboardVisualSummaries urgency={dashboardUrgencyBars} hardDates={dashboardHardDateBars} onUrgency={openUrgencyBucket} onHardDates={openHardDatesCalendar} />
+
               <div className="dash-cols">
                 <div className="ui-table-panel">
                   <div className="panel-hd">
@@ -10877,6 +10939,7 @@ function App() {
           allCases={allCases}
           fetchEvents={fetchCalendarEvents}
           currentUserName={currentUser?.displayName}
+          initialRange={calendarInitialRange}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
         />
       )}

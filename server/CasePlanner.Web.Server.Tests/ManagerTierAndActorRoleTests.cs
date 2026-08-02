@@ -38,8 +38,8 @@ public class ManagerTierAndActorRoleTests : IAsyncLifetime
         return new HttpApplicationActorContext(accessor, options);
     }
 
-    private static AuthenticatedUserProfile Profile(bool isManager, string? managerTier) =>
-        new(Guid.NewGuid(), "tenant", "object", "Jane Doe", "jane@example.com", new List<string>(), isManager, managerTier);
+    private static AuthenticatedUserProfile Profile(bool isManager, string? managerTier, bool isLegalAssistant = false) =>
+        new(Guid.NewGuid(), "tenant", "object", "Jane Doe", "jane@example.com", new List<string>(), isManager, managerTier, isLegalAssistant);
 
     [Fact]
     public void Role_AdministratorClaim_ReturnsAdministrator_EvenWithChiefCounselTier()
@@ -76,6 +76,20 @@ public class ManagerTierAndActorRoleTests : IAsyncLifetime
     {
         var actor = BuildContext(Profile(isManager: false, managerTier: null), isAdministratorClaim: false);
         Assert.Equal("Attorney", actor.Role);
+    }
+
+    [Fact]
+    public void Role_LegalAssistantProfile_ReturnsLegalAssistant()
+    {
+        var actor = BuildContext(Profile(isManager: false, managerTier: null, isLegalAssistant: true), isAdministratorClaim: false);
+        Assert.Equal("Legal Assistant", actor.Role);
+    }
+
+    [Fact]
+    public void Role_ManagerStillWinsOverLegalAssistantClaim()
+    {
+        var actor = BuildContext(Profile(isManager: true, managerTier: null, isLegalAssistant: true), isAdministratorClaim: false);
+        Assert.Equal("Manager", actor.Role);
     }
 
     [Fact]

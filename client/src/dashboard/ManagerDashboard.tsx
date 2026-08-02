@@ -50,6 +50,7 @@ export function ManagerDashboard({
   preFilingMilestones,
   preFilingMilestonesAging,
   reviewNotes,
+  pendingEventChangeIds,
   onOpenCase,
 }: {
   allCases: CaseRecord[]
@@ -58,6 +59,7 @@ export function ManagerDashboard({
   preFilingMilestones: PreFilingMilestoneRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
   reviewNotes: ReviewNoteRecord[]
+  pendingEventChangeIds: Set<number>
   onOpenCase: (caseId: number) => void
 }) {
   const [activeTab, setActiveTab] = useState<ManagerDashboardTab>('calendar')
@@ -94,6 +96,7 @@ export function ManagerDashboard({
     const age = Math.floor((Date.now() - filing.getTime()) / 86400000)
     return age >= 90
   }).length, [allCases])
+  const pendingEventChanges = useMemo(() => hearings.filter((event) => pendingEventChangeIds.has(event.id)), [hearings, pendingEventChangeIds])
 
   function exportDataQuality() {
     if (!dataQuality) return
@@ -155,6 +158,7 @@ export function ManagerDashboard({
         {openPipelineCount} pipeline · {openFiledCount} filed · {openNeedsAttentionCount} need attention
       </div>
 
+      {pendingEventChanges.length > 0 && <section className="ui-table-panel pending-manager-approvals"><div className="panel-hd"><h3>Pending event-date approvals</h3><span className="count">{pendingEventChanges.length}</span></div><div className="assistant-list">{pendingEventChanges.slice(0, 6).map((event) => <button className="assistant-list-row" key={event.id} onClick={() => onOpenCase(event.caseId)}><span><strong>{event.title || event.eventType || 'Proceeding'}</strong><small>{event.hearingDate || 'Date not set'}</small></span><span>Review proposed date change</span></button>)}</div></section>}
       <div className="segmented-tabs">
         {MANAGER_DASHBOARD_TABS.map((tab) => (
           <button key={tab.key} className={tab.key === activeTab ? 'segment active' : 'segment'} onClick={() => setActiveTab(tab.key)}>

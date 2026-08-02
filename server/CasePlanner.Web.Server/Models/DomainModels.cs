@@ -295,6 +295,7 @@ public sealed class DeadlineItem
     public long Id { get; set; }
     public string? RowVersion { get; set; }
     public long CaseId { get; set; }
+    public long? RelatedEventId { get; set; }
     public string Title { get; set; } = "";
     public string? DueDate { get; set; }
     public string Status { get; set; } = "Open";
@@ -327,6 +328,7 @@ public sealed class ChecklistItemRecord
     public long Id { get; set; }
     public string? RowVersion { get; set; }
     public long CaseId { get; set; }
+    public long? RelatedEventId { get; set; }
     public string Phase { get; set; } = "";
     public string Task { get; set; } = "";
     public string? DueDate { get; set; }
@@ -353,6 +355,9 @@ public sealed class ChecklistItemRecord
     // Attorney plus its Legal Assistants); AssignedUserId above stays fully dormant, reserved for
     // a future real Entra deployment, and is intentionally left untouched by this field.
     public string? AssignedStaffName { get; set; }
+    // Transient marker used by event-date recalculation so a system move does not become a
+    // manual override. Ordinary edits that change a generated due date set IsManual instead.
+    public bool IsDateRecalculation { get; set; }
 }
 
 // Multi-user rollout Phase 4a (notifications core). recipient_user_id follows the same opaque
@@ -946,6 +951,33 @@ public sealed class RestoreBackupRequest
     public string FileName { get; set; } = "";
 }
 
+public sealed class EventChangeRequestRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public long HearingId { get; set; }
+    public string ProposedStartDate { get; set; } = "";
+    public string? ProposedEndDate { get; set; }
+    public string? Note { get; set; }
+    public string Status { get; set; } = "Pending";
+    public string RequestedBy { get; set; } = "";
+    public string RequestedAt { get; set; } = "";
+    public string? DecidedBy { get; set; }
+    public string? DecidedAt { get; set; }
+    public string? DecisionNote { get; set; }
+}
+public sealed class EventChangeProposalRequest
+{
+    public string ProposedStartDate { get; set; } = "";
+    public string? ProposedEndDate { get; set; }
+    public string? Note { get; set; }
+}
+public sealed class EventChangeDecisionRequest
+{
+    public string Decision { get; set; } = "Approved";
+    public string? Note { get; set; }
+}
+
 public sealed class RestoreBackupResult
 {
     public string RestoredFileName { get; set; } = "";
@@ -1445,6 +1477,7 @@ public sealed class WorkTemplateCandidate
     public string Stage { get; set; } = "";
     public string? DueDate { get; set; }
     public string? Severity { get; set; }
+    public int? RelativeOffsetDays { get; set; }
     public bool IsDuplicate { get; set; }
     public string? DuplicateReason { get; set; }
 }
@@ -1456,6 +1489,27 @@ public sealed class AddWorkTemplateSelection
     public bool AllowDuplicate { get; set; }
 }
 public sealed class AddWorkTemplatesRequest { public List<AddWorkTemplateSelection> Items { get; set; } = []; }
+
+public sealed class EventPreparationDateRecalculationRequest { public string ProposedStartDate { get; set; } = ""; }
+public sealed class EventPreparationDateChange
+{
+    public string Kind { get; set; } = "Task";
+    public long WorkItemId { get; set; }
+    public string Title { get; set; } = "";
+    public string? CurrentDueDate { get; set; }
+    public string? ProposedDueDate { get; set; }
+    public bool IsManualOverride { get; set; }
+    public bool IsCompleted { get; set; }
+    public bool WillMove { get; set; }
+}
+public sealed class EventPreparationDateRecalculationPreview
+{
+    public long CaseId { get; set; }
+    public long EventId { get; set; }
+    public string? CurrentStartDate { get; set; }
+    public string ProposedStartDate { get; set; } = "";
+    public List<EventPreparationDateChange> Changes { get; set; } = [];
+}
 
 public sealed class DiscoveryTemplateItemRecord
 {

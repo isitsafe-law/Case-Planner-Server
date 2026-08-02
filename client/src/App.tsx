@@ -33,6 +33,8 @@ import { HolderPipelineStepper, HOLDER_STEPS, type HolderStep } from './ui/Holde
 import { StatusSelect } from './ui/StatusSelect'
 import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
+import { LegalAssistantDashboard } from './dashboard/LegalAssistantDashboard'
+import { EventPreparationPage } from './dashboard/EventPreparationPage'
 import { FilterBar, FilterChip, FilterSep, FilterSummary } from './ui/FilterBar'
 import { Btn } from './ui/Btn'
 import { MetricTile } from './ui/MetricTile'
@@ -45,7 +47,7 @@ import { formatDate, formatDateTime } from './ui/format'
 import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPanel'
 import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 
-type PageKey = 'dashboard' | 'managerDashboard' | 'calendar' | 'cases' | 'queues' | 'reports' | 'settings'
+type PageKey = 'dashboard' | 'legalAssistantDashboard' | 'eventPreparation' | 'managerDashboard' | 'calendar' | 'cases' | 'queues' | 'reports' | 'settings'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'events' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
@@ -167,6 +169,7 @@ type DeadlineHistoryEntry = {
 export type DeadlineItem = {
   id: number
   caseId: number
+  relatedEventId?: number | null
   title: string
   dueDate?: string | null
   status: string
@@ -188,6 +191,7 @@ export type DeadlineItem = {
 type ChecklistItem = {
   id: number
   caseId: number
+  relatedEventId?: number | null
   phase: string
   task: string
   dueDate?: string | null
@@ -871,6 +875,7 @@ export type AuthenticatedUserProfile = {
   // Dashboard sign-off consolidation, item 3) nor the Settlement Authority action (item 4) checks
   // this anymore - both are open to any actor now.
   managerTier?: string | null
+  isLegalAssistant?: boolean
 }
 type AppUserSummary = {
   id: string
@@ -2409,12 +2414,14 @@ function App() {
   const [caseAssignments, setCaseAssignments] = useState<CaseAssignmentRecord[]>([])
   const [newAssignmentDraft, setNewAssignmentDraft] = useState({ userId: '', caseRole: 'Attorney' as CaseRoleValue, assignmentRole: 'Collaborator' as AssignmentRoleValue })
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null)
+  const [selectedPreparationEventId, setSelectedPreparationEventId] = useState<number | null>(null)
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null)
   const [queueDeadlines, setQueueDeadlines] = useState<DeadlineItem[]>([])
   const [queueChecklist, setQueueChecklist] = useState<ChecklistItem[]>([])
   const [queueDiscovery, setQueueDiscovery] = useState<DiscoveryItem[]>([])
   const [queueService, setQueueService] = useState<ServiceQueueItem[]>([])
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
+  const [pendingEventChangeIds, setPendingEventChangeIds] = useState<Set<number>>(new Set())
   // Manager/Administrator Dashboard Milestone 4: division-wide (no caseId query param), the same
   // way circuitClerksData/assessorsData are fetched - see loadInitial below.
   const [preFilingMilestones, setPreFilingMilestones] = useState<PreFilingMilestoneRecord[]>([])
@@ -2971,6 +2978,9 @@ function App() {
     try {
       const profile = await api<AuthenticatedUserProfile>('/api/auth/me')
       setCurrentUser(profile)
+      // A non-manager Legal Assistant gets a distinct operational dashboard. Managers retain
+      // Division Overview precedence even if an identity carries both claims.
+      if (profile.isLegalAssistant && !profile.isManager) setPage('legalAssistantDashboard')
       try {
         const mine = await api<CaseAssignmentRecord[]>(`/api/admin/case-assignments?userId=${encodeURIComponent(profile.id)}`)
         setMyAssignedCaseIds(new Set(mine.map((a) => a.caseId)))
@@ -3030,6 +3040,10 @@ function App() {
       setQueueDiscovery(discoveryData)
       setQueueService(serviceData)
       setQueueHearings(hearingsData)
+      const pendingChanges = await Promise.all(hearingsData.map(async (event) => {
+        try { return await api<{ id: number } | null>(`/api/hearings/${event.id}/change-request`) } catch { return null }
+      }))
+      setPendingEventChangeIds(new Set(pendingChanges.map((item, index) => item ? hearingsData[index].id : null).filter((id): id is number => id !== null)))
       setPipelineHandoffs(pipelineHandoffsData)
       setOrgDefaults(orgDefaultsData)
       setTemplateTags(templateTagsData)
@@ -10362,6 +10376,13 @@ function App() {
               </label>
               <label><span>Status</span><select value={deadlineDraft.status} onChange={(event) => patchDeadlineDraft({ status: event.target.value })}>{deadlineStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
               <label>
+                <span>Related proceeding (optional)</span>
+                <select value={deadlineDraft.relatedEventId ?? ''} onChange={(event) => patchDeadlineDraft({ relatedEventId: event.target.value ? Number(event.target.value) : null })}>
+                  <option value="">No proceeding link</option>
+                  {queueHearings.filter((event) => event.caseId === deadlineDraft.caseId).map((event) => <option key={event.id} value={event.id}>{event.eventType || event.title} · {displayDate(event.hearingDate)}</option>)}
+                </select>
+              </label>
+              <label>
                 <span>Severity</span>
                 <select value={deadlineDraft.severity || 'normal'} onChange={(event) => patchDeadlineDraft({ severity: event.target.value })}>
                   {deadlineSeverities.map((level) => <option key={level} value={level}>{level}</option>)}
@@ -10410,6 +10431,13 @@ function App() {
                 </select>
               </label>
               <label><span>Status</span><select value={checklistDraft.status} onChange={(event) => patchChecklistDraft({ status: event.target.value })}>{checklistStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+              <label>
+                <span>Related proceeding (optional)</span>
+                <select value={checklistDraft.relatedEventId ?? ''} onChange={(event) => patchChecklistDraft({ relatedEventId: event.target.value ? Number(event.target.value) : null })}>
+                  <option value="">No proceeding link</option>
+                  {queueHearings.filter((event) => event.caseId === checklistDraft.caseId).map((event) => <option key={event.id} value={event.id}>{event.eventType || event.title} · {displayDate(event.hearingDate)}</option>)}
+                </select>
+              </label>
               <label>
                 <span>Due Date</span>
                 <input type="date" value={checklistDraft.dueDate || ''} onChange={(event) => patchChecklistDraft({ dueDate: event.target.value })} onInput={(event) => patchChecklistDraft({ dueDate: event.currentTarget.value })} />
@@ -10844,6 +10872,87 @@ function App() {
         </ModalShell>
       )}
 
+      {page === 'legalAssistantDashboard' && currentUser?.isLegalAssistant && !currentUser.isManager && (
+        <LegalAssistantDashboard
+          assistantName={currentUser.displayName}
+          cases={allCases}
+          work={[...queueDeadlines, ...queueChecklist]}
+          events={queueHearings.map((event) => ({ ...event, pendingChange: pendingEventChangeIds.has(event.id) }))}
+          onOpenCase={(caseId) => openCase(caseId, 'overview')}
+          onOpenPreparation={(eventId) => { setSelectedPreparationEventId(eventId); setPage('eventPreparation') }}
+        />
+      )}
+
+      {page === 'eventPreparation' && currentUser?.isLegalAssistant && selectedPreparationEventId && (() => {
+        const event = queueHearings.find((item) => item.id === selectedPreparationEventId)
+        if (!event) return <ErrorState message="The selected proceeding could not be found." onRetry={() => setPage('legalAssistantDashboard')} />
+        const caseRecord = allCases.find((item) => item.id === event.caseId)
+        return <EventPreparationPage
+          event={event}
+          caseRecord={allCases.find((item) => item.id === event.caseId)}
+          work={[...queueDeadlines, ...queueChecklist]}
+          onBack={() => setPage('legalAssistantDashboard')}
+          onOpenCase={(caseId) => openCase(caseId, 'events')}
+          onAddTask={() => { setPage('cases'); setCasesView('workspace'); setSelectedCaseId(event.caseId); setCaseTab('work'); setChecklistDraft({ ...emptyChecklist(event.caseId, defaultAssignedStaffNameForCase(event.caseId)), relatedEventId: event.id }); openModal('checklist', 'create') }}
+          onAddDeadline={() => { setPage('cases'); setCasesView('workspace'); setSelectedCaseId(event.caseId); setCaseTab('work'); setDeadlineDraft({ ...emptyDeadline(event.caseId), relatedEventId: event.id }); openModal('deadline', 'create') }}
+          onRecalculateDates={async () => {
+            const proposed = window.prompt('Enter the proceeding start date after the change (YYYY-MM-DD):', event.hearingDate || '')
+            if (!proposed) return
+            try {
+              const preview = await api<{ changes: Array<{ willMove: boolean; isManualOverride: boolean; isCompleted: boolean }> }>(`/api/cases/${event.caseId}/events/${event.id}/preparation-recalculate-preview`, { method: 'POST', body: JSON.stringify({ proposedStartDate: proposed }) })
+              const movable = preview.changes.filter((change) => change.willMove).length
+              const protectedCount = preview.changes.filter((change) => !change.willMove && (change.isManualOverride || change.isCompleted)).length
+              if (movable === 0) { setMessage('No linked open generated dates need to move. Manual overrides and completed work were preserved.'); return }
+              if (!window.confirm(`${movable} linked date${movable === 1 ? '' : 's'} will move. ${protectedCount} manual or completed item${protectedCount === 1 ? '' : 's'} will remain unchanged. Apply?`)) return
+              const result = await api<{ changes: Array<{ willMove: boolean }> }>(`/api/cases/${event.caseId}/events/${event.id}/preparation-recalculate`, { method: 'POST', body: JSON.stringify({ proposedStartDate: proposed }) })
+              setMessage(`${result.changes.filter((change) => change.willMove).length} preparation date${result.changes.filter((change) => change.willMove).length === 1 ? '' : 's'} recalculated.`)
+              await refreshAll()
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to recalculate preparation dates.') }
+          }}
+          onRemindAttorney={async () => {
+            if (!event || !caseRecord?.assignedAttorney) return
+            const requestedAction = window.prompt(`What should ${caseRecord.assignedAttorney} review or complete for this proceeding?`, `${event.eventType || 'Proceeding'} preparation review`)
+            if (!requestedAction?.trim()) return
+            const followUpDate = window.prompt('When should you follow up again? (YYYY-MM-DD)', '')
+            if (!followUpDate) return
+            try {
+              await api(`/api/cases/${event.caseId}/waiting`, { method: 'POST', body: JSON.stringify({ rowVersion: caseRecord.rowVersion || null, waitingOn: caseRecord.assignedAttorney, waitingReason: `${requestedAction.trim()} — ${event.eventType || 'Proceeding'} on ${event.hearingDate || 'date not set'}`, waitingStartedDate: new Date().toISOString().slice(0, 10), expectedResponse: requestedAction.trim(), waitingFollowUpDate: followUpDate, waitingEscalationAction: 'Follow up through the case Action Queue' }) })
+              setMessage(`Follow-up recorded for ${caseRecord.assignedAttorney}.`)
+              await refreshAll()
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to record attorney follow-up.') }
+          }}
+          onProposeDateChange={async (proposedStartDate, proposedEndDate, note) => {
+            try {
+              await api(`/api/hearings/${event.id}/change-request`, { method: 'POST', body: JSON.stringify({ proposedStartDate, proposedEndDate, note: note || 'Proposed from event preparation workspace' }) })
+              setMessage('Date change proposed. The confirmed event date remains unchanged until attorney approval.')
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to propose event date change.') }
+          }}
+          onGetPendingDateChange={async () => {
+            try {
+              const pending = await api<{ id: number; proposedStartDate: string; proposedEndDate?: string | null; note?: string | null } | null>(`/api/hearings/${event.id}/change-request`)
+              return pending
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load the pending date change.'); return null }
+          }}
+          onReviewDateChange={async (requestId, decision) => {
+            try {
+              await api(`/api/hearing-change-requests/${requestId}/decision`, { method: 'POST', body: JSON.stringify({ decision, note: `${decision} from event preparation workspace` }) })
+              setMessage(decision === 'Approved' ? 'Date change approved and linked preparation dates recalculated.' : 'Date change proposal rejected. The confirmed event date was not changed.')
+              await refreshAll()
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to review the pending date change.') }
+          }}
+          onApplyTemplate={async () => {
+            try {
+              const candidates = await api<WorkTemplateCandidate[]>(`/api/cases/${event.caseId}/events/${event.id}/preparation-candidates`)
+              const items = candidates.filter((candidate) => !candidate.isDuplicate && candidate.dueDate).map((candidate) => ({ kind: candidate.kind, templateId: candidate.templateId, dueDate: candidate.dueDate, allowDuplicate: false }))
+              if (items.length === 0) { setMessage('No new preparation template items are available for this case.'); return }
+              const result = await api<{ added: number }>(`/api/cases/${event.caseId}/events/${event.id}/preparation-template`, { method: 'POST', body: JSON.stringify({ items }) })
+              setMessage(`${result.added} preparation item${result.added === 1 ? '' : 's'} added.`)
+              await refreshAll()
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to apply preparation templates.') }
+          }}
+        />
+      })()}
+
       {page === 'dashboard' && (
         <main className="page">
           <div className="dash-hd">
@@ -10908,6 +11017,12 @@ function App() {
                       {activeQueueTiles.size > 0 && activeQueueTiles.size < PRIORITY_TILES.length && ` · filtered: ${PRIORITY_TILES.filter((tile) => activeQueueTiles.has(tile.level)).map((tile) => tile.label).join(', ')}`}
                     </span>
                   </div>
+                  {queueHearings.filter((event) => pendingEventChangeIds.has(event.id)).length > 0 && <div className="pending-approval-strip">
+                    <strong>Pending event-date approvals</strong>
+                    {queueHearings.filter((event) => pendingEventChangeIds.has(event.id)).slice(0, 4).map((event) => <button key={event.id} className="text-button" onClick={() => openCase(event.caseId, 'events')}>
+                      {event.title || event.eventType || 'Proceeding'} · {dashboardCasesById.get(event.caseId)?.caseName || `Case ${event.caseId}`}
+                    </button>)}
+                  </div>}
                   <div className="table-wrap">
                     <table className="ui-table">
                       <thead>
@@ -11135,6 +11250,7 @@ function App() {
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}
+          pendingEventChangeIds={pendingEventChangeIds}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
         />
       )}

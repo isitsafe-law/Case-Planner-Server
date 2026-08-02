@@ -547,7 +547,7 @@ app.MapGet("/api/auth/config", () => Results.Ok(new EntraPublicConfiguration(
     entraOptions.Enabled ? publicApiScope : "")));
 app.MapGet("/api/auth/me", (HttpContext context) =>
     context.Items.TryGetValue(EntraUserProvisioningMiddleware.ProfileItemKey, out var profile) && profile is AuthenticatedUserProfile authenticated
-        ? Results.Ok(new { authenticated.Id, authenticated.TenantId, authenticated.ObjectId, authenticated.DisplayName, authenticated.Email, authenticated.Roles, IsAdmin = CaseAccessEvaluator.IsAdministrator(context.User, entraOptions), authenticated.IsManager, authenticated.ManagerTier })
+        ? Results.Ok(new { authenticated.Id, authenticated.TenantId, authenticated.ObjectId, authenticated.DisplayName, authenticated.Email, authenticated.Roles, IsAdmin = CaseAccessEvaluator.IsAdministrator(context.User, entraOptions), authenticated.IsManager, authenticated.ManagerTier, authenticated.IsLegalAssistant })
         : Results.Unauthorized()).WithMetadata(new AssignmentAwareEndpointMetadata());
 // Read-only: any signed-in user can see who's on staff / who's assigned to a case (it's a
 // staff directory, not sensitive data). Only mutation (below) is admin-gated.
@@ -1089,6 +1089,15 @@ app.MapPost("/api/cases/{id:long}/export-notes", async (long id,ICaseNotesExport
 app.MapGet("/api/cases/{id:long}/hearings", async (long id, IHearingStore hearings) => Results.Ok(await hearings.GetAsync(id)));
 app.MapPost("/api/hearings", async (HearingRecord model, IHearingStore hearings,CaseAccessService access,CancellationToken token) =>
     await access.CanWriteAsync(model.CaseId,token)?Results.Ok(await hearings.SaveAsync(model,token)):Results.Forbid()).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/hearings/{id:long}/change-request", async (long id,EventChangeProposalRequest request,IHearingStore hearings,CancellationToken token) => Results.Ok(await hearings.ProposeChangeAsync(id,request,token))).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapGet("/api/hearings/{id:long}/change-request", async (long id,IHearingStore hearings,CancellationToken token) => Results.Ok(await hearings.GetPendingChangeAsync(id)));
+app.MapPost("/api/hearing-change-requests/{id:long}/decision", async (long id,EventChangeDecisionRequest request,IHearingStore hearings,IWorkflowGenerationService generation,HttpContext context,EntraOptions entraOptions,CancellationToken token) =>
+{
+    if (entraOptions.Enabled && context.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile && profile.IsLegalAssistant && !profile.IsManager && !CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return Results.Forbid();
+    var decided = await hearings.DecideChangeAsync(id,request,token);
+    if (request.Decision == "Approved") await generation.ApplyEventPreparationDateRecalculationAsync(decided.CaseId,decided.HearingId,decided.ProposedStartDate,token);
+    return Results.Ok(decided);
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapDelete("/api/hearings/{id:long}", async (long id,IHearingStore hearings,ICaseChildLookupStore children,CaseAccessService access,CancellationToken token) =>
 {
     var caseId=await children.GetCaseIdAsync("hearing",id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
@@ -1503,7 +1512,11 @@ app.MapPost("/api/deadline-templates", async (DeadlineTemplateRecord model,IWork
     catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}
 });
 app.MapGet("/api/cases/{id:long}/work-template-candidates", async (long id,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(await generation.GetCandidatesAsync(id,token)));
+app.MapGet("/api/cases/{id:long}/events/{eventId:long}/preparation-candidates", async (long id,long eventId,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(await generation.GetEventPreparationCandidatesAsync(id,eventId,token))).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/cases/{id:long}/work-template-selections", async (long id, AddWorkTemplatesRequest request,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(new { added=await generation.AddSelectionsAsync(id,request,token) }));
+app.MapPost("/api/cases/{id:long}/events/{eventId:long}/preparation-template", async (long id,long eventId,AddWorkTemplatesRequest request,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(new { added=await generation.AddEventPreparationSelectionsAsync(id,eventId,request,token) })).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/cases/{id:long}/events/{eventId:long}/preparation-recalculate-preview", async (long id,long eventId,EventPreparationDateRecalculationRequest request,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(await generation.PreviewEventPreparationDateRecalculationAsync(id,eventId,request.ProposedStartDate,token))).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/cases/{id:long}/events/{eventId:long}/preparation-recalculate", async (long id,long eventId,EventPreparationDateRecalculationRequest request,IWorkflowGenerationService generation,CancellationToken token) => Results.Ok(await generation.ApplyEventPreparationDateRecalculationAsync(id,eventId,request.ProposedStartDate,token))).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapPost("/api/checklist-templates", async (ChecklistTemplateRecord model,IWorkTemplateAdministration templates,CancellationToken token) =>
 {
     try{return Results.Ok(await templates.SaveChecklistAsync(model,token));}

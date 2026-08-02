@@ -103,7 +103,7 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         await connection.OpenAsync(token);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id,case_id,title,due_date,status,notes,source_type,is_manual,severity,completed_at,
+            SELECT id,case_id,related_event_id,title,due_date,status,notes,source_type,is_manual,severity,completed_at,
                    source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,row_version
             FROM dbo.deadlines
             WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId)
@@ -146,16 +146,16 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         if (isNew)
         {
             command.CommandText = """
-                INSERT INTO dbo.deadlines (case_id,title,due_date,status,notes,source_type,is_manual,severity,created_at,updated_at,completed_at,
+                INSERT INTO dbo.deadlines (case_id,related_event_id,title,due_date,status,notes,source_type,is_manual,severity,created_at,updated_at,completed_at,
                     source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by)
                 OUTPUT INSERTED.id,INSERTED.row_version
-                VALUES (@caseId,@title,@due,@status,@notes,@sourceType,@manual,@severity,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy)
+                VALUES (@caseId,@relatedEventId,@title,@due,@status,@notes,@sourceType,@manual,@severity,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy)
                 """;
         }
         else
         {
             command.CommandText = """
-                UPDATE dbo.deadlines SET title=@title,due_date=@due,status=@status,notes=@notes,severity=@severity,updated_at=@now,completed_at=@completed
+                UPDATE dbo.deadlines SET related_event_id=@relatedEventId,title=@title,due_date=@due,status=@status,notes=@notes,severity=@severity,updated_at=@now,completed_at=@completed
                 OUTPUT INSERTED.id,INSERTED.row_version
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
@@ -206,17 +206,17 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
 
     private static DeadlineItem Read(DbDataReader reader) => new()
     {
-        Id=reader.GetInt64(0), CaseId=reader.GetInt64(1), Title=reader.GetString(2), DueDate=Date(Text(reader,3)),
-        Status=Text(reader,4)??"Open", Notes=Text(reader,5), SourceType=Text(reader,6)??"Manual", IsManual=Bool(reader,7),
-        Severity=Text(reader,8)??"normal", CompletedAt=Text(reader,9), SourceKind=Text(reader,10)??"Manual",
-        SourceTemplateId=Text(reader,11), SourceTemplateVersion=reader.IsDBNull(12)?null:Convert.ToInt32(reader.GetValue(12)),
-        SourceStage=Text(reader,13), GeneratedAt=Text(reader,14), GeneratedBy=Text(reader,15),
-        RowVersion=Convert.ToBase64String((byte[])reader.GetValue(16))
+        Id=reader.GetInt64(0), CaseId=reader.GetInt64(1), RelatedEventId=reader.IsDBNull(2)?null:reader.GetInt64(2), Title=reader.GetString(3), DueDate=Date(Text(reader,4)),
+        Status=Text(reader,5)??"Open", Notes=Text(reader,6), SourceType=Text(reader,7)??"Manual", IsManual=Bool(reader,8),
+        Severity=Text(reader,9)??"normal", CompletedAt=Text(reader,10), SourceKind=Text(reader,11)??"Manual",
+        SourceTemplateId=Text(reader,12), SourceTemplateVersion=reader.IsDBNull(13)?null:Convert.ToInt32(reader.GetValue(13)),
+        SourceStage=Text(reader,14), GeneratedAt=Text(reader,15), GeneratedBy=Text(reader,16),
+        RowVersion=Convert.ToBase64String((byte[])reader.GetValue(17))
     };
 
     private static void AddParameters(DbCommand command, DeadlineItem model, string? completed, string now)
     {
-        command.Parameters.Add(new SqlParameter("@caseId",model.CaseId)); command.Parameters.Add(new SqlParameter("@title",model.Title.Trim()));
+        command.Parameters.Add(new SqlParameter("@caseId",model.CaseId)); command.Parameters.Add(new SqlParameter("@relatedEventId",(object?)model.RelatedEventId??DBNull.Value)); command.Parameters.Add(new SqlParameter("@title",model.Title.Trim()));
         command.Parameters.Add(new SqlParameter("@due",Db(Date(model.DueDate)))); command.Parameters.Add(new SqlParameter("@status",model.Status));
         command.Parameters.Add(new SqlParameter("@notes",Db(model.Notes))); command.Parameters.Add(new SqlParameter("@sourceType",model.SourceType));
         command.Parameters.Add(new SqlParameter("@manual",model.IsManual?1L:0L)); command.Parameters.Add(new SqlParameter("@severity",string.IsNullOrWhiteSpace(model.Severity)?"normal":model.Severity.Trim()));
@@ -248,7 +248,7 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     {
         var result=new List<ChecklistItemRecord>(); await using var connection=Connections.CreateConnection(); await connection.OpenAsync(token);
         await using var command=connection.CreateCommand(); command.CommandText="""
-            SELECT id,case_id,phase,task,due_date,status,notes,source_type,is_manual,completed_at,source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_user_id,assigned_staff_name,row_version
+            SELECT id,case_id,related_event_id,phase,task,due_date,status,notes,source_type,is_manual,completed_at,source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_user_id,assigned_staff_name,row_version
             FROM dbo.checklist_items WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId) ORDER BY phase,task
             """; command.Parameters.Add(new SqlParameter("@caseId",(object?)caseId??DBNull.Value));
         await using var reader=await command.ExecuteReaderAsync(token); while(await reader.ReadAsync(token)) result.Add(Read(reader)); return result;
@@ -258,18 +258,19 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
     {
         if(string.IsNullOrWhiteSpace(model.Task)) throw new ArgumentException("Checklist task is required."); var isNew=model.Id==0;
         await using var connection=Connections.CreateConnection(); await connection.OpenAsync(token); await using var transaction=await connection.BeginTransactionAsync(token);
-        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null,previousAssignedUserId=null,previousAssignedStaffName=null;
+        var now=DateTime.UtcNow.ToString("O"); string? previousStatus=null,previousCompleted=null,previousAssignedUserId=null,previousAssignedStaffName=null,previousDue=null;
         if(isNew) await EnsureCaseExistsAsync(connection,transaction,model.CaseId,token);
-        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id,assigned_user_id,assigned_staff_name FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);previousAssignedUserId=reader.IsDBNull(3)?null:reader.GetGuid(3).ToString();previousAssignedStaffName=Text(reader,4);}}
+        else{await using var lookup=connection.CreateCommand();lookup.Transaction=transaction;lookup.CommandText="SELECT status,completed_at,case_id,assigned_user_id,assigned_staff_name,due_date FROM dbo.checklist_items WHERE id=@id AND is_deleted=0";lookup.Parameters.Add(new SqlParameter("@id",model.Id));await using var reader=await lookup.ExecuteReaderAsync(token);if(await reader.ReadAsync(token)){previousStatus=Text(reader,0);previousCompleted=Text(reader,1);model.CaseId=reader.GetInt64(2);previousAssignedUserId=reader.IsDBNull(3)?null:reader.GetGuid(3).ToString();previousAssignedStaffName=Text(reader,4);previousDue=Date(Text(reader,5));}}
+        if(!isNew && !model.IsDateRecalculation && !string.Equals(previousDue,Date(model.DueDate),StringComparison.Ordinal)) model.IsManual=true;
         var isNowDone=model.Status is "Done" or "Complete"; var wasAlreadyDone=previousStatus is "Done" or "Complete";
         var completed=isNowDone?(wasAlreadyDone?previousCompleted:now):null;
         await using var command=connection.CreateCommand();command.Transaction=transaction;
         if(isNew) command.CommandText="""
-            INSERT INTO dbo.checklist_items (case_id,phase,task,due_date,status,notes,source_type,is_manual,created_at,updated_at,completed_at,source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_user_id,assigned_staff_name)
-            OUTPUT INSERTED.id,INSERTED.row_version VALUES (@caseId,@phase,@task,@due,@status,@notes,@sourceType,@manual,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy,@assignedUserId,@assignedStaffName)
+            INSERT INTO dbo.checklist_items (case_id,related_event_id,phase,task,due_date,status,notes,source_type,is_manual,created_at,updated_at,completed_at,source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_user_id,assigned_staff_name)
+            OUTPUT INSERTED.id,INSERTED.row_version VALUES (@caseId,@relatedEventId,@phase,@task,@due,@status,@notes,@sourceType,@manual,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy,@assignedUserId,@assignedStaffName)
             """;
         else{command.CommandText="""
-            UPDATE dbo.checklist_items SET phase=@phase,task=@task,due_date=@due,status=@status,notes=@notes,updated_at=@now,completed_at=@completed,assigned_user_id=@assignedUserId,assigned_staff_name=@assignedStaffName
+            UPDATE dbo.checklist_items SET related_event_id=@relatedEventId,phase=@phase,task=@task,due_date=@due,status=@status,notes=@notes,updated_at=@now,completed_at=@completed,assigned_user_id=@assignedUserId,assigned_staff_name=@assignedStaffName
             OUTPUT INSERTED.id,INSERTED.row_version WHERE id=@id AND row_version=@version AND is_deleted=0
             """;command.Parameters.Add(new SqlParameter("@id",model.Id));command.Parameters.Add(new SqlParameter("@version",ExpectedVersion(model.RowVersion,"checklist item",model.Id)));}
         AddParameters(command,model,completed,now);await using(var reader=await command.ExecuteReaderAsync(token)){if(!await reader.ReadAsync(token))throw new WorkItemConcurrencyException("Checklist item",model.Id);model.Id=reader.GetInt64(0);model.RowVersion=Convert.ToBase64String((byte[])reader.GetValue(1));}
@@ -343,13 +344,13 @@ public sealed class SqlServerChecklistStore(IDatabaseConnectionFactory connectio
         var caseId=await command.ExecuteScalarAsync(token);if(caseId is null)throw new WorkItemConcurrencyException("Checklist item",id);await AuditAsync(connection,transaction,Convert.ToInt64(caseId),"ChecklistItemDeleted","ChecklistItem",id,token);await transaction.CommitAsync(token);
     }
 
-    private static ChecklistItemRecord Read(DbDataReader r)=>new(){Id=r.GetInt64(0),CaseId=r.GetInt64(1),Phase=Text(r,2)??"",Task=r.GetString(3),DueDate=Date(Text(r,4)),Status=Text(r,5)??"Not Started",Notes=Text(r,6),SourceType=Text(r,7)??"Manual",IsManual=Bool(r,8),CompletedAt=Text(r,9),SourceKind=Text(r,10)??"Manual",SourceTemplateId=Text(r,11),SourceTemplateVersion=r.IsDBNull(12)?null:Convert.ToInt32(r.GetValue(12)),SourceStage=Text(r,13),GeneratedAt=Text(r,14),GeneratedBy=Text(r,15),AssignedUserId=r.IsDBNull(16)?null:r.GetGuid(16).ToString(),AssignedStaffName=Text(r,17),RowVersion=Convert.ToBase64String((byte[])r.GetValue(18))};
+    private static ChecklistItemRecord Read(DbDataReader r)=>new(){Id=r.GetInt64(0),CaseId=r.GetInt64(1),RelatedEventId=r.IsDBNull(2)?null:r.GetInt64(2),Phase=Text(r,3)??"",Task=r.GetString(4),DueDate=Date(Text(r,5)),Status=Text(r,6)??"Not Started",Notes=Text(r,7),SourceType=Text(r,8)??"Manual",IsManual=Bool(r,9),CompletedAt=Text(r,10),SourceKind=Text(r,11)??"Manual",SourceTemplateId=Text(r,12),SourceTemplateVersion=r.IsDBNull(13)?null:Convert.ToInt32(r.GetValue(13)),SourceStage=Text(r,14),GeneratedAt=Text(r,15),GeneratedBy=Text(r,16),AssignedUserId=r.IsDBNull(17)?null:r.GetGuid(17).ToString(),AssignedStaffName=Text(r,18),RowVersion=Convert.ToBase64String((byte[])r.GetValue(19))};
     // AssignedUserId is a GUID string (matches dbo.checklist_items.assigned_user_id uniqueidentifier,
     // FK'd to dbo.app_users(id)); only ever meaningfully populated once Entra/roster assignment is
     // in use, so an unparsable/blank value is stored as NULL rather than failing the save.
     // AssignedStaffName is the separate, dual-provider name-snapshot column (dbo.checklist_items.
     // assigned_staff_name nvarchar, no FK) that the UI actually reads/writes today.
-    private static void AddParameters(DbCommand c,ChecklistItemRecord m,string? completed,string now){c.Parameters.Add(new SqlParameter("@caseId",m.CaseId));c.Parameters.Add(new SqlParameter("@phase",m.Phase));c.Parameters.Add(new SqlParameter("@task",m.Task.Trim()));c.Parameters.Add(new SqlParameter("@due",Db(Date(m.DueDate))));c.Parameters.Add(new SqlParameter("@status",m.Status));c.Parameters.Add(new SqlParameter("@notes",Db(m.Notes)));c.Parameters.Add(new SqlParameter("@sourceType",m.SourceType));c.Parameters.Add(new SqlParameter("@manual",m.IsManual?1L:0L));c.Parameters.Add(new SqlParameter("@now",now));c.Parameters.Add(new SqlParameter("@completed",Db(completed)));c.Parameters.Add(new SqlParameter("@sourceKind",m.SourceKind));c.Parameters.Add(new SqlParameter("@templateId",Db(m.SourceTemplateId)));c.Parameters.Add(new SqlParameter("@templateVersion",(object?)m.SourceTemplateVersion??DBNull.Value));c.Parameters.Add(new SqlParameter("@sourceStage",Db(m.SourceStage)));c.Parameters.Add(new SqlParameter("@generatedAt",Db(m.GeneratedAt)));c.Parameters.Add(new SqlParameter("@generatedBy",Db(m.GeneratedBy)));c.Parameters.Add(new SqlParameter("@assignedUserId",Guid.TryParse(m.AssignedUserId,out var assignedGuid)?assignedGuid:DBNull.Value));c.Parameters.Add(new SqlParameter("@assignedStaffName",Db(m.AssignedStaffName)));}
+    private static void AddParameters(DbCommand c,ChecklistItemRecord m,string? completed,string now){c.Parameters.Add(new SqlParameter("@caseId",m.CaseId));c.Parameters.Add(new SqlParameter("@relatedEventId",(object?)m.RelatedEventId??DBNull.Value));c.Parameters.Add(new SqlParameter("@phase",m.Phase));c.Parameters.Add(new SqlParameter("@task",m.Task.Trim()));c.Parameters.Add(new SqlParameter("@due",Db(Date(m.DueDate))));c.Parameters.Add(new SqlParameter("@status",m.Status));c.Parameters.Add(new SqlParameter("@notes",Db(m.Notes)));c.Parameters.Add(new SqlParameter("@sourceType",m.SourceType));c.Parameters.Add(new SqlParameter("@manual",m.IsManual?1L:0L));c.Parameters.Add(new SqlParameter("@now",now));c.Parameters.Add(new SqlParameter("@completed",Db(completed)));c.Parameters.Add(new SqlParameter("@sourceKind",m.SourceKind));c.Parameters.Add(new SqlParameter("@templateId",Db(m.SourceTemplateId)));c.Parameters.Add(new SqlParameter("@templateVersion",(object?)m.SourceTemplateVersion??DBNull.Value));c.Parameters.Add(new SqlParameter("@sourceStage",Db(m.SourceStage)));c.Parameters.Add(new SqlParameter("@generatedAt",Db(m.GeneratedAt)));c.Parameters.Add(new SqlParameter("@generatedBy",Db(m.GeneratedBy)));c.Parameters.Add(new SqlParameter("@assignedUserId",Guid.TryParse(m.AssignedUserId,out var assignedGuid)?assignedGuid:DBNull.Value));c.Parameters.Add(new SqlParameter("@assignedStaffName",Db(m.AssignedStaffName)));}
 }
 
 // Multi-user rollout Phase 4a (notifications core), extended in Phase 4b (email delivery). The

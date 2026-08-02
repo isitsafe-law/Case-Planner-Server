@@ -2,6 +2,12 @@
 
 Case Planner is an ARDOT condemnation case-management application for attorneys, legal assistants, administrators, and managing attorneys. The case is the primary work unit; a case may represent one tract within a larger job.
 
+The Legal Assistant dashboard foundation is now role-aware for Entra deployments. A non-manager identity carrying the configurable `CasePlanner.LegalAssistant` app role is routed to a distinct operational dashboard built from the existing cases, pipeline holders/handoffs, tasks, deadlines, events, and service records. It is intentionally not a renamed copy of the attorney dashboard. SQLite preview mode remains unrestricted and unauthenticated, so it is not a substitute for testing Entra role visibility.
+
+Preparation work remains ordinary checklist/deadline work. It may now be linked to an existing proceeding through `RelatedEventId`, allowing event rows to show derived open, overdue, and waiting counts without introducing a second checklist system. Generated preparation dates retain their event-relative offset and manual-override state, and approved event-date changes can recalculate linked open dates without changing completed or manually overridden work.
+
+Assistant proceeding rows open a dedicated preparation workspace with active work, collapsed completed work, derived counts, case navigation, linked task/deadline creation, template application, date-change proposal/review, and recalculation controls. Pending proposals remain visibly separate from confirmed event dates until an authorized reviewer approves them.
+
 ## Current status
 
 The current test build is a portable Windows ASP.NET application with a React client and SQLite storage. Entra authentication and final manager-only authorization are not enabled in the SQLite preview.

@@ -29,6 +29,7 @@ public sealed class HttpApplicationActorContext(IHttpContextAccessor accessor, E
             var context = accessor.HttpContext;
             if (context is not null && CaseAccessEvaluator.IsAdministrator(context.User, entraOptions)) return "Administrator";
             var profile = Profile;
+            if (profile is { IsLegalAssistant: true, IsManager: false, ManagerTier: null }) return "Legal Assistant";
             return profile?.ManagerTier switch
             {
                 "ChiefCounsel" => "Chief Counsel",

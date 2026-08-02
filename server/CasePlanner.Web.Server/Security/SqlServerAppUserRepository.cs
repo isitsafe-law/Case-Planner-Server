@@ -27,7 +27,9 @@ public sealed class SqlServerAppUserRepository(IDatabaseConnectionFactory connec
             }
         }
         if (provisioned is null) throw new InvalidOperationException("The authenticated Entra user could not be provisioned.");
-        return new(provisioned.Value.Id, identity.TenantId, identity.ObjectId, identity.DisplayName, identity.Email, identity.Roles, provisioned.Value.IsManager, provisioned.Value.ManagerTier);
+        var isLegalAssistant = !string.IsNullOrWhiteSpace(entraOptions.LegalAssistantAppRole)
+            && identity.Roles.Contains(entraOptions.LegalAssistantAppRole, StringComparer.OrdinalIgnoreCase);
+        return new(provisioned.Value.Id, identity.TenantId, identity.ObjectId, identity.DisplayName, identity.Email, identity.Roles, provisioned.Value.IsManager, provisioned.Value.ManagerTier, isLegalAssistant);
     }
 
     // is_manager, unlike is_administrator, is never derived from the Entra token - there is no app

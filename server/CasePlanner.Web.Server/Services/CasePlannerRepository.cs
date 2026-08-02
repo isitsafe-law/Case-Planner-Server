@@ -1446,7 +1446,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, title, due_date, status, notes, source_type, is_manual, severity, completed_at,
+            SELECT id, case_id, related_event_id, title, due_date, status, notes, source_type, is_manual, severity, completed_at,
                    source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by
             FROM deadlines
             WHERE (@caseId IS NULL OR case_id = @caseId)
@@ -1461,20 +1461,21 @@ public sealed partial class CasePlannerRepository
                 {
                     Id = reader.GetInt64(0),
                     CaseId = reader.GetInt64(1),
-                    Title = reader.GetString(2),
-                    DueDate = NormalizeDate(reader.IsDBNull(3) ? null : reader.GetString(3)),
-                    Status = reader.IsDBNull(4) ? "Open" : reader.GetString(4),
-                    Notes = reader.IsDBNull(5) ? null : reader.GetString(5),
-                    SourceType = reader.IsDBNull(6) ? "Manual" : reader.GetString(6),
-                    IsManual = !reader.IsDBNull(7) && reader.GetInt64(7) == 1,
-                    Severity = reader.IsDBNull(8) ? "normal" : reader.GetString(8),
-                    CompletedAt = reader.IsDBNull(9) ? null : reader.GetString(9),
-                    SourceKind = reader.IsDBNull(10) ? "Manual" : reader.GetString(10),
-                    SourceTemplateId = reader.IsDBNull(11) ? null : reader.GetString(11),
-                    SourceTemplateVersion = reader.IsDBNull(12) ? null : reader.GetInt32(12),
-                    SourceStage = reader.IsDBNull(13) ? null : reader.GetString(13),
-                    GeneratedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
-                    GeneratedBy = reader.IsDBNull(15) ? null : reader.GetString(15)
+                    RelatedEventId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                    Title = reader.GetString(3),
+                    DueDate = NormalizeDate(reader.IsDBNull(4) ? null : reader.GetString(4)),
+                    Status = reader.IsDBNull(5) ? "Open" : reader.GetString(5),
+                    Notes = reader.IsDBNull(6) ? null : reader.GetString(6),
+                    SourceType = reader.IsDBNull(7) ? "Manual" : reader.GetString(7),
+                    IsManual = !reader.IsDBNull(8) && reader.GetInt64(8) == 1,
+                    Severity = reader.IsDBNull(9) ? "normal" : reader.GetString(9),
+                    CompletedAt = reader.IsDBNull(10) ? null : reader.GetString(10),
+                    SourceKind = reader.IsDBNull(11) ? "Manual" : reader.GetString(11),
+                    SourceTemplateId = reader.IsDBNull(12) ? null : reader.GetString(12),
+                    SourceTemplateVersion = reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                    SourceStage = reader.IsDBNull(14) ? null : reader.GetString(14),
+                    GeneratedAt = reader.IsDBNull(15) ? null : reader.GetString(15),
+                    GeneratedBy = reader.IsDBNull(16) ? null : reader.GetString(16)
                 });
             }
         }
@@ -1560,9 +1561,9 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO deadlines (case_id, title, due_date, status, notes, source_type, is_manual, severity, created_at, updated_at, completed_at,
+                    INSERT INTO deadlines (case_id, related_event_id, title, due_date, status, notes, source_type, is_manual, severity, created_at, updated_at, completed_at,
                         source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by)
-                    VALUES (@case_id, @title, @due_date, @status, @notes, @source_type, @is_manual, @severity, @created_at, @updated_at, @completed_at,
+                    VALUES (@case_id, @related_event_id, @title, @due_date, @status, @notes, @source_type, @is_manual, @severity, @created_at, @updated_at, @completed_at,
                         @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by);
                     SELECT last_insert_rowid();
                     """;
@@ -1571,7 +1572,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE deadlines
-                    SET title=@title, due_date=@due_date, status=@status, notes=@notes, severity=@severity, updated_at=@updated_at, completed_at=@completed_at
+                    SET related_event_id=@related_event_id, title=@title, due_date=@due_date, status=@status, notes=@notes, severity=@severity, updated_at=@updated_at, completed_at=@completed_at
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1579,6 +1580,7 @@ public sealed partial class CasePlannerRepository
             }
 
             cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@related_event_id", model.RelatedEventId is { } relatedEventId ? relatedEventId : DBNull.Value);
             cmd.Parameters.AddWithValue("@title", model.Title);
             cmd.Parameters.AddWithValue("@due_date", DbValue(model.DueDate));
             cmd.Parameters.AddWithValue("@status", model.Status);
@@ -1633,7 +1635,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
-            SELECT id, case_id, phase, task, due_date, status, notes, source_type, is_manual, completed_at,
+            SELECT id, case_id, related_event_id, phase, task, due_date, status, notes, source_type, is_manual, completed_at,
                    source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name
             FROM checklist_items
             WHERE (@caseId IS NULL OR case_id = @caseId)
@@ -1647,22 +1649,23 @@ public sealed partial class CasePlannerRepository
             {
                 Id = reader.GetInt64(0),
                 CaseId = reader.GetInt64(1),
-                Phase = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                Task = reader.GetString(3),
-                DueDate = NormalizeDate(reader.IsDBNull(4) ? null : reader.GetString(4)),
-                Status = reader.IsDBNull(5) ? "Not Started" : reader.GetString(5),
-                Notes = reader.IsDBNull(6) ? null : reader.GetString(6),
-                SourceType = reader.IsDBNull(7) ? "Manual" : reader.GetString(7),
-                IsManual = !reader.IsDBNull(8) && reader.GetInt64(8) == 1,
-                CompletedAt = reader.IsDBNull(9) ? null : reader.GetString(9),
-                SourceKind = reader.IsDBNull(10) ? "Manual" : reader.GetString(10),
-                SourceTemplateId = reader.IsDBNull(11) ? null : reader.GetString(11),
-                SourceTemplateVersion = reader.IsDBNull(12) ? null : reader.GetInt32(12),
-                SourceStage = reader.IsDBNull(13) ? null : reader.GetString(13),
-                GeneratedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
-                GeneratedBy = reader.IsDBNull(15) ? null : reader.GetString(15),
-                AssignedUserId = reader.IsDBNull(16) ? null : reader.GetString(16),
-                AssignedStaffName = reader.IsDBNull(17) ? null : reader.GetString(17)
+                RelatedEventId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                Phase = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Task = reader.GetString(4),
+                DueDate = NormalizeDate(reader.IsDBNull(5) ? null : reader.GetString(5)),
+                Status = reader.IsDBNull(6) ? "Not Started" : reader.GetString(6),
+                Notes = reader.IsDBNull(7) ? null : reader.GetString(7),
+                SourceType = reader.IsDBNull(8) ? "Manual" : reader.GetString(8),
+                IsManual = !reader.IsDBNull(9) && reader.GetInt64(9) == 1,
+                CompletedAt = reader.IsDBNull(10) ? null : reader.GetString(10),
+                SourceKind = reader.IsDBNull(11) ? "Manual" : reader.GetString(11),
+                SourceTemplateId = reader.IsDBNull(12) ? null : reader.GetString(12),
+                SourceTemplateVersion = reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                SourceStage = reader.IsDBNull(14) ? null : reader.GetString(14),
+                GeneratedAt = reader.IsDBNull(15) ? null : reader.GetString(15),
+                GeneratedBy = reader.IsDBNull(16) ? null : reader.GetString(16),
+                AssignedUserId = reader.IsDBNull(17) ? null : reader.GetString(17),
+                AssignedStaffName = reader.IsDBNull(18) ? null : reader.GetString(18)
             });
         }
 
@@ -1677,11 +1680,12 @@ public sealed partial class CasePlannerRepository
             string? previousStatus = null;
             string? previousCompletedAt = null;
             string? previousAssignedUserId = null;
+            string? previousDueDate = null;
             if (model.Id != 0)
             {
                 var lookup = connection.CreateCommand();
                 lookup.Transaction = tx;
-                lookup.CommandText = "SELECT status, completed_at, assigned_user_id FROM checklist_items WHERE id=@id";
+                lookup.CommandText = "SELECT status, completed_at, assigned_user_id, due_date FROM checklist_items WHERE id=@id";
                 lookup.Parameters.AddWithValue("@id", model.Id);
                 await using var lookupReader = await lookup.ExecuteReaderAsync();
                 if (await lookupReader.ReadAsync())
@@ -1689,8 +1693,12 @@ public sealed partial class CasePlannerRepository
                     previousStatus = lookupReader.IsDBNull(0) ? null : lookupReader.GetString(0);
                     previousCompletedAt = lookupReader.IsDBNull(1) ? null : lookupReader.GetString(1);
                     previousAssignedUserId = lookupReader.IsDBNull(2) ? null : lookupReader.GetString(2);
+                    previousDueDate = lookupReader.IsDBNull(3) ? null : lookupReader.GetString(3);
                 }
             }
+
+            if (model.Id != 0 && !model.IsDateRecalculation && !string.Equals(NormalizeDate(previousDueDate), NormalizeDate(model.DueDate), StringComparison.Ordinal))
+                model.IsManual = true;
 
             var isNowDone = model.Status is "Done" or "Complete";
             var wasAlreadyDone = previousStatus is "Done" or "Complete";
@@ -1701,9 +1709,9 @@ public sealed partial class CasePlannerRepository
             if (model.Id == 0)
             {
                 cmd.CommandText = """
-                    INSERT INTO checklist_items (case_id, phase, task, due_date, status, notes, source_type, is_manual, created_at, updated_at, completed_at,
+                    INSERT INTO checklist_items (case_id, related_event_id, phase, task, due_date, status, notes, source_type, is_manual, created_at, updated_at, completed_at,
                         source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name)
-                    VALUES (@case_id, @phase, @task, @due_date, @status, @notes, @source_type, @is_manual, @created_at, @updated_at, @completed_at,
+                    VALUES (@case_id, @related_event_id, @phase, @task, @due_date, @status, @notes, @source_type, @is_manual, @created_at, @updated_at, @completed_at,
                         @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id,@assigned_staff_name);
                     SELECT last_insert_rowid();
                     """;
@@ -1712,7 +1720,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE checklist_items
-                    SET phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id, assigned_staff_name=@assigned_staff_name
+                    SET related_event_id=@related_event_id, phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id, assigned_staff_name=@assigned_staff_name
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1720,6 +1728,7 @@ public sealed partial class CasePlannerRepository
             }
 
             cmd.Parameters.AddWithValue("@case_id", model.CaseId);
+            cmd.Parameters.AddWithValue("@related_event_id", model.RelatedEventId is { } relatedEventId ? relatedEventId : DBNull.Value);
             cmd.Parameters.AddWithValue("@phase", model.Phase);
             cmd.Parameters.AddWithValue("@task", model.Task);
             cmd.Parameters.AddWithValue("@due_date", DbValue(model.DueDate));
@@ -6737,6 +6746,40 @@ public sealed partial class CasePlannerRepository
         };
     }
 
+    public async Task<EventChangeRequestRecord> ProposeEventChangeAsync(long hearingId, EventChangeProposalRequest request)
+    {
+        if (!DateOnly.TryParse(request.ProposedStartDate, out var start) || (DateOnly.TryParse(request.ProposedEndDate, out var end) && end < start)) throw new ArgumentException("A valid proposed event date range is required.");
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            long caseId;
+            var lookup = connection.CreateCommand(); lookup.Transaction = tx; lookup.CommandText = "SELECT case_id FROM hearings WHERE id=@id"; lookup.Parameters.AddWithValue("@id", hearingId);
+            var result = await lookup.ExecuteScalarAsync(); if (result is null) throw new ArgumentException("Event not found."); caseId = Convert.ToInt64(result);
+            var now = DateTime.UtcNow.ToString("O"); var cmd = connection.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO event_change_requests(case_id,hearing_id,proposed_start_date,proposed_end_date,note,status,requested_by,requested_at) VALUES(@case,@hearing,@start,@end,@note,'Pending',@by,@at); SELECT last_insert_rowid();";
+            cmd.Parameters.AddWithValue("@case", caseId); cmd.Parameters.AddWithValue("@hearing", hearingId); cmd.Parameters.AddWithValue("@start", start.ToString("yyyy-MM-dd")); cmd.Parameters.AddWithValue("@end", request.ProposedEndDate ?? (object)DBNull.Value); cmd.Parameters.AddWithValue("@note", DbValue(request.Note)); cmd.Parameters.AddWithValue("@by", _actor.AuditLabel); cmd.Parameters.AddWithValue("@at", now);
+            var id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+            return new EventChangeRequestRecord { Id=id, CaseId=caseId, HearingId=hearingId, ProposedStartDate=start.ToString("yyyy-MM-dd"), ProposedEndDate=request.ProposedEndDate, Note=request.Note, RequestedBy=_actor.AuditLabel, RequestedAt=now };
+        });
+    }
+
+    public async Task<EventChangeRequestRecord?> GetPendingEventChangeAsync(long hearingId)
+    {
+        await using var connection = new SqliteConnection(ConnectionString); await connection.OpenAsync(); var cmd=connection.CreateCommand(); cmd.CommandText="SELECT id,case_id,hearing_id,proposed_start_date,proposed_end_date,note,status,requested_by,requested_at,decided_by,decided_at,decision_note FROM event_change_requests WHERE hearing_id=@id AND status='Pending' ORDER BY id DESC LIMIT 1"; cmd.Parameters.AddWithValue("@id",hearingId); await using var reader=await cmd.ExecuteReaderAsync(); return await reader.ReadAsync()?ReadEventChangeRequest(reader):null;
+    }
+
+    public async Task<EventChangeRequestRecord> DecideEventChangeAsync(long requestId, EventChangeDecisionRequest request)
+    {
+        if (request.Decision is not ("Approved" or "Rejected")) throw new ArgumentException("Decision must be Approved or Rejected.");
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var lookup=connection.CreateCommand();lookup.Transaction=tx;lookup.CommandText="SELECT id,case_id,hearing_id,proposed_start_date,proposed_end_date,note,status,requested_by,requested_at,decided_by,decided_at,decision_note FROM event_change_requests WHERE id=@id";lookup.Parameters.AddWithValue("@id",requestId);await using var reader=await lookup.ExecuteReaderAsync();if(!await reader.ReadAsync())throw new ArgumentException("Event change request not found.");var model=ReadEventChangeRequest(reader);await reader.DisposeAsync();if(model.Status!="Pending")throw new InvalidOperationException("Event change request is already decided.");
+            var now=DateTime.UtcNow.ToString("O");if(request.Decision=="Approved"){var update=connection.CreateCommand();update.Transaction=tx;update.CommandText="UPDATE hearings SET hearing_date=@start,end_date=@end,updated_at=@now WHERE id=@hearing";update.Parameters.AddWithValue("@start",model.ProposedStartDate);update.Parameters.AddWithValue("@end",model.ProposedEndDate is null?(object)DBNull.Value:model.ProposedEndDate);update.Parameters.AddWithValue("@now",now);update.Parameters.AddWithValue("@hearing",model.HearingId);await update.ExecuteNonQueryAsync();}
+            var decision=connection.CreateCommand();decision.Transaction=tx;decision.CommandText="UPDATE event_change_requests SET status=@status,decided_by=@by,decided_at=@at,decision_note=@note WHERE id=@id";decision.Parameters.AddWithValue("@status",request.Decision);decision.Parameters.AddWithValue("@by",_actor.AuditLabel);decision.Parameters.AddWithValue("@at",now);decision.Parameters.AddWithValue("@note",DbValue(request.Note));decision.Parameters.AddWithValue("@id",requestId);await decision.ExecuteNonQueryAsync();model.Status=request.Decision;model.DecidedBy=_actor.AuditLabel;model.DecidedAt=now;model.DecisionNote=request.Note;return model;
+        });
+    }
+
+    private static EventChangeRequestRecord ReadEventChangeRequest(System.Data.Common.DbDataReader r) => new(){Id=r.GetInt64(0),CaseId=r.GetInt64(1),HearingId=r.GetInt64(2),ProposedStartDate=r.GetString(3),ProposedEndDate=r.IsDBNull(4)?null:r.GetString(4),Note=r.IsDBNull(5)?null:r.GetString(5),Status=r.GetString(6),RequestedBy=r.GetString(7),RequestedAt=r.GetString(8),DecidedBy=r.IsDBNull(9)?null:r.GetString(9),DecidedAt=r.IsDBNull(10)?null:r.GetString(10),DecisionNote=r.IsDBNull(11)?null:r.GetString(11)};
+
     public async Task RecordDocumentGenerationFailureAsync(string requestId, string operation, string message)
     {
         var failure = new DocumentGenerationFailure
@@ -6838,8 +6881,10 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "additional_deposit_amount", "REAL");
         await AddColumnIfMissingAsync(connection, "cases", "additional_deposit_date", "TEXT");
         await AddColumnIfMissingAsync(connection, "deadlines", "severity", "TEXT DEFAULT 'normal'");
+        await AddColumnIfMissingAsync(connection, "deadlines", "related_event_id", "INTEGER");
         await AddColumnIfMissingAsync(connection, "deadlines", "completed_at", "TEXT");
         await AddColumnIfMissingAsync(connection, "checklist_items", "completed_at", "TEXT");
+        await AddColumnIfMissingAsync(connection, "checklist_items", "related_event_id", "INTEGER");
         foreach (var table in new[] { "deadlines", "checklist_items" })
         {
             await AddColumnIfMissingAsync(connection, table, "source_kind", "TEXT DEFAULT 'Manual'");
@@ -7864,7 +7909,7 @@ public sealed partial class CasePlannerRepository
             {
                 var id = $"{template.Name}:{item.SortOrder}";
                 var duplicate = ws.ChecklistItems.FirstOrDefault(x => x.SourceTemplateId == id || (x.Phase.Equals(item.Phase ?? workflowStatus, StringComparison.OrdinalIgnoreCase) && x.Task.Equals(item.Task, StringComparison.OrdinalIgnoreCase)));
-                result.Add(new WorkTemplateCandidate { Kind="Task", TemplateId=id, TemplateVersion=1, Title=item.Task, Stage=item.Phase ?? workflowStatus,
+                result.Add(new WorkTemplateCandidate { Kind="Task", TemplateId=id, TemplateVersion=1, Title=item.Task, Stage=item.Phase ?? workflowStatus, RelativeOffsetDays=item.DueOffsetDays,
                     DueDate=item.DueOffsetDays.HasValue?today.AddDays(item.DueOffsetDays.Value).ToString("yyyy-MM-dd"):null,
                     IsDuplicate=duplicate is not null, DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} task: {duplicate.Task}" });
             }
@@ -7883,7 +7928,7 @@ public sealed partial class CasePlannerRepository
                 _=>null
             };
             var duplicate=ws.Deadlines.FirstOrDefault(x=>x.SourceTemplateId==template.Id.ToString() || x.Title.Equals(template.Title,StringComparison.OrdinalIgnoreCase));
-            result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Severity=template.Severity,
+            result.Add(new WorkTemplateCandidate { Kind="Deadline",TemplateId=template.Id.ToString(),TemplateVersion=3,Title=template.Title,Stage=workflowStatus,Severity=template.Severity,RelativeOffsetDays=template.OffsetDays,
                 DueDate=anchor?.AddDays(template.OffsetDays).ToString("yyyy-MM-dd"),IsDuplicate=duplicate is not null,DuplicateReason=duplicate is null?null:$"Matches {duplicate.Status.ToLowerInvariant()} deadline: {duplicate.Title}" });
         }
         return result;
@@ -7902,6 +7947,75 @@ public sealed partial class CasePlannerRepository
         }
         if(added>0) await RecordActivityAsync(caseId,"TemplateBatchAdded",$"Added {added} task/deadline template item(s) after review",null);
         return added;
+    }
+
+    public async Task<int> AddEventPreparationSelectionsAsync(long caseId, long eventId, AddWorkTemplatesRequest request)
+    {
+        var hearing = (await GetHearingsAsync(caseId)).FirstOrDefault(x => x.Id == eventId);
+        if (hearing is null) throw new ArgumentException("The proceeding does not belong to this case.");
+        var candidates = (await GetEventPreparationCandidatesAsync(caseId, eventId)).ToDictionary(x => $"{x.Kind}:{x.TemplateId}", StringComparer.OrdinalIgnoreCase);
+        var added = 0;
+        var now = DateTime.UtcNow.ToString("O");
+        foreach (var selection in request.Items)
+        {
+            if (!candidates.TryGetValue($"{selection.Kind}:{selection.TemplateId}", out var candidate) || (candidate.IsDuplicate && !selection.AllowDuplicate)) continue;
+            if (candidate.Kind == "Task")
+                await SaveChecklistItemAsync(new ChecklistItemRecord { CaseId = caseId, RelatedEventId = eventId, Phase = candidate.Stage, Task = candidate.Title, DueDate = selection.DueDate, Status = "Not Started", SourceType = $"Template:{candidate.TemplateId}", SourceKind = "StageTemplate", SourceTemplateId = candidate.TemplateId, SourceTemplateVersion = candidate.TemplateVersion, SourceStage = candidate.Stage, GeneratedAt = now, GeneratedBy = _actor.AuditLabel, IsManual = false });
+            else
+                await SaveDeadlineAsync(new DeadlineItem { CaseId = caseId, RelatedEventId = eventId, Title = candidate.Title, DueDate = selection.DueDate, Status = "Open", Severity = candidate.Severity ?? "normal", SourceType = $"Computed:{candidate.TemplateId}", SourceKind = "DeadlineTemplate", SourceTemplateId = candidate.TemplateId, SourceTemplateVersion = candidate.TemplateVersion, SourceStage = candidate.Stage, GeneratedAt = now, GeneratedBy = _actor.AuditLabel, IsManual = false });
+            added++;
+        }
+        if (added > 0) await RecordActivityAsync(caseId, "EventPreparationTemplateApplied", $"Added {added} preparation item(s) for event {eventId}", null);
+        return added;
+    }
+
+    public async Task<EventPreparationDateRecalculationPreview> PreviewEventPreparationDateRecalculationAsync(long caseId, long eventId, string proposedStartDate)
+    {
+        var hearing = (await GetHearingsAsync(caseId)).FirstOrDefault(x => x.Id == eventId) ?? throw new ArgumentException("The proceeding does not belong to this case.");
+        return EventPreparationDateRecalculator.Build(caseId, eventId, hearing.HearingDate, proposedStartDate,
+            (await GetChecklistItemsAsync(caseId)).Where(x => x.RelatedEventId == eventId),
+            (await GetDeadlinesAsync(caseId)).Where(x => x.RelatedEventId == eventId));
+    }
+
+    public async Task<EventPreparationDateRecalculationPreview> ApplyEventPreparationDateRecalculationAsync(long caseId, long eventId, string proposedStartDate)
+    {
+        var hearing = (await GetHearingsAsync(caseId)).FirstOrDefault(x => x.Id == eventId) ?? throw new ArgumentException("The proceeding does not belong to this case.");
+        var tasks = (await GetChecklistItemsAsync(caseId)).Where(x => x.RelatedEventId == eventId).ToList();
+        var deadlines = (await GetDeadlinesAsync(caseId)).Where(x => x.RelatedEventId == eventId).ToList();
+        var preview = EventPreparationDateRecalculator.Build(caseId, eventId, hearing.HearingDate, proposedStartDate, tasks, deadlines);
+        foreach (var change in preview.Changes.Where(x => x.WillMove))
+        {
+            if (change.Kind == "Task")
+            {
+                var item = tasks.First(x => x.Id == change.WorkItemId); item.DueDate = change.ProposedDueDate; item.IsDateRecalculation = true; await SaveChecklistItemAsync(item);
+            }
+            else
+            {
+                var item = deadlines.First(x => x.Id == change.WorkItemId); item.DueDate = change.ProposedDueDate; item.ReasonForChange = $"Recalculated after proceeding date changed from {hearing.HearingDate} to {proposedStartDate}."; await SaveDeadlineAsync(item);
+            }
+        }
+        if (preview.Changes.Any(x => x.WillMove)) await RecordActivityAsync(caseId, "EventPreparationDatesRecalculated", $"Recalculated preparation dates for event {eventId} from {hearing.HearingDate} to {proposedStartDate}", null);
+        return preview;
+    }
+
+    public async Task<List<WorkTemplateCandidate>> GetEventPreparationCandidatesAsync(long caseId, long eventId)
+    {
+        var hearing = (await GetHearingsAsync(caseId)).FirstOrDefault(x => x.Id == eventId);
+        if (hearing is null) throw new ArgumentException("The proceeding does not belong to this case.");
+        if (!DateOnly.TryParse(hearing.HearingDate, out var eventDate)) return [];
+        var candidates = await GetWorkTemplateCandidatesAsync(caseId);
+        var linkedTasks = (await GetChecklistItemsAsync(caseId)).Where(x => x.RelatedEventId == eventId).ToList();
+        var linkedDeadlines = (await GetDeadlinesAsync(caseId)).Where(x => x.RelatedEventId == eventId).ToList();
+        foreach (var candidate in candidates)
+        {
+            if (candidate.RelativeOffsetDays is { } offset) candidate.DueDate = eventDate.AddDays(offset).ToString("yyyy-MM-dd");
+            var linkedStatus = candidate.Kind == "Task"
+                ? linkedTasks.FirstOrDefault(x => x.SourceTemplateId == candidate.TemplateId)?.Status
+                : linkedDeadlines.FirstOrDefault(x => x.SourceTemplateId == candidate.TemplateId)?.Status;
+            candidate.IsDuplicate = linkedStatus is not null;
+            candidate.DuplicateReason = linkedStatus is null ? null : $"Matches {linkedStatus.ToLowerInvariant()} {candidate.Kind.ToLowerInvariant()} for this event";
+        }
+        return candidates;
     }
 
     private async Task MigrateStructuredProvenanceV1Async(SqliteConnection connection)
@@ -10825,6 +10939,20 @@ public sealed partial class CasePlannerRepository
             updated_at TEXT,
             event_type TEXT NOT NULL DEFAULT 'Hearing',
             status TEXT NOT NULL DEFAULT 'Scheduled'
+        );
+        CREATE TABLE IF NOT EXISTS event_change_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            hearing_id INTEGER NOT NULL,
+            proposed_start_date TEXT NOT NULL,
+            proposed_end_date TEXT,
+            note TEXT,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            requested_by TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            decided_by TEXT,
+            decided_at TEXT,
+            decision_note TEXT
         );
         CREATE TABLE IF NOT EXISTS checklist_templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

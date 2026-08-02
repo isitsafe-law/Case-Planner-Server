@@ -52,6 +52,7 @@ const dateLabel = (value?: string | null) => value ? new Date(`${value.slice(0, 
 
 export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], cases, work, events, onOpenCase, onOpenPreparation }: LegalAssistantDashboardProps) {
   const [selectedAttorney, setSelectedAttorney] = useState('All')
+  const [horizonDays, setHorizonDays] = useState<number | 'all'>(180)
   const visibleAttorneyNames = supportedAttorneyNames.filter((name, index, list) => name && list.indexOf(name) === index)
   const scopedCases = selectedAttorney === 'All' ? cases : cases.filter((item) => item.assignedAttorney === selectedAttorney)
   const today = new Date()
@@ -61,7 +62,8 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
   const onDesk = visibleWork.filter((item) => !item.assignedStaffName || item.assignedStaffName === assistantName)
   const overdue = visibleWork.filter((item) => { const due = dateValue(item.dueDate); return due && due < today })
   const waitingAttorney = scopedCases.filter((item) => item.caseStatus === 'Pipeline' && ['Attorney', 'Deputy Chief Counsel', 'Chief Counsel'].includes(item.currentHolder || ''))
-  const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return supportedCaseIds.has(item.caseId) && date && date >= today }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
+  const horizonEnd = horizonDays === 'all' ? null : new Date(today.getTime() + horizonDays * 86400000)
+  const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return supportedCaseIds.has(item.caseId) && date && date >= today && (!horizonEnd || date <= horizonEnd) }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
   const service = scopedCases.filter((item) => item.caseStatus === 'Filed / Service Pending' && !item.servicePerfected)
 
   return (
@@ -69,7 +71,10 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
       <div className="dash-hd">
         <h2>{assistantName ? `${assistantName}'s Assistant Dashboard` : 'Legal Assistant Dashboard'}</h2>
         <span className="muted">Operational work for supported attorneys</span>
-        {visibleAttorneyNames.length > 0 && <label className="assistant-attorney-filter"><span>Attorney</span><select value={selectedAttorney} onChange={(event) => setSelectedAttorney(event.target.value)}><option value="All">All supported attorneys</option>{visibleAttorneyNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
+        <div className="assistant-dashboard-filters">
+          {visibleAttorneyNames.length > 0 && <label><span>Attorney</span><select value={selectedAttorney} onChange={(event) => setSelectedAttorney(event.target.value)}><option value="All">All supported attorneys</option>{visibleAttorneyNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
+          <label><span>Proceedings</span><select value={horizonDays} onChange={(event) => setHorizonDays(event.target.value === 'all' ? 'all' : Number(event.target.value))}><option value={30}>30 days</option><option value={60}>60 days</option><option value={90}>90 days</option><option value={120}>120 days</option><option value={180}>180 days</option><option value="all">All upcoming</option></select></label>
+        </div>
       </div>
 
       <div className="ui-tiles dashboard-kpi-strip" style={{ marginBottom: '1rem' }}>
@@ -82,7 +87,7 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
 
       <div className="dashboard-card-grid assistant-dashboard-grid">
         <section className="ui-table-panel">
-          <div className="panel-hd"><h3>Upcoming Proceedings and Preparation</h3><span className="count">180-day view</span></div>
+          <div className="panel-hd"><h3>Upcoming Proceedings and Preparation</h3><span className="count">{horizonDays === 'all' ? 'All upcoming' : horizonDays + '-day view'}</span></div>
           <div className="assistant-list">
             {upcoming.length === 0 ? <p className="helper-text">No upcoming proceedings for supported attorneys.</p> : upcoming.map((event) => {
               const item = cases.find((candidate) => candidate.id === event.caseId)

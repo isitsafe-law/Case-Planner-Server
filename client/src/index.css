@@ -3651,8 +3651,9 @@ button.ui-tile.ui-tile-on .ui-tile-label {
 .pending-approval-strip strong { color: var(--warning); font-size: .8rem; }
 .pending-approval-strip .text-button { width: fit-content; max-width: 100%; text-align: left; }
 .pending-manager-approvals { margin: 1rem 0; }
-.assistant-attorney-filter { display: inline-flex; align-items: center; gap: .4rem; margin-left: auto; font-size: .78rem; }
-.assistant-attorney-filter select { min-width: 12rem; }
+.assistant-dashboard-filters { display: inline-flex; align-items: center; gap: .65rem; margin-left: auto; }
+.assistant-dashboard-filters label { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; }
+.assistant-dashboard-filters select { min-width: 9rem; }
 .preparation-completed { margin-top: 1rem; }
 .preparation-completed summary { cursor: pointer; padding: .85rem .9rem; font-weight: 600; }
 @media (max-width: 800px) { .assistant-dashboard-grid { grid-template-columns: 1fr; } }

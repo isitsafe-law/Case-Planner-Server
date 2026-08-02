@@ -1219,6 +1219,7 @@ type SavedReportDefinition = {
   search: string
   dateOpenedFrom: string
   dateOpenedTo: string
+  dateOpenedPreset: string
   columns: ReportColumnKey[]
   sortColumn: ReportColumnKey
   sortDirection: 'asc' | 'desc'
@@ -6367,14 +6368,15 @@ function App() {
   }
   function applySavedReport(report: SavedReportDefinition) {
     setReportStatusFilter(report.status); setReportCountyFilter(report.county); setReportDistrictFilter(report.district)
-    setReportSearch(report.search); setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo)
-    setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || ''); setReportPreset('')
+    setReportSearch(report.search); setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || '')
+    if (report.dateOpenedPreset) applyReportPreset(report.dateOpenedPreset)
+    else { setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo); setReportPreset('') }
     setMessage(`Loaded report: ${report.name}`)
   }
   async function saveCurrentReport() {
     if (!savedReportName.trim()) { setErrorMessage('Enter a name for the saved report.'); return }
     try {
-      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection, groupColumn: reportGroupColumn }) })
+      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, dateOpenedPreset: reportPreset, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection, groupColumn: reportGroupColumn }) })
       setSavedReports((current) => [saved, ...current.filter((report) => report.id !== saved.id)])
       setSavedReportName(''); setMessage(`Saved report: ${saved.name}`)
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to save the report.') }

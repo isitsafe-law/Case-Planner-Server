@@ -10213,6 +10213,7 @@ public sealed partial class CasePlannerRepository
             Search = request.Search?.Trim() ?? "",
             DateOpenedFrom = request.DateOpenedFrom?.Trim() ?? "",
             DateOpenedTo = request.DateOpenedTo?.Trim() ?? "",
+            DateOpenedPreset = request.DateOpenedPreset?.Trim() ?? "",
             Columns = request.Columns.Where(column => !string.IsNullOrWhiteSpace(column)).Distinct(StringComparer.Ordinal).ToList(),
             SortColumn = string.IsNullOrWhiteSpace(request.SortColumn) ? "caseName" : request.SortColumn.Trim(),
             SortDirection = string.Equals(request.SortDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "desc" : "asc",

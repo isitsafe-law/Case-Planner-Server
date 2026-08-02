@@ -22,13 +22,15 @@ SQL/Entra migration can promote these records to user- or division-scoped rows w
 definition shape.
 The report builder also supports optional grouping by any selected column; grouping is a presentation choice
 and does not alter counts, filters, exports, or the underlying case records.
+Saved definitions can also retain a relative opened-date preset such as Last 30 days or This calendar year;
+the dates are recalculated when the report is loaded so recurring reports do not become stale.
 
 ## Build order
 
 - Phase 1: shared open-case and upcoming-work selectors, plus tests against existing Work Queue behavior.
 - Phase 2: compact dashboard upcoming-work view with 5/10 preference, filters, actions, and Work Queue navigation.
 - Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports. The first
-  saved-definition and presentation-grouping slices are complete; relative dates, seeded reports, and
+  saved-definition, presentation-grouping, and relative-date slices are complete; seeded reports and
   user-scoped sharing remain follow-up work.
 - Phase 4: migration/backup verification and portable deployment.
 

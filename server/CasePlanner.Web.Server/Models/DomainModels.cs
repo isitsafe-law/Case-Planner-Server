@@ -1769,6 +1769,7 @@ public class SavedReportDefinition
     public string Search { get; set; } = "";
     public string DateOpenedFrom { get; set; } = "";
     public string DateOpenedTo { get; set; } = "";
+    public string DateOpenedPreset { get; set; } = "";
     public List<string> Columns { get; set; } = [];
     public string SortColumn { get; set; } = "caseName";
     public string SortDirection { get; set; } = "asc";

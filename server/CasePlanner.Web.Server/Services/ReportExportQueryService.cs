@@ -8,7 +8,7 @@ namespace CasePlanner.Web.Server.Services;
 /// case-list report; other report tabs continue to use the validated client result until their
 /// aggregate query contracts are moved here.
 /// </summary>
-public sealed class ReportExportQueryService(ICaseCatalogReader cases)
+public sealed class ReportExportQueryService(ICaseCatalogReader cases, IHearingStore hearings, ICaseAttorneyAssignmentStore assignments)
 {
     private static readonly HashSet<string> OpenStatuses = ["Pipeline", "Filed / Service Pending", "Active Litigation", "Settlement Pending", "Trial Preparation"];
 
@@ -44,6 +44,45 @@ public sealed class ReportExportQueryService(ICaseCatalogReader cases)
         var descending = request.Filters.GetValueOrDefault("sortDirection", "asc").Equals("desc", StringComparison.OrdinalIgnoreCase);
         records = (descending ? records.OrderByDescending(record => Value(record, sortColumn)) : records.OrderBy(record => Value(record, sortColumn))).ThenBy(record => record.Id).ToList();
         return records.Select(record => request.Columns.ToDictionary(column => column.Key, column => Value(record, column.Key))).ToList();
+    }
+
+    public async Task<List<Dictionary<string, string>>> GetUpcomingTrialRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token)
+    {
+        var horizonText = request.Filters.GetValueOrDefault("horizon", "all upcoming");
+        var horizon = horizonText.StartsWith("next ", StringComparison.OrdinalIgnoreCase) && int.TryParse(horizonText.Split(' ', StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1), out var parsed) ? parsed : (int?)null;
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var latest = horizon.HasValue ? today.AddDays(horizon.Value) : DateOnly.MaxValue;
+        var attorney = request.Filters.GetValueOrDefault("attorney", "all");
+        var division = request.Filters.GetValueOrDefault("division", "all");
+        var caseRows = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);
+        if (visibleCaseIds is not null) caseRows = caseRows.Where(record => visibleCaseIds.Contains(record.Id)).ToList();
+        var caseById = caseRows.ToDictionary(record => record.Id);
+        var assignmentRows = await assignments.GetAsync(null, token);
+        var namesByCase = assignmentRows.GroupBy(row => row.CaseId).ToDictionary(group => group.Key, group => group.Select(row => row.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        var eventRows = await hearings.GetAsync(null, token);
+        var result = new List<(CaseRecord Case, HearingRecord Event, string Additional, int Days)>();
+        foreach (var eventRow in eventRows.Where(row => row.EventType.Equals("Jury Trial", StringComparison.Ordinal) && !row.Status.Equals("Canceled", StringComparison.OrdinalIgnoreCase) && !row.Status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) && !row.Status.Equals("Complete", StringComparison.OrdinalIgnoreCase) && !row.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!caseById.TryGetValue(eventRow.CaseId, out var caseRow) || !DateOnly.TryParse(eventRow.HearingDate, out var start)) continue;
+            var end = DateOnly.TryParse(eventRow.EndDate, out var parsedEnd) ? parsedEnd : start;
+            var caseStatus = string.IsNullOrWhiteSpace(caseRow.CaseStatus) ? "Pipeline" : caseRow.CaseStatus;
+            if (end < today || start > latest || caseStatus is "Resolved / Closed" or "Triage" || caseRow.Status is "Closed" or "Complete" or "Triage") continue;
+            var additional = (namesByCase.GetValueOrDefault(caseRow.Id) ?? []).Where(name => !name.Equals(caseRow.AssignedAttorney, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (!string.IsNullOrWhiteSpace(attorney) && !attorney.Equals("all", StringComparison.OrdinalIgnoreCase) && !string.Equals(caseRow.AssignedAttorney, attorney, StringComparison.OrdinalIgnoreCase) && !additional.Any(name => name.Equals(attorney, StringComparison.OrdinalIgnoreCase))) continue;
+            if (!string.IsNullOrWhiteSpace(division) && !division.Equals("all", StringComparison.OrdinalIgnoreCase) && !string.Equals(caseRow.Division, division, StringComparison.OrdinalIgnoreCase)) continue;
+            result.Add((caseRow, eventRow, string.Join(", ", additional), Math.Max(0, start.DayNumber - today.DayNumber)));
+        }
+        return result.OrderBy(row => row.Event.HearingDate).ThenBy(row => row.Event.Id).Select(row => request.Columns.ToDictionary(column => column.Key, column => column.Key switch
+        {
+            "trialDate" => row.Event.EndDate is not null && row.Event.EndDate != row.Event.HearingDate ? $"{row.Event.HearingDate} – {row.Event.EndDate}" : row.Event.HearingDate ?? "",
+            "case" => string.IsNullOrWhiteSpace(row.Case.CaseName) ? row.Case.CaseNumber : row.Case.CaseName,
+            "jobTract" => string.Join(" / ", new[] { row.Case.JobNumber, row.Case.Tract }.Where(value => !string.IsNullOrWhiteSpace(value))),
+            "county" => row.Case.County,
+            "primaryAttorney" => row.Case.AssignedAttorney ?? "Unassigned",
+            "additionalAttorneys" => row.Additional,
+            "days" => row.Days.ToString(),
+            _ => ""
+        })).ToList();
     }
 
     private static string Value(CaseRecord record, string key) => key switch

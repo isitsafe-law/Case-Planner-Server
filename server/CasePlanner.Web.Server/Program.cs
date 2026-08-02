@@ -809,6 +809,8 @@ app.MapPost("/api/reports/export.xlsx", async (ReportExcelRequest request, CaseA
     if (visibleCaseIds is not null && scopeCaseIds.Any(caseId => !visibleCaseIds.Contains(caseId))) return Results.Forbid();
     if (request.ReportId.Equals("case-list", StringComparison.OrdinalIgnoreCase) && request.ServerQuery)
         request.Rows = await reportQueries.GetCaseListRowsAsync(request, visibleCaseIds, token);
+    else if (request.ReportId.Equals("upcoming-trials", StringComparison.OrdinalIgnoreCase) && request.ServerQuery)
+        request.Rows = await reportQueries.GetUpcomingTrialRowsAsync(request, visibleCaseIds, token);
     using var workbook = new XLWorkbook();
     var sheet = workbook.Worksheets.Add("Report");
     sheet.Cell(1, 1).Value = request.Title;

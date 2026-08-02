@@ -5,7 +5,7 @@ The Reports page currently contains five report views. All five use the shared `
 | Report | Rows exported | Active scope/filter values |
 |---|---|---|
 | Case List Export | Filtered case-list rows and selected columns | Status, county, district, search text, opened-date range, selected columns |
-| Upcoming Trials | Active Jury Trial event rows | Horizon, primary/additional attorney, division |
+| Upcoming Trials | Active Jury Trial event rows queried by the server | Horizon, primary/additional attorney, division |
 | Caseload & Workload | Open cases in the selected attorney view | Selected attorney; open-case scope |
 | Outcomes | Closed cases with deposit and final judgment data | Outcome-eligible scope |
 | Cycle Time | Closed cases with filing and closed dates | Resolution-eligible scope |
@@ -21,7 +21,7 @@ The Reports page currently contains five report views. All five use the shared `
 
 ## Permission boundary
 
-The case-list Excel export now sends its report identifier and filters to the server, which re-queries the provider-neutral case catalog, reapplies the filters/sort, and writes the workbook from that result. The other reports still send their already-filtered detail rows, while the endpoint validates their report identifier and submitted case scope through `CaseAccessService`; it does not expand that scope. Their aggregate query contracts can move server-side in the same pattern as provider-neutral report services are added.
+The case-list and Upcoming Trials Excel exports now send their report identifiers and filters to the server. The server re-queries the provider-neutral case catalog/hearing stores, reapplies the filters/sort, and writes the workbook from those results. The other reports still send their already-filtered detail rows, while the endpoint validates their report identifier and submitted case scope through `CaseAccessService`; it does not expand that scope. Their aggregate query contracts can move server-side in the same pattern as provider-neutral report services are added.
 
 ## Work Queue date sources
 

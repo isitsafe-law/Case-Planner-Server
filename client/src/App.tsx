@@ -9218,6 +9218,24 @@ function App() {
       default: return 'Review the details, correct the underlying issue, and run validation again.'
     }
   }
+  function exportPortableValidationCsv() {
+    if (!portableValidation) return
+    const escapeCsv = (value: string) => `"${value.replaceAll('"', '""')}"`
+    const rows = [
+      ['Portable Validation Report'],
+      ['Generated', portableValidation.generatedAt],
+      ['Overall result', portableValidation.passed ? 'Passed' : 'Needs attention'],
+      [],
+      ['Check', 'Result', 'Details', 'Recommended action'],
+      ...portableValidation.checks.map((check) => [check.name, check.passed ? 'Pass' : 'Needs attention', check.details, portableCheckRemediation(check.name, check.passed)]),
+    ]
+    const csv = rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n')
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    link.download = `CasePlanner_Portable_Validation_${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
 
   async function updatePipelineHolder(holder: string) {
     const record = workspace?.case ?? selectedCase
@@ -11790,7 +11808,7 @@ function App() {
 
           {settingsSection === 'diagnostics' && (
             <Panel title="Diagnostics">
-              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><button onClick={() => void runUpgradeReadiness()}>Check Upgrade Readiness</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
+              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><button onClick={() => void runUpgradeReadiness()}>Check Upgrade Readiness</button><button onClick={exportPortableValidationCsv} disabled={!portableValidation}>Export Validation CSV</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
               {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th><th>Recommended action</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td><td>{portableCheckRemediation(check.name, check.passed)}</td></tr>)}</tbody></table></div></div>}
               {diagnostics ? (
                 <div className="diagnostics-grid">

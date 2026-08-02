@@ -6685,14 +6685,14 @@ function App() {
   const outcomeExportRows = useMemo<ReportExportRow[]>(() => outcomeCaseRows.map((record) => ({ caseNumber: record.caseNumber || '', caseName: record.caseName || '', closedDate: record.closedDate || '', disposition: record.dispositionType || '', takingType: record.takingType || '', attorney: record.assignedAttorney || '', deposit: record.depositAmount ?? '', finalAmount: record.finalJudgmentAmount ?? '', delta: outcomeDelta(record), ratio: outcomeRatio(record) })), [outcomeCaseRows])
   const cycleTimeExportColumns: ReportExportColumn[] = [{ key: 'caseNumber', label: 'Case number' }, { key: 'caseName', label: 'Case' }, { key: 'filedDate', label: 'Filed date' }, { key: 'closedDate', label: 'Closed date' }, { key: 'days', label: 'Days to resolution' }, { key: 'disposition', label: 'Disposition' }]
   const cycleTimeExportRows = useMemo<ReportExportRow[]>(() => cycleTimeEligibleCases.map((record) => ({ caseNumber: record.caseNumber || '', caseName: record.caseName || '', filedDate: record.filingDate || '', closedDate: record.closedDate || '', days: resolutionDays(record) ?? '', disposition: record.dispositionType || '' })), [cycleTimeEligibleCases])
-  const reportExportSpec: { title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters: Record<string, string> } | null = reportView === 'export'
-    ? { title: 'Case Lifecycle Report', columns: caseListExportColumns, rows: caseListExportRows, filters: { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all', district: reportDistrictFilter || 'all', search: reportSearch || 'all' } }
+  const reportExportSpec: { reportId: string; scopeCaseIds: number[]; title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters: Record<string, string> } | null = reportView === 'export'
+    ? { reportId: 'case-list', scopeCaseIds: reportRows.map((record) => record.id), title: 'Case Lifecycle Report', columns: caseListExportColumns, rows: caseListExportRows, filters: { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all', district: reportDistrictFilter || 'all', search: reportSearch || 'all' } }
     : reportView === 'caseload'
-      ? { title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
+      ? { reportId: 'caseload', scopeCaseIds: caseloadScopedCases.map((record) => record.id), title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
       : reportView === 'outcomes'
-        ? { title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
+        ? { reportId: 'outcomes', scopeCaseIds: outcomeCaseRows.map((record) => record.id), title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
         : reportView === 'cycleTime'
-          ? { title: 'Cycle Time', columns: cycleTimeExportColumns, rows: cycleTimeExportRows, filters: { status: 'closed', eligibility: 'filing and closed dates' } }
+          ? { reportId: 'cycle-time', scopeCaseIds: cycleTimeEligibleCases.map((record) => record.id), title: 'Cycle Time', columns: cycleTimeExportColumns, rows: cycleTimeExportRows, filters: { status: 'closed', eligibility: 'filing and closed dates' } }
           : null
 
   async function exitCasePlanner() {

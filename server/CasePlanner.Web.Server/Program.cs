@@ -799,8 +799,13 @@ app.MapPost("/api/reports/saved", async (SaveReportDefinitionRequest request, IR
 });
 app.MapDelete("/api/reports/saved/{id}", async (string id, IReportDefinitionStore reports, CancellationToken token) =>
     Results.Ok(new { deleted = await reports.DeleteAsync(id, token) }));
-app.MapPost("/api/reports/export.xlsx", (ReportExcelRequest request) =>
+app.MapPost("/api/reports/export.xlsx", async (ReportExcelRequest request, CaseAccessService access, CancellationToken token) =>
 {
+    var reportIds = new[] { "case-list", "upcoming-trials", "caseload", "outcomes", "cycle-time" };
+    if (!reportIds.Contains(request.ReportId, StringComparer.OrdinalIgnoreCase)) return Results.BadRequest(new { error = "Unknown report identifier." });
+    var scopeCaseIds = request.ScopeCaseIds.Distinct().ToArray();
+    var visibleCaseIds = await access.GetVisibleCaseIdsAsync(token);
+    if (visibleCaseIds is not null && scopeCaseIds.Any(caseId => !visibleCaseIds.Contains(caseId))) return Results.Forbid();
     using var workbook = new XLWorkbook();
     var sheet = workbook.Worksheets.Add("Report");
     sheet.Cell(1, 1).Value = request.Title;

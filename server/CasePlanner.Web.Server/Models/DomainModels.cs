@@ -788,10 +788,12 @@ public sealed class UpcomingWorkItemRecord
 
 public sealed class ReportExcelRequest
 {
+    public string ReportId { get; set; } = "case-list";
     public string FileName { get; set; } = "Case_Report.xlsx";
     public string Title { get; set; } = "Case Report";
     public string GeneratedAt { get; set; } = "";
     public Dictionary<string, string> Filters { get; set; } = [];
+    public List<long> ScopeCaseIds { get; set; } = [];
     public List<ReportExcelColumn> Columns { get; set; } = [];
     public List<Dictionary<string, string>> Rows { get; set; } = [];
 }

@@ -6772,6 +6772,22 @@ function App() {
     }
     return map
   }, [allCases, cases, dashboard])
+  const legalAssistantSupportedAttorneyNames = useMemo(() => {
+    if (!currentUser?.isLegalAssistant) return []
+    const directoryRecord = legalAssistants.find((item) => item.linkedUserId === currentUser.id || item.linkedUserId === currentUser.objectId || item.name === currentUser.displayName)
+    return directoryRecord?.attorneyNames ?? []
+  }, [currentUser, legalAssistants])
+  const legalAssistantCaseScope = useMemo(() => {
+    if (!currentUser?.isLegalAssistant || legalAssistantSupportedAttorneyNames.length === 0) return allCases
+    const supported = new Set(legalAssistantSupportedAttorneyNames)
+    const supportedCaseIds = new Set(allCases.filter((item) => item.assignedAttorney && supported.has(item.assignedAttorney)).map((item) => item.id))
+    for (const assignments of Object.values(allCaseAttorneyAssignments)) {
+      for (const assignment of assignments) {
+        if (supported.has(assignment.name)) supportedCaseIds.add(assignment.caseId)
+      }
+    }
+    return allCases.filter((item) => supportedCaseIds.has(item.id))
+  }, [allCases, allCaseAttorneyAssignments, currentUser, legalAssistantSupportedAttorneyNames])
   // Metric-tile facet filter: a union of the selected priority levels; no tiles active shows everything.
   const filteredActionQueue = useMemo(() => {
     const queue = attorneyDashboard?.actionQueue ?? []
@@ -10875,7 +10891,8 @@ function App() {
       {page === 'legalAssistantDashboard' && currentUser?.isLegalAssistant && !currentUser.isManager && (
         <LegalAssistantDashboard
           assistantName={currentUser.displayName}
-          cases={allCases}
+          supportedAttorneyNames={legalAssistantSupportedAttorneyNames}
+          cases={legalAssistantCaseScope}
           work={[...queueDeadlines, ...queueChecklist]}
           events={queueHearings.map((event) => ({ ...event, pendingChange: pendingEventChangeIds.has(event.id) }))}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}

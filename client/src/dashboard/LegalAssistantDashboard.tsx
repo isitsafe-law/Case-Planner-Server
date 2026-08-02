@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 type AssistantCase = {
   id: number
   caseName: string
@@ -36,6 +38,7 @@ type AssistantEvent = {
 
 export type LegalAssistantDashboardProps = {
   assistantName?: string | null
+  supportedAttorneyNames?: string[]
   cases: AssistantCase[]
   work: AssistantWork[]
   events: AssistantEvent[]
@@ -47,22 +50,26 @@ const openStatus = (value?: string | null) => !['Done', 'Complete', 'Completed',
 const dateValue = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`) : null
 const dateLabel = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : 'No date'
 
-export function LegalAssistantDashboard({ assistantName, cases, work, events, onOpenCase, onOpenPreparation }: LegalAssistantDashboardProps) {
+export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], cases, work, events, onOpenCase, onOpenPreparation }: LegalAssistantDashboardProps) {
+  const [selectedAttorney, setSelectedAttorney] = useState('All')
+  const visibleAttorneyNames = supportedAttorneyNames.filter((name, index, list) => name && list.indexOf(name) === index)
+  const scopedCases = selectedAttorney === 'All' ? cases : cases.filter((item) => item.assignedAttorney === selectedAttorney)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const supportedCaseIds = new Set(cases.map((item) => item.id))
+  const supportedCaseIds = new Set(scopedCases.map((item) => item.id))
   const visibleWork = work.filter((item) => supportedCaseIds.has(item.caseId) && openStatus(item.status))
   const onDesk = visibleWork.filter((item) => !item.assignedStaffName || item.assignedStaffName === assistantName)
   const overdue = visibleWork.filter((item) => { const due = dateValue(item.dueDate); return due && due < today })
-  const waitingAttorney = cases.filter((item) => item.caseStatus === 'Pipeline' && ['Attorney', 'Deputy Chief Counsel', 'Chief Counsel'].includes(item.currentHolder || ''))
-  const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return date && date >= today }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
-  const service = cases.filter((item) => item.caseStatus === 'Filed / Service Pending' && !item.servicePerfected)
+  const waitingAttorney = scopedCases.filter((item) => item.caseStatus === 'Pipeline' && ['Attorney', 'Deputy Chief Counsel', 'Chief Counsel'].includes(item.currentHolder || ''))
+  const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return supportedCaseIds.has(item.caseId) && date && date >= today }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
+  const service = scopedCases.filter((item) => item.caseStatus === 'Filed / Service Pending' && !item.servicePerfected)
 
   return (
     <main className="page legal-assistant-dashboard">
       <div className="dash-hd">
         <h2>{assistantName ? `${assistantName}'s Assistant Dashboard` : 'Legal Assistant Dashboard'}</h2>
         <span className="muted">Operational work for supported attorneys</span>
+        {visibleAttorneyNames.length > 0 && <label className="assistant-attorney-filter"><span>Attorney</span><select value={selectedAttorney} onChange={(event) => setSelectedAttorney(event.target.value)}><option value="All">All supported attorneys</option>{visibleAttorneyNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>}
       </div>
 
       <div className="ui-tiles dashboard-kpi-strip" style={{ marginBottom: '1rem' }}>
@@ -92,10 +99,10 @@ export function LegalAssistantDashboard({ assistantName, cases, work, events, on
         </section>
 
         <section className="ui-table-panel">
-          <div className="panel-hd"><h3>Pre-Filing and Document Preparation</h3><span className="count">{cases.filter((item) => item.caseStatus === 'Pipeline').length} cases</span></div>
+          <div className="panel-hd"><h3>Pre-Filing and Document Preparation</h3><span className="count">{scopedCases.filter((item) => item.caseStatus === 'Pipeline').length} cases</span></div>
           <div className="assistant-list">
-            {cases.filter((item) => item.caseStatus === 'Pipeline').slice(0, 8).map((item) => <button className="assistant-list-row" key={item.id} onClick={() => onOpenCase(item.id)}><span><strong>{item.caseName}</strong><small>{item.caseNumber || item.county || 'Pipeline case'}</small></span><span><strong>{item.currentHolder || 'Unassigned'}</strong><small>{item.pipelineStage || 'Review stage not set'}</small></span></button>)}
-            {cases.every((item) => item.caseStatus !== 'Pipeline') && <p className="helper-text">No supported cases are currently in pipeline.</p>}
+            {scopedCases.filter((item) => item.caseStatus === 'Pipeline').slice(0, 8).map((item) => <button className="assistant-list-row" key={item.id} onClick={() => onOpenCase(item.id)}><span><strong>{item.caseName}</strong><small>{item.caseNumber || item.county || 'Pipeline case'}</small></span><span><strong>{item.currentHolder || 'Unassigned'}</strong><small>{item.pipelineStage || 'Review stage not set'}</small></span></button>)}
+            {scopedCases.every((item) => item.caseStatus !== 'Pipeline') && <p className="helper-text">No supported cases are currently in pipeline.</p>}
           </div>
         </section>
 

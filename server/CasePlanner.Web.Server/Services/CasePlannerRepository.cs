@@ -9522,6 +9522,24 @@ public sealed partial class CasePlannerRepository
             countCommand.CommandText = "SELECT COUNT(*) FROM cases";
             var caseCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
             checks.Add(new PortableValidationCheck("Restore read test", true, $"A temporary restored copy opened successfully with {caseCount:N0} case(s). The live database was not replaced."));
+
+            await using var savedReportsCommand = connection.CreateCommand();
+            savedReportsCommand.CommandText = "SELECT value FROM app_settings WHERE key=@key LIMIT 1";
+            savedReportsCommand.Parameters.AddWithValue("@key", "saved_report_definitions_v1");
+            var savedReportsJson = await savedReportsCommand.ExecuteScalarAsync() as string;
+            var savedReportsValid = true;
+            var savedReportsMessage = "No saved report definitions were present, or the setting was empty.";
+            if (!string.IsNullOrWhiteSpace(savedReportsJson))
+            {
+                try
+                {
+                    var savedReports = JsonSerializer.Deserialize<List<SavedReportDefinition>>(savedReportsJson);
+                    savedReportsValid = savedReports is not null;
+                    savedReportsMessage = savedReportsValid ? $"Validated {savedReports!.Count:N0} saved report definition(s) in the restored copy." : "Saved report definitions were empty or invalid.";
+                }
+                catch (JsonException ex) { savedReportsValid = false; savedReportsMessage = $"Saved report definitions could not be parsed: {ex.Message}"; }
+            }
+            checks.Add(new PortableValidationCheck("Saved report definitions", savedReportsValid, savedReportsMessage));
         }
         catch (Exception ex)
         {

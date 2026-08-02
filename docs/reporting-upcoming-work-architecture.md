@@ -36,7 +36,11 @@ user; they do not create duplicate records or change case data.
 - Phase 2: compact dashboard upcoming-work view with 5/10 preference, filters, actions, and Work Queue navigation.
 - Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports. The first
   saved-definition, presentation-grouping, relative-date, and seeded starting-view slices are complete;
-  user-scoped sharing remains follow-up work.
+user-scoped sharing remains follow-up work.
+
+Portable backup/restore validation now checks the saved-report setting in the temporary restored copy. This
+confirms that report definitions are carried with the SQLite database and that malformed saved-report JSON is
+reported as a validation failure before a future migration.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

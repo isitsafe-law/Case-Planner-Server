@@ -52,6 +52,7 @@ expected app version, `CasePlannerWeb_v<version>` build identifier, `win-x64` ta
 commit, and UTC timestamp. After extraction, run:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\validate-portable-manifest.ps1 -PackagePath .\release\CasePlannerIT_Handoff_<date>
 powershell -ExecutionPolicy Bypass -File .\scripts\local-package-smoke.ps1 -PackagePath .\release\CasePlannerIT_Handoff_<date> -Port 5300
 ```
 

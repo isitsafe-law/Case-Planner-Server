@@ -15,7 +15,7 @@ This is a test/preview deployment. Entra authentication and manager-only authori
 5. Do not copy a developer database into a handoff package.
 6. Establish the future backup location and retention policy.
 7. Confirm `portable-build-manifest.json` is beside the executable. Record its build identifier and commit with any IT issue.
-8. Run `scripts/local-package-smoke.ps1` against the extracted package; it verifies the manifest matches the running server before testing health and document generation.
+8. Run `scripts/validate-portable-manifest.ps1` against the extracted package to check release identity, then run `scripts/local-package-smoke.ps1`; the smoke test also verifies the manifest matches the running server before testing health and document generation.
 
 ## Data locations
 

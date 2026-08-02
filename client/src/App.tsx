@@ -7320,7 +7320,7 @@ function App() {
                   </td>
                   {renderCaseCell(item.caseId, 'work')}
                   <td>
-                    <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+                    <input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.task}`} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
                   </td>
                   <td>
                     <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
@@ -7461,7 +7461,7 @@ function App() {
                 {renderTaskAssigneeControl(item)}
               </td>
               {renderCaseCell(item.caseId, 'work')}
-              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
+              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}><input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.task}`} onChange={(event) => void persistChecklist({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} /></td>
               <td>
                 <StatusSelect value={item.status} options={checklistStatuses} tone={checklistRowTone(item)} ariaLabel={`Status for ${item.task}`} onChange={(value) => void persistChecklist({ ...item, status: value }, 'Checklist status updated.', false)} />
               </td>

@@ -690,6 +690,8 @@ type WorkspaceResponse = {
 type DiagnosticsSnapshot = {
   appName: string
   version: string
+  schemaContractVersion: string
+  schemaContractCurrent: boolean
   databaseProvider: string
   databaseArchitectureNote: string
   databasePath: string
@@ -11770,6 +11772,7 @@ function App() {
               {diagnostics ? (
                 <div className="diagnostics-grid">
                   <StatCard label="App / Version" value={`${diagnostics.appName} | ${diagnostics.version}`} />
+                  <StatCard label="Portable Schema" value={diagnostics.schemaContractCurrent ? `Contract ${diagnostics.schemaContractVersion}` : `${diagnostics.schemaContractVersion} · Upgrade needed`} tone={diagnostics.schemaContractCurrent ? 'ok' : 'warn'} />
                   <StatCard label="Database Provider" value={diagnostics.databaseProvider} />
                   <StatCard label="Database Writable" value={diagnostics.databaseWritable ? 'Yes' : 'No'} tone={diagnostics.databaseWritable ? 'ok' : 'warn'} />
                   <StatCard label="Write Safety" value={diagnostics.writeSafetyOk ? 'Safe' : 'Read Only'} tone={diagnostics.writeSafetyOk ? 'ok' : 'warn'} />

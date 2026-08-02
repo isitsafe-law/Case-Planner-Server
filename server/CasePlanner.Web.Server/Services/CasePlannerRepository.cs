@@ -6701,6 +6701,8 @@ public sealed partial class CasePlannerRepository
         {
             AppName = _paths.Config.AppName,
             Version = _paths.Config.Version,
+            SchemaContractVersion = await GetAppSettingAsync(connection, SchemaContractKey) ?? "Not stamped",
+            SchemaContractCurrent = (await GetAppSettingAsync(connection, SchemaContractKey)) == SchemaContractValue,
             DatabaseProvider = "SQLite (active runtime); SQL Server migration target available",
             DatabaseArchitectureNote = "The current repository still reads and writes SQLite. The shared data layer, target probe, migration utility, and SQL Server multi-user schema are migration foundations; SQL Server runtime cutover remains intentionally disabled until repository reconciliation, identity, and authorization are complete.",
             DatabasePath = _paths.Config.DatabasePath,

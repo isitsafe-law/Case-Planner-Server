@@ -1822,6 +1822,7 @@ app.MapGet("/api/health", async () =>
     {
         status = "ok",
         diagnostics.Version,
+        diagnostics.BuildIdentifier,
         diagnostics.DatabaseProvider,
         diagnostics.DatabasePath,
         diagnostics.WriteSafetyOk,

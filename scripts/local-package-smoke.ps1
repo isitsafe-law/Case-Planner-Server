@@ -7,6 +7,12 @@ $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackagePath).Path
 $exe = Join-Path $package 'CasePlanner.Web.Server.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw "Published server not found: $exe" }
+$manifestPath = Join-Path $package 'portable-build-manifest.json'
+if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Portable build manifest not found: $manifestPath" }
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($manifest.appVersion) -or [string]::IsNullOrWhiteSpace($manifest.buildIdentifier) -or $manifest.target -ne 'win-x64' -or -not $manifest.selfContained) {
+  throw 'Portable build manifest is missing required release identity fields.'
+}
 
 $url = "http://127.0.0.1:$Port"
 $process = Start-Process -FilePath $exe -ArgumentList '--urls', $url -WorkingDirectory $package -WindowStyle Hidden -PassThru
@@ -17,6 +23,7 @@ try {
     catch { Start-Sleep -Milliseconds 500 }
   }
   if ($null -eq $health -or $health.status -ne 'ok') { throw 'The packaged server did not report a healthy status.' }
+  if ($health.BuildIdentifier -ne $manifest.buildIdentifier) { throw "Build identity mismatch: manifest=$($manifest.buildIdentifier); server=$($health.BuildIdentifier)." }
 
   $portableValidation = Invoke-RestMethod "$url/api/portable-validation" -TimeoutSec 10
   if (-not $portableValidation.passed) { throw 'The packaged server failed portable validation.' }
@@ -47,6 +54,8 @@ try {
     Status = 'passed'
     Url = $url
     Provider = $health.provider
+    BuildIdentifier = $manifest.buildIdentifier
+    ManifestCommit = $manifest.commit
     CatalogEntries = $catalogCount
     PortableValidation = $portableValidation.passed
     BackupRestoreValidation = $backupRestoreValidation.passed

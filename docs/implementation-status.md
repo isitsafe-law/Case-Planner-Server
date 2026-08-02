@@ -190,6 +190,7 @@
 - Validation CSV, JSON, and handoff summaries include app version, schema-contract version, database provider/path, and runtime metadata when diagnostics are available.
 - Diagnostics now exposes a stable portable build identifier (`CasePlannerWeb_v<version>`) and includes it in all validation exports.
 - The portable publish script now writes `portable-build-manifest.json` beside the executable with app version, build identifier, commit, target, self-contained status, timestamp, and package path.
+- The portable smoke test now requires that manifest and compares its build identifier with the running server health response before exercising document generation.
 - Portable builds now expose a global Exit Case Planner control backed by loopback-only, one-time-token shutdown endpoints and `IHostApplicationLifetime.StopApplication()`; no tray launcher exists in the current package, so no tray icon was added.
 - Reports now export `.xlsx` through the existing ClosedXML stack, and the Columns and layout editor is collapsible.
 - Dashboard panels now render in the requested order: Attorney Action Queue and Case Insight first, followed by Upcoming Work. Fresh databases seed one clearly fictional `SAMPLE-CASE-001` record only; existing databases are never reseeded. Data Management now offers recognized-sample deletion and an advanced typed full reset that creates a verified backup, optionally clears generated exports, reruns migrations, and reseeds the sample case.

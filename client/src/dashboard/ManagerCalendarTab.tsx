@@ -9,9 +9,7 @@ import { CASE_EVENT_TYPES } from '../eventTypes'
 export const CALENDAR_HORIZONS = [7, 30, 60, 90, 120, 180, 'all'] as const
 export type CalendarHorizon = typeof CALENDAR_HORIZONS[number]
 
-// The synthetic event type for a case's trialDate/trialEndDate - never render generic "Trial" per
-// ARDOT terminology (see Complaint in Condemnation / Landowner Exceptions / etc. conventions
-// elsewhere in this app).
+// The authoritative event type for scheduled jury trials.
 export const JURY_TRIAL_EVENT_TYPE = 'Jury Trial'
 
 type CalendarEvent = {
@@ -50,22 +48,17 @@ function mondayWeekKey(dateStr: string): string {
   return new Date(mondayDay * 86400000).toISOString().slice(0, 10)
 }
 
-// Counts used by the top-strip "Events next N days" tiles - a hearing with hearingDate in
-// [today, today+days] plus a case with trialDate in the same window. Exported so the dashboard
-// shell can compute the fixed 7-/30-day tile values independent of whatever horizon the Calendar
-// tab itself is currently showing.
+// Counts used by the top-strip "Events next N days" tiles. Calendar and reports use the same
+// hearing rows, including Jury Trial events, so counts do not drift to a legacy case date.
 export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[], days: number): number {
   const today = todayEpochDay()
-  const end = today + days
-  const inWindow = (day: number | null) => day != null && day >= today && day <= end
-  const hearingCount = hearings.filter((h) => {
+  const windowEnd = today + days
+  void allCases
+  return hearings.filter((h) => {
     const start = toEpochDay(h.hearingDate)
-    const end = toEpochDay(h.endDate || h.hearingDate)
-    return start != null && end != null && end >= today && start <= today + days
+    const eventEnd = toEpochDay(h.endDate || h.hearingDate)
+    return start != null && eventEnd != null && eventEnd >= today && start <= windowEnd
   }).length
-  const recordedTrialCaseIds = new Set(hearings.filter((h) => h.eventType === JURY_TRIAL_EVENT_TYPE).map((h) => h.caseId))
-  const trialCount = allCases.filter((c) => !recordedTrialCaseIds.has(c.id) && inWindow(toEpochDay(c.trialDate))).length
-  return hearingCount + trialCount
 }
 
 export function ManagerCalendarTab({
@@ -97,11 +90,10 @@ export function ManagerCalendarTab({
   const windowEnd = horizon === 'all' ? null : today + horizon
   const isActiveCase = (record?: CaseRecord) => Boolean(record) && (record!.caseStatus || 'Pipeline') !== 'Resolved / Closed' && record!.status !== 'Closed' && record!.status !== 'Complete'
 
-  // Forward-looking events inside the selected horizon: hearings joined against allCases for
-  // display columns, plus a synthetic Jury Trial event per case with a trialDate in the window.
+  // Forward-looking events inside the selected horizon: authoritative hearings joined against
+  // allCases for display columns.
   const windowEvents = useMemo(() => {
     const events: CalendarEvent[] = []
-    const recordedTrialCaseIds = new Set(hearings.filter((hearing) => hearing.eventType === JURY_TRIAL_EVENT_TYPE).map((hearing) => hearing.caseId))
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
@@ -119,22 +111,6 @@ export function ManagerCalendarTab({
         tract: record?.tract || '',
         assignedAttorney: record?.assignedAttorney || '',
         caseStatus: record?.caseStatus || 'Pipeline',
-      })
-    }
-    for (const record of allCases) {
-      const day = toEpochDay(record.trialDate)
-      if (recordedTrialCaseIds.has(record.id) || day == null || day < windowStart || (windowEnd != null && day > windowEnd) || !isActiveCase(record)) continue
-      events.push({
-        key: `trial-${record.id}`,
-        caseId: record.id,
-        date: record.trialDate as string,
-        endDate: record.trialEndDate,
-        eventType: JURY_TRIAL_EVENT_TYPE,
-        title: JURY_TRIAL_EVENT_TYPE,
-        jobNumber: record.jobNumber || '',
-        tract: record.tract || '',
-        assignedAttorney: record.assignedAttorney || '',
-        caseStatus: record.caseStatus || 'Pipeline',
       })
     }
     return events.sort((a, b) => a.date.localeCompare(b.date))

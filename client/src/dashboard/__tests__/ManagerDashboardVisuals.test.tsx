@@ -17,11 +17,11 @@ describe('manager dashboard summaries', () => {
     expect(bars.reduce((sum, bar) => sum + bar.count, 0)).toBe(2)
   })
 
-  it('does not double-count a case represented by both a jury event and trial-date projection', () => {
+  it('uses Jury Trial events rather than legacy trial-date projections', () => {
     const first = { ...baseCase(1, 'Primary'), trialDate: '2026-09-01' }
     const second = { ...baseCase(2, 'Primary'), trialDate: '2026-09-02' }
     const bars = buildManagerTrialBars([first, second], [hearing(1, 1, 'Jury Trial', '2026-09-01')])
-    expect(bars.find((bar) => bar.key === 'Primary')?.count).toBe(2)
+    expect(bars.find((bar) => bar.key === 'Primary')?.count).toBe(1)
   })
 
   it('groups pipeline records by the shared aging-stage projection', () => {
@@ -31,4 +31,3 @@ describe('manager dashboard summaries', () => {
     expect(bars.find((bar) => bar.key === 'None')?.count).toBe(1)
   })
 })
-

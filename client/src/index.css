@@ -1882,6 +1882,9 @@ code {
 .dashboard-schedule-detail span, .dashboard-schedule-detail small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-schedule-destination { display: none; }
 .dashboard-work-actions { align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
+.dashboard-due-date-link { border: 0; border-bottom: 1px dashed var(--accent); padding: 0; color: inherit; background: transparent; cursor: pointer; }
+.dashboard-due-date-link:hover, .dashboard-due-date-link:focus-visible { color: var(--accent); border-bottom-style: solid; outline: none; }
+.dashboard-due-date-editor { align-items: center; flex-wrap: nowrap; }
 .dashboard-work-actions-menu { position: relative; }
 .dashboard-work-actions-menu summary { display: inline-flex; align-items: center; min-height: 1.9rem; padding: .25rem .5rem; border: 1px solid var(--border); border-radius: var(--r-ctl); color: var(--text-muted); cursor: pointer; font-size: .8rem; list-style: none; }
 .dashboard-work-actions-menu summary::-webkit-details-marker { display: none; }

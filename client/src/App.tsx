@@ -16,7 +16,8 @@ import { TriageWizard } from './TriageWizard'
 import { EditHistoryList } from './EditHistoryList'
 import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecisionDialog'
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
-import { DashboardWorkActions } from './dashboard/DashboardWorkActions'
+import { DashboardDueDate, DashboardWorkActions } from './dashboard/DashboardWorkActions'
+import { UpcomingTrialsReport } from './reporting/UpcomingTrialsReport'
 import { DashboardCompactSummaries, type PlanningSummary } from './dashboard/DashboardCompactSummaries'
 type DashboardBar = { key: string; label: string; count: number; detail?: string }
 import type { UpcomingScheduleItem } from './dashboard/DashboardUpcomingSchedule'
@@ -2328,7 +2329,7 @@ function App() {
   // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
   // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting),
   // 'cycleTime' is Report C (Cycle-Time Reporting).
-  const [reportView, setReportView] = useState<'export' | 'caseload' | 'outcomes' | 'cycleTime'>('export')
+  const [reportView, setReportView] = useState<'export' | 'trials' | 'caseload' | 'outcomes' | 'cycleTime'>('export')
   // '' = Division-wide (every open case, attorney as a breakdown dimension); otherwise scoped to
   // one attorney's open cases via assignedAttorney match. Manual stand-in for per-login scoping
   // until Entra is live - a display filter only, no access restriction.
@@ -6377,6 +6378,11 @@ function App() {
     catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load saved reports.') }
   }
   function applyReportDefinition(report: ReportPresetDefinition | SavedReportDefinition) {
+    if (report.name === 'Upcoming trials') {
+      setReportView('trials')
+      setMessage('Loaded report: Upcoming trials')
+      return
+    }
     setReportStatusFilter(report.status); setReportCountyFilter(report.county); setReportDistrictFilter(report.district)
     setReportSearch(report.search); setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || '')
     if (report.dateOpenedPreset) applyReportPreset(report.dateOpenedPreset)
@@ -6916,11 +6922,9 @@ function App() {
       return date != null && date >= today && date - today <= days
     }
     const activeTrialEvents = queueHearings.filter((event) => event.eventType === 'Jury Trial' && openCaseIds.has(event.caseId) && !['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') && inWindow(event.hearingDate, 180))
-    const trialCaseIds = new Set(activeTrialEvents.map((event) => event.caseId))
-    const legacyTrials = allCases.filter((record) => openCaseIds.has(record.id) && !trialCaseIds.has(record.id) && inWindow(record.trialDate, 180)).map((record) => ({ date: record.trialDate as string, caseName: record.caseName || record.caseNumber || `Case ${record.id}`, caseId: record.id }))
-    const nextTrial = [...activeTrialEvents.map((event) => ({ date: event.hearingDate as string, endDate: event.endDate || null, caseName: allCases.find((record) => record.id === event.caseId)?.caseName || `Case ${event.caseId}`, caseId: event.caseId, eventId: event.id })), ...legacyTrials.map((trial) => ({ ...trial, endDate: null, eventId: null }))].sort((a, b) => a.date.localeCompare(b.date) || a.caseId - b.caseId)[0] || null
+    const nextTrial = activeTrialEvents.map((event) => ({ date: event.hearingDate as string, endDate: event.endDate || null, caseName: allCases.find((record) => record.id === event.caseId)?.caseName || `Case ${event.caseId}`, caseId: event.caseId, eventId: event.id })).sort((a, b) => a.date.localeCompare(b.date) || a.caseId - b.caseId)[0] || null
     return {
-      juryTrials: activeTrialEvents.length + legacyTrials.length,
+      juryTrials: activeTrialEvents.length,
       events: queueHearings.filter((event) => openCaseIds.has(event.caseId) && !['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '') && inWindow(event.hearingDate, 30)).length,
       deadlines: queueDeadlines.filter((deadline) => openCaseIds.has(deadline.caseId) && !isDeadlineDone(deadline) && inWindow(deadline.dueDate, 30)).length,
       nextJuryTrial: nextTrial ? { date: displayDate(nextTrial.date), endDate: nextTrial.endDate ? displayDate(nextTrial.endDate) : null, caseName: nextTrial.caseName, caseId: nextTrial.caseId, eventId: nextTrial.eventId, daysRemaining: DateOnlyFromString(nextTrial.date)! - today } : null,
@@ -11076,8 +11080,8 @@ function App() {
                     <tbody>
                       {dashboardOverdueItems.length === 0 ? <UiEmptyState colSpan={5} title="No overdue work" hint="Nothing requires immediate follow-up." /> : dashboardOverdueItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
-                          <td><TypeChip kind={item.type} /></td><td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger">{item.dueDate ? displayDate(item.dueDate) : '-'}</td>
-                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} /></td>
+                          <td><TypeChip kind={item.type} /></td><td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger"><DashboardDueDate item={item} onSave={(dueDate) => saveDashboardDueDate(item, dueDate)} /></td>
+                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -11113,12 +11117,8 @@ function App() {
                           <td><TypeChip kind={item.type} /></td>
                           <td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td>
                           <td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td>
-                          <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}>{item.dueDate ? displayDate(item.dueDate) : '—'}</td>
-                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onSaveDueDate={(dueDate) => saveDashboardDueDate(item, dueDate)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} onOpen={() => openCase(item.caseId, item.tab)} />
-                            <div className="ui-row-actions">
-                              <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, item.tab)}>Open ▸</Btn>
-                            </div>
-                          </td>
+                          <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}><DashboardDueDate item={item} onSave={(dueDate) => saveDashboardDueDate(item, dueDate)} /></td>
+                          <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -11232,6 +11232,7 @@ function App() {
 
           <div className="segmented-tabs">
             <button className={reportView === 'export' ? 'segment active' : 'segment'} onClick={() => setReportView('export')}>Case List Export</button>
+            <button className={reportView === 'trials' ? 'segment active' : 'segment'} onClick={() => setReportView('trials')}>Upcoming Trials</button>
             <button className={reportView === 'caseload' ? 'segment active' : 'segment'} onClick={() => setReportView('caseload')}>Caseload &amp; Workload</button>
             <button className={reportView === 'outcomes' ? 'segment active' : 'segment'} onClick={() => setReportView('outcomes')}>Outcomes</button>
             <button className={reportView === 'cycleTime' ? 'segment active' : 'segment'} onClick={() => setReportView('cycleTime')}>Cycle Time</button>
@@ -11363,6 +11364,18 @@ function App() {
               </Panel>
             </div>
           </div>
+          )}
+
+          {reportView === 'trials' && (
+            <div className="top-gap-small">
+              <UpcomingTrialsReport
+                cases={allCases}
+                hearings={queueHearings}
+                assignments={allCaseAttorneyAssignments}
+                attorneys={attorneys.filter((item) => item.isActive).map((item) => item.name)}
+                onOpenCase={(caseId) => openCase(caseId, 'events')}
+              />
+            </div>
           )}
 
           {reportView === 'caseload' && (

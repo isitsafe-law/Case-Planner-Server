@@ -58,13 +58,6 @@ export function buildManagerTrialBars(allCases: CaseRecord[], hearings: Hearing[
     const attorney = record.assignedAttorney || 'Unassigned'
     counts.set(attorney, (counts.get(attorney) || 0) + 1)
   }
-  for (const record of allCases) {
-    const day = epoch(record.trialDate)
-    if (day == null || day < today || day > today + 180 || !activeCase(record) || seen.has(record.id)) continue
-    seen.add(record.id)
-    const attorney = record.assignedAttorney || 'Unassigned'
-    counts.set(attorney, (counts.get(attorney) || 0) + 1)
-  }
   return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([attorney, count]) => ({ key: attorney, label: attorney, count, detail: `${count} jury trial${count === 1 ? '' : 's'} within 180 days` }))
 }
 

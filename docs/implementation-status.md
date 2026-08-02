@@ -192,6 +192,7 @@
 - The portable publish script now writes `portable-build-manifest.json` beside the executable with app version, build identifier, commit, target, self-contained status, timestamp, and package path.
 - The portable smoke test now requires that manifest and compares its build identifier with the running server health response before exercising document generation.
 - `scripts/validate-portable-manifest.ps1` provides a standalone release assertion for CI or IT, and the runtime smoke test calls it before starting the package.
+- The portable publish script now runs that validator against its generated package before reporting a successful publish, catching incomplete or mismatched output immediately.
 - `docs/portable-release-checklist.md` documents the connected-build sequence, intended-commit comparison, smoke test, and fresh-package data safeguards.
 - Portable builds now expose a global Exit Case Planner control backed by loopback-only, one-time-token shutdown endpoints and `IHostApplicationLifetime.StopApplication()`; no tray launcher exists in the current package, so no tray icon was added.
 - Reports now export `.xlsx` through the existing ClosedXML stack, and the Columns and layout editor is collapsible.

@@ -51,8 +51,9 @@ dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-re
 ```
 
 The package smoke test checks SQLite startup, the document-template catalog, and DOCX generation. Portable
-packages also include `portable-build-manifest.json`; the smoke test verifies that its build identifier matches
-the running server before continuing.
+packages also include `portable-build-manifest.json`; `publish-portable.ps1` validates the manifest before it
+reports success, and the smoke test verifies that its build identifier matches the running server before
+continuing. See `docs/portable-release-checklist.md` for the release handoff sequence.
 
 ## Workflow
 

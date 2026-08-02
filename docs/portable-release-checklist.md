@@ -4,9 +4,12 @@ Use this on a connected build machine before distributing a portable SQLite test
 
 1. Start from the intended committed Git revision.
 2. Run the client tests and build.
-3. Publish with `scripts/publish-portable.ps1`.
+3. Publish with `scripts/publish-portable.ps1`. The publish script validates the
+   manifest it just created (version, target, self-contained flag, and source commit)
+   before reporting success.
 4. Confirm `portable-build-manifest.json` exists beside the executable.
-5. Compare the manifest commit to the intended revision:
+5. Compare the manifest commit to the intended revision. This standalone check is an
+   additional release-operator assertion when the package is being handed off:
 
    ```powershell
    $expectedCommit = (git rev-parse --short HEAD).Trim()

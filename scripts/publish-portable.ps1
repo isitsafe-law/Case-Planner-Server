@@ -44,5 +44,6 @@ $manifest = [ordered]@{
   packagePath = $destination
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $destination 'portable-build-manifest.json') -Encoding UTF8
+& (Join-Path $PSScriptRoot 'validate-portable-manifest.ps1') -PackagePath $destination -ExpectedVersion $version -ExpectedCommit $commit | Out-Null
 
 Write-Host "Portable release written to $destination"

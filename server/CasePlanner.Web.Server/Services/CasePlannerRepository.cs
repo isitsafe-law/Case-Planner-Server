@@ -9506,7 +9506,7 @@ public sealed partial class CasePlannerRepository
             var integrityResult = Convert.ToString(await integrity.ExecuteScalarAsync()) ?? "";
             checks.Add(new PortableValidationCheck("Backup integrity", integrityResult.Equals("ok", StringComparison.OrdinalIgnoreCase), $"SQLite integrity_check: {integrityResult}."));
 
-            var requiredTables = new[] { "cases", "document_templates", "document_template_versions", "document_generations", "document_exports" };
+            var requiredTables = new[] { "cases", "app_settings", "document_templates", "document_template_versions", "document_generations", "document_exports" };
             var missingTables = new List<string>();
             foreach (var table in requiredTables)
             {

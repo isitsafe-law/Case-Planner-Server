@@ -6688,7 +6688,7 @@ function App() {
   const reportExportSpec: { reportId: string; serverQuery?: boolean; scopeCaseIds: number[]; title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters: Record<string, string> } | null = reportView === 'export'
     ? { reportId: 'case-list', serverQuery: true, scopeCaseIds: reportRows.map((record) => record.id), title: 'Case Lifecycle Report', columns: caseListExportColumns, rows: caseListExportRows, filters: { dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all', district: reportDistrictFilter || 'all', search: reportSearch || 'all', sortColumn: reportSortColumn, sortDirection: reportSortDirection } }
     : reportView === 'caseload'
-      ? { reportId: 'caseload', scopeCaseIds: caseloadScopedCases.map((record) => record.id), title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
+      ? { reportId: 'caseload', serverQuery: true, scopeCaseIds: caseloadScopedCases.map((record) => record.id), title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
       : reportView === 'outcomes'
         ? { reportId: 'outcomes', serverQuery: true, scopeCaseIds: outcomeCaseRows.map((record) => record.id), title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
         : reportView === 'cycleTime'

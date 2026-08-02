@@ -113,6 +113,35 @@ public sealed class ReportExportQueryService(ICaseCatalogReader cases, IHearingS
             _ => ""
         });
 
+    public async Task<List<Dictionary<string, string>>> GetCaseloadRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token)
+    {
+        var records = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);
+        if (visibleCaseIds is not null) records = records.Where(record => visibleCaseIds.Contains(record.Id)).ToList();
+        var assignmentRows = await assignments.GetAsync(null, token);
+        var namesByCase = assignmentRows.GroupBy(row => row.CaseId).ToDictionary(group => group.Key, group => group.Select(row => row.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        var attorney = request.Filters.GetValueOrDefault("attorney", "all");
+        return records.Where(record =>
+        {
+            if ((record.CaseStatus ?? "Pipeline").Equals("Resolved / Closed", StringComparison.OrdinalIgnoreCase) || record.Status is "Closed" or "Complete") return false;
+            if (string.IsNullOrWhiteSpace(attorney) || attorney.Equals("all", StringComparison.OrdinalIgnoreCase)) return true;
+            var names = namesByCase.GetValueOrDefault(record.Id) ?? [];
+            return string.Equals(record.AssignedAttorney, attorney, StringComparison.OrdinalIgnoreCase) || names.Any(name => name.Equals(attorney, StringComparison.OrdinalIgnoreCase));
+        }).OrderBy(record => record.CaseName).ThenBy(record => record.Id).Select(record =>
+        {
+            var names = new[] { record.AssignedAttorney ?? "" }.Concat(namesByCase.GetValueOrDefault(record.Id) ?? []).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase);
+            return request.Columns.ToDictionary(column => column.Key, column => column.Key switch
+            {
+                "caseNumber" => record.CaseNumber,
+                "caseName" => record.CaseName,
+                "attorneys" => string.Join(", ", names),
+                "status" => record.CaseStatus ?? record.Status,
+                "dateOpened" => record.DateOpened ?? "",
+                "county" => record.County,
+                _ => ""
+            });
+        }).ToList();
+    }
+
     private async Task<List<Dictionary<string, string>>> GetEligibleCaseRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token, Func<CaseRecord, bool> eligible, Func<CaseRecord, string, string> value)
     {
         var records = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);

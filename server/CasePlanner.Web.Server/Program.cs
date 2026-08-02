@@ -815,6 +815,8 @@ app.MapPost("/api/reports/export.xlsx", async (ReportExcelRequest request, CaseA
         request.Rows = await reportQueries.GetOutcomeRowsAsync(request, visibleCaseIds, token);
     else if (request.ReportId.Equals("cycle-time", StringComparison.OrdinalIgnoreCase) && request.ServerQuery)
         request.Rows = await reportQueries.GetCycleTimeRowsAsync(request, visibleCaseIds, token);
+    else if (request.ReportId.Equals("caseload", StringComparison.OrdinalIgnoreCase) && request.ServerQuery)
+        request.Rows = await reportQueries.GetCaseloadRowsAsync(request, visibleCaseIds, token);
     using var workbook = new XLWorkbook();
     var sheet = workbook.Worksheets.Add("Report");
     sheet.Cell(1, 1).Value = request.Title;

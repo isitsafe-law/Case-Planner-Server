@@ -6,7 +6,7 @@ The Reports page currently contains five report views. All five use the shared `
 |---|---|---|
 | Case List Export | Filtered case-list rows and selected columns | Status, county, district, search text, opened-date range, selected columns |
 | Upcoming Trials | Active Jury Trial event rows queried by the server | Horizon, primary/additional attorney, division |
-| Caseload & Workload | Open cases in the selected attorney view | Selected attorney; open-case scope |
+| Caseload & Workload | Open cases and assignments queried by the server | Selected attorney; open-case scope |
 | Outcomes | Closed cases with deposit and final judgment data queried by the server | Outcome-eligible scope |
 | Cycle Time | Closed cases with filing and closed dates queried by the server | Resolution-eligible scope |
 
@@ -21,7 +21,7 @@ The Reports page currently contains five report views. All five use the shared `
 
 ## Permission boundary
 
-Case List, Upcoming Trials, Outcomes, and Cycle Time Excel exports now send their report identifiers and filters to the server. The server re-queries the provider-neutral case catalog/hearing stores, reapplies each report's eligibility rules, and writes the workbook from those results. Caseload still sends its already-filtered detail rows, while the endpoint validates its report identifier and submitted case scope through `CaseAccessService`; it does not expand that scope. Its workload/assignment query contract can move server-side in the same pattern as provider-neutral report services are added.
+All five report exports now send their report identifiers and filters to the server. The server re-queries the provider-neutral case catalog, hearing, and assignment stores, reapplies each report's eligibility rules, and writes the workbook from those results. The endpoint also validates the submitted case scope through `CaseAccessService`; it does not expand that scope.
 
 ## Work Queue date sources
 

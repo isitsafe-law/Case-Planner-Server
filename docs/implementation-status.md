@@ -185,6 +185,7 @@
 - Settings → Diagnostics now shows the active portable schema-contract version and clearly marks the database when a current-build upgrade is needed.
 - Diagnostics also provides a dedicated Upgrade Readiness action that runs the non-destructive backup/restore validation against a temporary copy; it never replaces the live database.
 - Diagnostics can export the latest portable or upgrade-readiness result to CSV for an IT handoff, including each check's details and recommended remediation.
+- Diagnostics can also copy a compact plain-text handoff summary for support messages; the CSV remains available when the full check details are needed.
 - Portable builds now expose a global Exit Case Planner control backed by loopback-only, one-time-token shutdown endpoints and `IHostApplicationLifetime.StopApplication()`; no tray launcher exists in the current package, so no tray icon was added.
 - Reports now export `.xlsx` through the existing ClosedXML stack, and the Columns and layout editor is collapsible.
 - Dashboard panels now render in the requested order: Attorney Action Queue and Case Insight first, followed by Upcoming Work. Fresh databases seed one clearly fictional `SAMPLE-CASE-001` record only; existing databases are never reseeded. Data Management now offers recognized-sample deletion and an advanced typed full reset that creates a verified backup, optionally clears generated exports, reruns migrations, and reseeds the sample case.

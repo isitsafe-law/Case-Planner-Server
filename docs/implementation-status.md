@@ -74,7 +74,7 @@
 - Pipeline advancement now requires a filing date and offers all/review/none task-and-deadline generation choices before service tracking begins.
 - Queue items missing a discovery strategy now provide an inline strategy selector that saves and refreshes the dashboard without opening the full case workspace.
 - Overdue deadline queue items now carry their related deadline ID and support Mark Complete directly from the Attorney Action Queue.
-- Overdue deadline queue items also support inline due-date updates with a required reason and preserved change history.
+- Overdue deadline queue items also support inline due-date updates; generated deadlines preserve optional override reasons and change history.
 - The redundant Decisions insight tab is removed; decision work now has one primary home in the Attorney Action Queue.
 - Pipeline case-editor changes to holder, next review date, and note now create concise PipelineUpdated activity entries.
 - Legacy stage advancement controls were removed from the case workspace; consolidated Case Status is now the only primary advancement UI.
@@ -183,7 +183,7 @@
 - Added `/api/dashboard/upcoming-work`; the dashboard now consumes its limited result set while retaining the existing Work Queue action handlers.
 - Dashboard Overdue Work and Due in the Next 7 Days now share compact row behavior: the case name opens the case, editable task/deadline dates open the inline date editor, and duplicate Open/Change Date actions are removed. Service and discovery dates remain source-controlled display values.
 - Reports now has an event-backed Upcoming Trials view. It uses active Jury Trial hearing events, supports selectable horizons and attorney/division filters, includes multi-day trials through their end date, and no longer depends on Trial Preparation or the legacy case-level trial date. Calendar, attorney KPI, and management trial counts use the same event source.
-- Dashboard generated-deadline edits now require an override reason and preserve the existing deadline history path; ordinary tasks and manual deadlines remain one-step date edits. Focused dashboard-action and Upcoming Trials UI tests cover the behavior.
+- Dashboard and Work Queue generated-deadline edits preserve the existing override history path without blocking on a reason; an optional reason is retained when supplied. Ordinary tasks and manual deadlines remain one-step date edits. Focused dashboard-action, deadline-editor, and Upcoming Trials UI tests cover the behavior.
 - Reports phase includes a top-level read-only report builder with consolidated open-case filters, selectable core columns, sorting, optional grouping, preview, Open Case links, CSV/Excel export, saved report definitions, and three non-persistent seeded starting views. Saved definitions persist portable SQLite filters, columns, sort order, grouping, and relative opened-date presets that recalculate when loaded; user-scoped sharing remains follow-up work.
 - Settings → Diagnostics now shows the active portable schema-contract version and clearly marks the database when a current-build upgrade is needed.
 - Diagnostics also provides a dedicated Upgrade Readiness action that runs the non-destructive backup/restore validation against a temporary copy; it never replaces the live database.

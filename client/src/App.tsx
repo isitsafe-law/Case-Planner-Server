@@ -18,6 +18,7 @@ import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecis
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
 import { DashboardDueDate, DashboardWorkActions } from './dashboard/DashboardWorkActions'
 import { UpcomingTrialsReport } from './reporting/UpcomingTrialsReport'
+import { DeadlineDueDateEditor } from './ui/DeadlineDueDateEditor'
 import { DashboardCompactSummaries, type PlanningSummary } from './dashboard/DashboardCompactSummaries'
 type DashboardBar = { key: string; label: string; count: number; detail?: string }
 import type { UpcomingScheduleItem } from './dashboard/DashboardUpcomingSchedule'
@@ -2377,6 +2378,7 @@ function App() {
   const [selectedDeadlineIds, setSelectedDeadlineIds] = useState<number[]>([])
   const [selectedChecklistIds, setSelectedChecklistIds] = useState<number[]>([])
   const [bulkDeadlineDueDate, setBulkDeadlineDueDate] = useState('')
+  const [bulkDeadlineOverrideReason, setBulkDeadlineOverrideReason] = useState('')
   const [bulkChecklistDueDate, setBulkChecklistDueDate] = useState('')
   const [bulkChecklistDueDateOpen, setBulkChecklistDueDateOpen] = useState(false)
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
@@ -4669,13 +4671,14 @@ function App() {
             ? { ...item, status: 'Done' }
             : action === 'reopen'
               ? { ...item, status: 'Reopened' }
-              : { ...item, dueDate: bulkDeadlineDueDate }
+              : { ...item, dueDate: bulkDeadlineDueDate, reasonForChange: !item.isManual ? bulkDeadlineOverrideReason.trim() : item.reasonForChange }
           return api<DeadlineItem>('/api/deadlines', { method: 'POST', body: JSON.stringify(serializeDeadlineDraft(updated, item.caseId)) })
         }))
       }
       await refreshAll(selectedCaseId ?? undefined)
       setSelectedDeadlineIds([])
       setBulkDeadlineDueDate('')
+      setBulkDeadlineOverrideReason('')
       setMessage(
         action === 'delete'
           ? `${selectedItems.length} deadline${selectedItems.length === 1 ? '' : 's'} deleted.`
@@ -7221,6 +7224,7 @@ function App() {
             <button onClick={() => void applyBulkDeadlineAction('complete', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0}>Mark Done</button>
             <button onClick={() => void applyBulkDeadlineAction('reopen', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0}>Reopen</button>
             <input type="date" value={bulkDeadlineDueDate} onChange={(event) => setBulkDeadlineDueDate(event.target.value)} disabled={deadlineSelectedCount === 0} />
+            {sortedDeadlineQueue.some((item) => selectedDeadlineIds.includes(item.id) && !item.isManual) && <input type="text" value={bulkDeadlineOverrideReason} onChange={(event) => setBulkDeadlineOverrideReason(event.target.value)} placeholder="Reason for generated override" aria-label="Reason for generated deadline override" disabled={deadlineSelectedCount === 0} />}
             <button onClick={() => void applyBulkDeadlineAction('dueDate', sortedDeadlineQueue)} disabled={deadlineSelectedCount === 0 || !bulkDeadlineDueDate}>Apply Due Date</button>
             <button onClick={() => setSelectedDeadlineIds([])} disabled={deadlineSelectedCount === 0}>Clear</button>
           </div>
@@ -7255,7 +7259,7 @@ function App() {
                   </td>
                   {renderCaseCell(item.caseId, 'work')}
                   <td>
-                    <input type="date" className="inline-edit-input" value={item.dueDate || ''} onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+                    <DeadlineDueDateEditor item={item} onSave={async (dueDate, reason) => { await persistDeadline({ ...item, dueDate, reasonForChange: reason || item.reasonForChange }, reason ? 'Deadline override saved.' : 'Due date updated.', false) }} />
                   </td>
                   <td>
                     <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
@@ -7448,7 +7452,7 @@ function App() {
                 <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
               </td>
               {renderCaseCell(item.caseId, 'work')}
-              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}>{displayDate(item.dueDate)}</td>
+              <td className={`ui-data${isQueueDateOverdue(item.dueDate) ? ' ui-cell-danger' : ''}`}><DeadlineDueDateEditor item={item} onSave={async (dueDate, reason) => { await persistDeadline({ ...item, dueDate, reasonForChange: reason || item.reasonForChange }, reason ? 'Deadline override saved.' : 'Due date updated.', false) }} /></td>
               <td>
                 <StatusSelect value={item.status} options={deadlineStatuses} tone={deadlineRowTone(item)} ariaLabel={`Status for ${item.title}`} onChange={(value) => void persistDeadline({ ...item, status: value }, 'Deadline status updated.', false)} />
               </td>
@@ -9415,7 +9419,7 @@ function App() {
           <div className="ui-sub">Source: {item.sourceKind || item.sourceType}{item.sourceStage ? ` · ${item.sourceStage}` : ''}</div>
         </td>
         <td>
-          <input type="date" className="inline-edit-input" value={item.dueDate || ''} aria-label={`Due date for ${item.title}`} onChange={(event) => void persistDeadline({ ...item, dueDate: event.target.value }, 'Due date updated.', false)} />
+          <DeadlineDueDateEditor item={item} onSave={async (dueDate, reason) => { await persistDeadline({ ...item, dueDate, reasonForChange: reason || item.reasonForChange }, reason ? 'Deadline override saved.' : 'Due date updated.', false) }} />
         </td>
         <td>
           <div className="work-status-cell">
@@ -9571,6 +9575,7 @@ function App() {
                   aria-label="New due date for selected items"
                   onChange={(event) => { setBulkChecklistDueDate(event.target.value); setBulkDeadlineDueDate(event.target.value) }}
                 />
+                {selDeadlines.some((item) => !item.isManual) && <input type="text" value={bulkDeadlineOverrideReason} onChange={(event) => setBulkDeadlineOverrideReason(event.target.value)} placeholder="Reason for generated override" aria-label="Reason for generated deadline override" />}
                 <button onClick={() => { setBulkChecklistDueDateOpen(false); runBulk('dueDate') }} disabled={!bulkChecklistDueDate}>Apply</button>
                 <button onClick={() => setBulkChecklistDueDateOpen(false)}>Cancel</button>
               </span>

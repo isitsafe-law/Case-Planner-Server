@@ -64,10 +64,10 @@ export function DashboardDueDate({
   if (!editing) return <button type="button" className="dashboard-due-date-link ui-data" onClick={() => setEditing(true)} aria-label={`Change due date for ${item.title}`}>{formatDate(item.dueDate)}</button>
 
   async function save() {
-    if (!dueDate || !onSave || (generatedDeadline && !reason.trim())) return
+    if (!dueDate || !onSave) return
     setBusy(true)
     try {
-      await onSave(dueDate, generatedDeadline ? reason.trim() : undefined)
+      await onSave(dueDate, generatedDeadline ? (reason.trim() || undefined) : undefined)
       setEditing(false)
     } finally {
       setBusy(false)
@@ -77,8 +77,8 @@ export function DashboardDueDate({
   return <span className="inline-quick-form compact-actions dashboard-due-date-editor">
     <input type="date" value={dueDate} onChange={(event) => setDueDate(event.currentTarget.value)} aria-label={`New due date for ${item.title}`} />
     {generatedDeadline && <input type="text" value={reason} onChange={(event) => setReason(event.currentTarget.value)} placeholder="Reason for override" aria-label={`Reason for changing ${item.title}`} />}
-    {generatedDeadline && <small className="dashboard-date-override-note">This is a generated deadline; saving creates a manual override.</small>}
-    <Btn size="sm" onClick={() => void save()} disabled={busy || !dueDate || (generatedDeadline && !reason.trim())}>Save</Btn>
+    {generatedDeadline && <small className="dashboard-date-override-note">Generated deadline; an optional reason will be preserved with the override.</small>}
+    <Btn size="sm" onClick={() => void save()} disabled={busy || !dueDate}>Save</Btn>
     <Btn size="sm" variant="ghost" onClick={() => { setDueDate(item.dueDate ?? ''); setReason(''); setEditing(false) }} disabled={busy}>Cancel</Btn>
   </span>
 }

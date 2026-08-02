@@ -25,15 +25,13 @@ describe('DashboardDueDate', () => {
     expect(onSave).toHaveBeenCalledWith('2026-08-07', undefined)
   })
 
-  it('requires a reason when changing a generated deadline', async () => {
+  it('allows a generated deadline override without requiring a reason', async () => {
     const onSave = vi.fn(async () => {})
     const deadline = { ...item, type: 'deadline' as const, title: 'Serve complaint', source: { isManual: false } }
     render(<DashboardDueDate item={deadline} onSave={onSave} />)
     await userEvent.click(screen.getByRole('button', { name: 'Change due date for Serve complaint' }))
     expect(screen.getByPlaceholderText('Reason for override')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
-    await userEvent.type(screen.getByPlaceholderText('Reason for override'), 'Court order changed the schedule')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith('2026-08-05', 'Court order changed the schedule')
+    expect(onSave).toHaveBeenCalledWith('2026-08-05', undefined)
   })
 })

@@ -26,4 +26,23 @@ foreach ($folder in 'data','backups','exports','logs','templates/documents/custo
 New-Item -ItemType Directory -Force -Path (Join-Path $destination 'import_samples') | Out-Null
 Copy-Item (Join-Path $root 'import_samples/*') (Join-Path $destination 'import_samples') -Recurse -Force
 
+# Leave a small machine-readable release record beside the executable. It makes a test build
+# self-identifying when it is copied away from the repository and gives IT a stable value to
+# include with diagnostics or support requests.
+$appConfig = Get-Content (Join-Path $root 'server/CasePlanner.Web.Server/Models/AppConfig.cs') -Raw
+$versionMatch = [regex]::Match($appConfig, 'Version\s*\{\s*get;\s*set;\s*\}\s*=\s*"([^"]+)"')
+$version = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { 'unknown' }
+$commit = try { (git -C $root rev-parse --short HEAD).Trim() } catch { 'unavailable' }
+$manifest = [ordered]@{
+  appName = 'ARDOT Legal Division Case Planner'
+  appVersion = $version
+  buildIdentifier = "CasePlannerWeb_v$version"
+  commit = $commit
+  target = 'win-x64'
+  selfContained = $true
+  generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+  packagePath = $destination
+}
+$manifest | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $destination 'portable-build-manifest.json') -Encoding UTF8
+
 Write-Host "Portable release written to $destination"

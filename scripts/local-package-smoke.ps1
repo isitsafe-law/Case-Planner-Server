@@ -10,9 +10,7 @@ if (-not (Test-Path -LiteralPath $exe)) { throw "Published server not found: $ex
 $manifestPath = Join-Path $package 'portable-build-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Portable build manifest not found: $manifestPath" }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ([string]::IsNullOrWhiteSpace($manifest.appVersion) -or [string]::IsNullOrWhiteSpace($manifest.buildIdentifier) -or $manifest.target -ne 'win-x64' -or -not $manifest.selfContained) {
-  throw 'Portable build manifest is missing required release identity fields.'
-}
+& (Join-Path $PSScriptRoot 'validate-portable-manifest.ps1') -PackagePath $package | Out-Null
 
 $url = "http://127.0.0.1:$Port"
 $process = Start-Process -FilePath $exe -ArgumentList '--urls', $url -WorkingDirectory $package -WindowStyle Hidden -PassThru

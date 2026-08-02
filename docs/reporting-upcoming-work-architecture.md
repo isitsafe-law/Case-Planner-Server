@@ -24,14 +24,17 @@ The report builder also supports optional grouping by any selected column; group
 and does not alter counts, filters, exports, or the underlying case records.
 Saved definitions can also retain a relative opened-date preset such as Last 30 days or This calendar year;
 the dates are recalculated when the report is loaded so recurring reports do not become stale.
+The report builder now includes three non-persistent starting views: Pipeline review, Upcoming trials, and
+Open workload by attorney. They are ordinary report definitions that can be adjusted and then saved by the
+user; they do not create duplicate records or change case data.
 
 ## Build order
 
 - Phase 1: shared open-case and upcoming-work selectors, plus tests against existing Work Queue behavior.
 - Phase 2: compact dashboard upcoming-work view with 5/10 preference, filters, actions, and Work Queue navigation.
 - Phase 3: Reports navigation, builder, preview, saved definitions, seeded reports, and exports. The first
-  saved-definition, presentation-grouping, and relative-date slices are complete; seeded reports and
-  user-scoped sharing remain follow-up work.
+  saved-definition, presentation-grouping, relative-date, and seeded starting-view slices are complete;
+  user-scoped sharing remains follow-up work.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

@@ -1226,6 +1226,12 @@ type SavedReportDefinition = {
   groupColumn: ReportColumnKey | ''
   updatedAt: string
 }
+type ReportPresetDefinition = Omit<SavedReportDefinition, 'id' | 'updatedAt'>
+const seededReportDefinitions: ReportPresetDefinition[] = [
+  { name: 'Pipeline review', status: 'Pipeline', county: '', district: '', search: '', dateOpenedFrom: '', dateOpenedTo: '', dateOpenedPreset: '', columns: ['caseName', 'caseNumber', 'county', 'currentHolder', 'dateOpened'], sortColumn: 'dateOpened', sortDirection: 'asc', groupColumn: 'currentHolder' },
+  { name: 'Upcoming trials', status: 'Trial Preparation', county: '', district: '', search: '', dateOpenedFrom: '', dateOpenedTo: '', dateOpenedPreset: '', columns: ['caseName', 'caseNumber', 'county', 'trialDate', 'currentHolder'], sortColumn: 'trialDate', sortDirection: 'asc', groupColumn: 'county' },
+  { name: 'Open workload by attorney', status: '', county: '', district: '', search: '', dateOpenedFrom: '', dateOpenedTo: '', dateOpenedPreset: '', columns: ['caseName', 'caseStatus', 'currentHolder', 'nextReviewDate', 'trialDate'], sortColumn: 'nextReviewDate', sortDirection: 'asc', groupColumn: 'currentHolder' },
+]
 
 // Columns that hold numbers/dates/case numbers get the mono data face + tabular figures in the
 // Preview table; free-text columns (name, status, holder, next action...) stay in the UI font.
@@ -6366,13 +6372,14 @@ function App() {
     try { setSavedReports(await api<SavedReportDefinition[]>('/api/reports/saved')) }
     catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load saved reports.') }
   }
-  function applySavedReport(report: SavedReportDefinition) {
+  function applyReportDefinition(report: ReportPresetDefinition | SavedReportDefinition) {
     setReportStatusFilter(report.status); setReportCountyFilter(report.county); setReportDistrictFilter(report.district)
     setReportSearch(report.search); setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || '')
     if (report.dateOpenedPreset) applyReportPreset(report.dateOpenedPreset)
     else { setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo); setReportPreset('') }
     setMessage(`Loaded report: ${report.name}`)
   }
+  function applySavedReport(report: SavedReportDefinition) { applyReportDefinition(report) }
   async function saveCurrentReport() {
     if (!savedReportName.trim()) { setErrorMessage('Enter a name for the saved report.'); return }
     try {
@@ -11149,6 +11156,8 @@ function App() {
           <div className="rep-grid top-gap-small">
             <div className="rep-rail">
               <CollapsiblePanel title={`Saved reports · ${savedReports.length}`}>
+                <p className="helper-text">Recommended starting views</p>
+                <div className="button-row compact-actions top-gap-small">{seededReportDefinitions.map((report) => <Btn key={report.name} size="sm" onClick={() => applyReportDefinition(report)}>{report.name}</Btn>)}</div>
                 <div className="rep-fields">
                   <label><span>Report name</span><input value={savedReportName} onChange={(event) => setSavedReportName(event.target.value)} placeholder="e.g. Upcoming trials" /></label>
                 </div>

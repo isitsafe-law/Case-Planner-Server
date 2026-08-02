@@ -17,4 +17,13 @@ describe('ManagerCalendarTab horizons', () => {
     ]
     expect(countEventsInWindow(cases, hearings, 30)).toBe(2)
   })
+
+  it('excludes canceled and completed events from the shared count', () => {
+    const cases = [caseRecord(1), caseRecord(2)]
+    const hearings: Hearing[] = [
+      { id: 1, caseId: 1, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-10', status: 'Canceled', createdAt: '', updatedAt: '' },
+      { id: 2, caseId: 2, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-11', status: 'Scheduled', createdAt: '', updatedAt: '' },
+    ]
+    expect(countEventsInWindow(cases, hearings, 30)).toBe(1)
+  })
 })

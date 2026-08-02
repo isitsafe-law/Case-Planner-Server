@@ -21,6 +21,10 @@ function eventIsHard(event: Hearing): boolean {
   return event.eventType !== 'Other' && event.eventType !== 'Meeting' && event.eventType !== 'Inspection'
 }
 
+function eventIsActive(event: Hearing): boolean {
+  return !['Canceled', 'Cancelled', 'Complete', 'Completed'].includes(event.status || '')
+}
+
 export function buildManagerHardDateBars(allCases: CaseRecord[], hearings: Hearing[], deadlines: DeadlineItem[]): ManagerSummaryBar[] {
   const cases = new Map(allCases.map((record) => [record.id, record]))
   const start = todayEpoch()
@@ -50,7 +54,7 @@ export function buildManagerTrialBars(allCases: CaseRecord[], hearings: Hearing[
   const today = todayEpoch()
   const counts = new Map<string, number>()
   const seen = new Set<number>()
-  for (const hearing of hearings.filter((item) => item.eventType === 'Jury Trial')) {
+  for (const hearing of hearings.filter((item) => item.eventType === 'Jury Trial' && eventIsActive(item))) {
     const record = cases.get(hearing.caseId)
     const day = epoch(hearing.hearingDate)
     if (!record || day == null || day < today || day > today + 180 || !activeCase(record) || seen.has(record.id)) continue

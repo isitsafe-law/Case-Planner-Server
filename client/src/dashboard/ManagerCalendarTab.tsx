@@ -11,6 +11,7 @@ export type CalendarHorizon = typeof CALENDAR_HORIZONS[number]
 
 // The authoritative event type for scheduled jury trials.
 export const JURY_TRIAL_EVENT_TYPE = 'Jury Trial'
+const INACTIVE_EVENT_STATUSES = new Set(['Canceled', 'Cancelled', 'Complete', 'Completed'])
 
 type CalendarEvent = {
   key: string
@@ -55,6 +56,7 @@ export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[],
   const windowEnd = today + days
   void allCases
   return hearings.filter((h) => {
+    if (INACTIVE_EVENT_STATUSES.has(h.status || '')) return false
     const start = toEpochDay(h.hearingDate)
     const eventEnd = toEpochDay(h.endDate || h.hearingDate)
     return start != null && eventEnd != null && eventEnd >= today && start <= windowEnd
@@ -97,7 +99,7 @@ export function ManagerCalendarTab({
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
-      if (day == null || endDay == null || day < windowStart || endDay < today || (windowEnd != null && day > windowEnd)) continue
+      if (day == null || endDay == null || INACTIVE_EVENT_STATUSES.has(hearing.status || '') || day < windowStart || endDay < today || (windowEnd != null && day > windowEnd)) continue
       const record = caseById.get(hearing.caseId)
       if (!isActiveCase(record)) continue
       events.push({
@@ -122,7 +124,7 @@ export function ManagerCalendarTab({
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
-      if (day == null || endDay == null || endDay >= today) continue
+      if (day == null || endDay == null || INACTIVE_EVENT_STATUSES.has(hearing.status || '') || endDay >= today) continue
       const record = caseById.get(hearing.caseId)
       if (!isActiveCase(record)) continue
       events.push({

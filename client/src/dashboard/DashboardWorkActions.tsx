@@ -9,6 +9,7 @@ export type DashboardWorkActionItem = {
   title: string
   dueDate?: string | null
   tab: string
+  source?: unknown
 }
 
 export function DashboardWorkActions({
@@ -49,22 +50,24 @@ export function DashboardDueDate({
   onSave,
 }: {
   item: DashboardWorkActionItem
-  onSave?: (dueDate: string) => Promise<void>
+  onSave?: (dueDate: string, reason?: string) => Promise<void>
 }) {
   const [dueDate, setDueDate] = useState(item.dueDate ?? '')
+  const [reason, setReason] = useState('')
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
+  const generatedDeadline = item.type === 'deadline' && typeof item.source === 'object' && item.source !== null && 'isManual' in item.source && item.source.isManual === false
   const editable = (item.type === 'task' || item.type === 'deadline') && Boolean(onSave)
-  useEffect(() => { setDueDate(item.dueDate ?? '') }, [item.dueDate])
+  useEffect(() => { setDueDate(item.dueDate ?? ''); setReason('') }, [item.dueDate])
 
   if (!editable) return <span className="ui-data">{formatDate(item.dueDate)}</span>
   if (!editing) return <button type="button" className="dashboard-due-date-link ui-data" onClick={() => setEditing(true)} aria-label={`Change due date for ${item.title}`}>{formatDate(item.dueDate)}</button>
 
   async function save() {
-    if (!dueDate || !onSave) return
+    if (!dueDate || !onSave || (generatedDeadline && !reason.trim())) return
     setBusy(true)
     try {
-      await onSave(dueDate)
+      await onSave(dueDate, generatedDeadline ? reason.trim() : undefined)
       setEditing(false)
     } finally {
       setBusy(false)
@@ -73,7 +76,9 @@ export function DashboardDueDate({
 
   return <span className="inline-quick-form compact-actions dashboard-due-date-editor">
     <input type="date" value={dueDate} onChange={(event) => setDueDate(event.currentTarget.value)} aria-label={`New due date for ${item.title}`} />
-    <Btn size="sm" onClick={() => void save()} disabled={busy || !dueDate}>Save</Btn>
-    <Btn size="sm" variant="ghost" onClick={() => { setDueDate(item.dueDate ?? ''); setEditing(false) }} disabled={busy}>Cancel</Btn>
+    {generatedDeadline && <input type="text" value={reason} onChange={(event) => setReason(event.currentTarget.value)} placeholder="Reason for override" aria-label={`Reason for changing ${item.title}`} />}
+    {generatedDeadline && <small className="dashboard-date-override-note">This is a generated deadline; saving creates a manual override.</small>}
+    <Btn size="sm" onClick={() => void save()} disabled={busy || !dueDate || (generatedDeadline && !reason.trim())}>Save</Btn>
+    <Btn size="sm" variant="ghost" onClick={() => { setDueDate(item.dueDate ?? ''); setReason(''); setEditing(false) }} disabled={busy}>Cancel</Btn>
   </span>
 }

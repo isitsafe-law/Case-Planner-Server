@@ -6835,7 +6835,14 @@ function App() {
       .catch(() => { if (!cancelled) setServerUpcomingWorkLoaded(false) })
     return () => { cancelled = true }
   }, [])
-  const dashboardUpcomingWorkItems = serverUpcomingWorkLoaded ? serverUpcomingWorkItems : upcomingWorkItems
+  const dashboardUpcomingWorkItems = useMemo(() => {
+    const sourceByKey = new Map<string, UpcomingWorkItem['source']>()
+    for (const item of queueChecklist) sourceByKey.set(`task-${item.id}`, item)
+    for (const item of queueDeadlines) sourceByKey.set(`deadline-${item.id}`, item)
+    for (const item of queueDiscovery) sourceByKey.set(`discovery-${item.id}`, item)
+    const items = serverUpcomingWorkLoaded ? serverUpcomingWorkItems : upcomingWorkItems
+    return items.map((item) => ({ ...item, source: item.source ?? sourceByKey.get(item.key) }))
+  }, [queueChecklist, queueDeadlines, queueDiscovery, serverUpcomingWorkItems, serverUpcomingWorkLoaded, upcomingWorkItems])
   const dashboardOverdueItems = useMemo(() => {
     const today = DateOnlyFromString(new Date().toISOString().slice(0, 10))!
     return dashboardUpcomingWorkItems.filter((item) => item.dueDate != null && DateOnlyFromString(item.dueDate)! < today)
@@ -6860,13 +6867,13 @@ function App() {
       if (source) await recordDiscoveryResponse(source)
     }
   }
-  async function saveDashboardDueDate(item: UpcomingWorkItem, dueDate: string) {
+  async function saveDashboardDueDate(item: UpcomingWorkItem, dueDate: string, reason?: string) {
     if (item.type === 'task') {
       const source = queueChecklist.find((candidate) => item.key === `task-${candidate.id}`)
       if (source) await persistChecklist({ ...source, dueDate }, 'Task due date updated.', false)
     } else if (item.type === 'deadline') {
       const source = queueDeadlines.find((candidate) => item.key === `deadline-${candidate.id}`)
-      if (source) await persistDeadline({ ...source, dueDate }, 'Deadline due date updated.', false)
+      if (source) await persistDeadline({ ...source, dueDate, reasonForChange: reason || source.reasonForChange }, reason ? 'Deadline override saved.' : 'Deadline due date updated.', false)
     }
   }
   const dashboardUpcomingWorkItems8To30 = useMemo(() => {
@@ -11080,7 +11087,7 @@ function App() {
                     <tbody>
                       {dashboardOverdueItems.length === 0 ? <UiEmptyState colSpan={5} title="No overdue work" hint="Nothing requires immediate follow-up." /> : dashboardOverdueItems.slice(0, 10).map((item) => (
                         <tr key={item.key}>
-                          <td><TypeChip kind={item.type} /></td><td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger"><DashboardDueDate item={item} onSave={(dueDate) => saveDashboardDueDate(item, dueDate)} /></td>
+                          <td><TypeChip kind={item.type} /></td><td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td><td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td><td className="ui-data ui-cell-danger"><DashboardDueDate item={item} onSave={(dueDate, reason) => saveDashboardDueDate(item, dueDate, reason)} /></td>
                           <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} /></td>
                         </tr>
                       ))}
@@ -11117,7 +11124,7 @@ function App() {
                           <td><TypeChip kind={item.type} /></td>
                           <td><div>{item.title}</div>{item.whyThisIsHere && <div className="ui-sub ui-work-reason">Why this is here: {item.whyThisIsHere}{item.policyThreshold ? ` · ${item.policyThreshold}` : ''}</div>}</td>
                           <td className="ui-sub"><button type="button" className="ui-case-link" onClick={() => openCase(item.caseId, item.tab)}>{item.caseName}</button></td>
-                          <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}><DashboardDueDate item={item} onSave={(dueDate) => saveDashboardDueDate(item, dueDate)} /></td>
+                          <td className={`ui-data${item.dueDate && item.dueDate <= new Date().toISOString().slice(0, 10) ? ' ui-cell-danger' : ''}`}><DashboardDueDate item={item} onSave={(dueDate, reason) => saveDashboardDueDate(item, dueDate, reason)} /></td>
                           <td><DashboardWorkActions item={item} onComplete={() => completeDashboardWork(item)} onService={() => completeDashboardWork(item)} onDiscovery={() => completeDashboardWork(item)} /></td>
                         </tr>
                       ))}

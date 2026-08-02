@@ -2321,6 +2321,7 @@ function App() {
   const [reportGroupColumn, setReportGroupColumn] = useState<ReportColumnKey | ''>('')
   const [savedReports, setSavedReports] = useState<SavedReportDefinition[]>([])
   const [savedReportName, setSavedReportName] = useState('')
+  const [activeSavedReportId, setActiveSavedReportId] = useState<string | null>(null)
   // Reports sub-nav: 'export' is the original case-list-export view, 'caseload' is Report A
   // (Caseload & Workload), 'outcomes' is Report B (Just-Compensation / Outcome Reporting),
   // 'cycleTime' is Report C (Cycle-Time Reporting).
@@ -6377,20 +6378,22 @@ function App() {
     setReportSearch(report.search); setReportColumns(report.columns); setReportSortColumn(report.sortColumn); setReportSortDirection(report.sortDirection); setReportGroupColumn(report.groupColumn || '')
     if (report.dateOpenedPreset) applyReportPreset(report.dateOpenedPreset)
     else { setReportOpenedFrom(report.dateOpenedFrom); setReportOpenedTo(report.dateOpenedTo); setReportPreset('') }
+    if ('id' in report) { setActiveSavedReportId(report.id); setSavedReportName(report.name) }
+    else { setActiveSavedReportId(null); setSavedReportName('') }
     setMessage(`Loaded report: ${report.name}`)
   }
   function applySavedReport(report: SavedReportDefinition) { applyReportDefinition(report) }
   async function saveCurrentReport() {
     if (!savedReportName.trim()) { setErrorMessage('Enter a name for the saved report.'); return }
     try {
-      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, dateOpenedPreset: reportPreset, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection, groupColumn: reportGroupColumn }) })
+      const saved = await api<SavedReportDefinition>('/api/reports/saved', { method: 'POST', body: JSON.stringify({ id: activeSavedReportId || '', name: savedReportName, status: reportStatusFilter, county: reportCountyFilter, district: reportDistrictFilter, search: reportSearch, dateOpenedFrom: reportOpenedFrom, dateOpenedTo: reportOpenedTo, dateOpenedPreset: reportPreset, columns: reportColumns, sortColumn: reportSortColumn, sortDirection: reportSortDirection, groupColumn: reportGroupColumn }) })
       setSavedReports((current) => [saved, ...current.filter((report) => report.id !== saved.id)])
-      setSavedReportName(''); setMessage(`Saved report: ${saved.name}`)
+      setActiveSavedReportId(saved.id); setSavedReportName(saved.name); setMessage(`Saved report: ${saved.name}`)
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to save the report.') }
   }
   async function deleteSavedReport(report: SavedReportDefinition) {
     if (!(await confirmAction({ title: 'Delete saved report?', message: `Remove "${report.name}"?`, confirmLabel: 'Delete', danger: true }))) return
-    try { await api(`/api/reports/saved/${report.id}`, { method: 'DELETE' }); setSavedReports((current) => current.filter((item) => item.id !== report.id)); setMessage('Saved report deleted.') }
+    try { await api(`/api/reports/saved/${report.id}`, { method: 'DELETE' }); setSavedReports((current) => current.filter((item) => item.id !== report.id)); if (activeSavedReportId === report.id) { setActiveSavedReportId(null); setSavedReportName('') }; setMessage('Saved report deleted.') }
     catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the saved report.') }
   }
   useEffect(() => {
@@ -11161,7 +11164,7 @@ function App() {
                 <div className="rep-fields">
                   <label><span>Report name</span><input value={savedReportName} onChange={(event) => setSavedReportName(event.target.value)} placeholder="e.g. Upcoming trials" /></label>
                 </div>
-                <div className="button-row compact-actions top-gap-small"><Btn size="sm" variant="primary" onClick={() => void saveCurrentReport()}>Save current view</Btn></div>
+                <div className="button-row compact-actions top-gap-small"><Btn size="sm" variant="primary" onClick={() => void saveCurrentReport()}>{activeSavedReportId ? 'Update saved report' : 'Save current view'}</Btn>{activeSavedReportId && <Btn size="sm" variant="ghost" onClick={() => { setActiveSavedReportId(null); setSavedReportName('') }}>Save as new</Btn>}</div>
                 {savedReports.length > 0 && <div className="table-wrap top-gap-small"><table className="compact-table"><thead><tr><th>Name</th><th>Updated</th><th>Actions</th></tr></thead><tbody>{savedReports.map((report) => <tr key={report.id}><td>{report.name}</td><td>{displayDateTime(report.updatedAt)}</td><td><div className="button-row compact-actions row-actions"><Btn size="sm" onClick={() => applySavedReport(report)}>Load</Btn><Btn size="sm" variant="ghost" onClick={() => void deleteSavedReport(report)}>Delete</Btn></div></td></tr>)}</tbody></table></div>}
                 {savedReports.length === 0 && <p className="helper-text top-gap-small">Save a filtered case-list view for repeat management reports.</p>}
               </CollapsiblePanel>

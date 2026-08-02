@@ -20,6 +20,8 @@ JSON application setting (`saved_report_definitions_v1`) and contain the report 
 columns, and sort order. This keeps the feature portable while the application is single-user. A future
 SQL/Entra migration can promote these records to user- or division-scoped rows without changing the report
 definition shape.
+Loading a saved definition retains its identifier so refinements can update the existing definition; users
+can explicitly switch to Save as new when they want a separate report.
 The report builder also supports optional grouping by any selected column; grouping is a presentation choice
 and does not alter counts, filters, exports, or the underlying case records.
 Saved definitions can also retain a relative opened-date preset such as Last 30 days or This calendar year;

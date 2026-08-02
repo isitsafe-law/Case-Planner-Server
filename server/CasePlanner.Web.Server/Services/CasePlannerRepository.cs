@@ -10,6 +10,8 @@ namespace CasePlanner.Web.Server.Services;
 
 public sealed partial class CasePlannerRepository
 {
+    private const string SchemaContractKey = "portable_schema_contract_v1";
+    private const string SchemaContractValue = "1";
     private readonly PathService _paths;
     private readonly IApplicationActorContext _actor;
     private readonly IDocumentStorage _documents;
@@ -36,6 +38,7 @@ public sealed partial class CasePlannerRepository
         await connection.OpenAsync();
         await ExecuteAsync(connection, SchemaSql);
         await ExecuteAsync(connection, DocumentPlatformSchemaSql);
+        await EnsureSchemaContractAsync(connection);
         // Build-plan step 7 follow-up: discovery_generations' only producer (the old Discovery
         // Content bulk editor) was fully retired, confirmed with zero real rows anywhere, and
         // nothing writes to it going forward - drop it from existing databases too rather than
@@ -75,6 +78,15 @@ public sealed partial class CasePlannerRepository
         await CleanupRetired31DayServiceReminderAsync(connection);
         await MigrateOpposingCounselToAttorneysAsync(connection);
         await ApplyDeadlineClosureRulesRetroactivelyAsync(connection);
+    }
+
+    private async Task EnsureSchemaContractAsync(SqliteConnection connection)
+    {
+        var current = await GetAppSettingAsync(connection, SchemaContractKey);
+        if (current == SchemaContractValue) return;
+        await using var tx = connection.BeginTransaction();
+        await SetAppSettingAsync(connection, tx, SchemaContractKey, SchemaContractValue);
+        await tx.CommitAsync();
     }
 
     private async Task MigratePrimaryAttorneyAssignmentsV1Async(SqliteConnection connection)
@@ -9527,6 +9539,13 @@ public sealed partial class CasePlannerRepository
             }
             checks.Add(new PortableValidationCheck("Restore/schema compatibility", missingTables.Count == 0,
                 missingTables.Count == 0 ? "The backup can be opened and contains the required current tables." : $"Missing tables: {string.Join(", ", missingTables)}."));
+
+            await using var schemaContractCommand = connection.CreateCommand();
+            schemaContractCommand.CommandText = "SELECT value FROM app_settings WHERE key=@key LIMIT 1";
+            schemaContractCommand.Parameters.AddWithValue("@key", SchemaContractKey);
+            var schemaContract = await schemaContractCommand.ExecuteScalarAsync() as string;
+            checks.Add(new PortableValidationCheck("Schema contract version", schemaContract == SchemaContractValue,
+                schemaContract == SchemaContractValue ? $"Restored database carries schema contract {SchemaContractValue}." : "Restored database predates the current schema contract; open it once with the current build to apply startup upgrades before relying on it."));
 
             await using var countCommand = connection.CreateCommand();
             countCommand.CommandText = "SELECT COUNT(*) FROM cases";

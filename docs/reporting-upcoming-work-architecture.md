@@ -43,6 +43,9 @@ confirms that report definitions are carried with the SQLite database and that m
 reported as a validation failure before a future migration.
 The same restore check also runs SQLite foreign-key consistency validation, giving portable upgrade testing
 a data-integrity signal in addition to file integrity and required-table checks.
+The application also stamps a portable schema-contract marker during startup. Restore validation reports a
+backup that predates the current marker as requiring a current-build startup upgrade before it is treated as
+release-ready.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

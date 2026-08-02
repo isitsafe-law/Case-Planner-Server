@@ -21,6 +21,7 @@ public sealed class PortableValidationTests : IAsyncLifetime
         Assert.Contains(report.Checks, x => x.Name == "Restore/schema compatibility" && x.Passed);
         Assert.Contains(report.Checks, x => x.Name == "Restore read test" && x.Passed);
         Assert.Contains(report.Checks, x => x.Name == "Foreign-key consistency" && x.Passed);
+        Assert.Contains(report.Checks, x => x.Name == "Schema contract version" && x.Passed);
         Assert.Contains(report.Checks, x => x.Name == "Saved report definitions" && x.Passed);
     }
 

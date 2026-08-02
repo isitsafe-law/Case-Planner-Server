@@ -9195,6 +9195,14 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to validate backup and restore.')
     }
   }
+  async function runUpgradeReadiness() {
+    try {
+      setErrorMessage('')
+      const result = await api<PortableValidationReport>('/api/portable-validation/backup-restore', { method: 'POST' })
+      setPortableValidation(result)
+      setMessage(result.passed ? 'Upgrade readiness passed.' : 'Upgrade readiness found issues to review.')
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to run upgrade readiness validation.') }
+  }
 
   async function updatePipelineHolder(holder: string) {
     const record = workspace?.case ?? selectedCase
@@ -11767,7 +11775,7 @@ function App() {
 
           {settingsSection === 'diagnostics' && (
             <Panel title="Diagnostics">
-              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
+              <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><button onClick={() => void runUpgradeReadiness()}>Check Upgrade Readiness</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
               {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td></tr>)}</tbody></table></div></div>}
               {diagnostics ? (
                 <div className="diagnostics-grid">

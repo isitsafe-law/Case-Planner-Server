@@ -50,7 +50,9 @@ dotnet build server/CasePlanner.Web.Server/CasePlanner.Web.Server.csproj --no-re
 .\scripts\local-package-smoke.ps1 -PackagePath 'release/CasePlannerWeb_Portable_SQLite_Test_<date>' -Port 5300
 ```
 
-The package smoke test checks SQLite startup, the document-template catalog, and DOCX generation.
+The package smoke test checks SQLite startup, the document-template catalog, and DOCX generation. Portable
+packages also include `portable-build-manifest.json`; the smoke test verifies that its build identifier matches
+the running server before continuing.
 
 ## Workflow
 

@@ -14,6 +14,8 @@ This is a test/preview deployment. Entra authentication and manager-only authori
 4. Create a backup before importing, resetting, or restoring data.
 5. Do not copy a developer database into a handoff package.
 6. Establish the future backup location and retention policy.
+7. Confirm `portable-build-manifest.json` is beside the executable. Record its build identifier and commit with any IT issue.
+8. Run `scripts/local-package-smoke.ps1` against the extracted package; it verifies the manifest matches the running server before testing health and document generation.
 
 ## Data locations
 
@@ -48,6 +50,7 @@ Appearance options now include pastel blue/sage/lavender, deep navy, forest, sla
 The ordered party rows used for case-style construction now include a small designation: Defendant, Unknown Heirs, Lienholder, Tenant, or Other. Existing rows migrate to Defendant. Move Up/Move Down controls persist the order used by case-style construction, and the dashboard remains compact rather than listing every party.
 
 Diagnostics now includes Portable Validation. It checks SQLite write safety, backup/export/log folders, active document-template paths, and critical data-quality findings. **Test Backup / Restore** creates a backup, checks SQLite integrity and required tables, and opens a temporary restored copy without replacing the live database. The `/api/data-quality`, `/api/portable-validation`, and `POST /api/portable-validation/backup-restore` contracts are intentionally provider-neutral enough to reuse when the server implementation is introduced. Jury trial dates remain the controlling case-level date for header/trial-watch behavior; Jury Trial event edits synchronize that compatibility projection, while other proceedings use the hearings catalog.
+Portable validation exports CSV, JSON, and a copyable handoff summary. These include the build identifier, schema contract, database provider/path, check details, and remediation guidance. The smoke test requires the manifest and compares its build identifier with `/api/health`.
 
 The global Calendar page consumes `/api/calendar/events` with server-side range, event-type, and attorney filters and 100-row pagination. This is the intended provider-neutral contract for a future server-backed calendar; the manager summary views retain their existing division-wide data feed for aggregate calculations.
 

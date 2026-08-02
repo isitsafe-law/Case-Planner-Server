@@ -47,6 +47,17 @@ dotnet restore .\CasePlanner.slnx
 powershell -ExecutionPolicy Bypass -File .\scripts\publish-portable.ps1 -Output release\CasePlannerIT_Handoff_<date>
 ```
 
+The publish step writes `portable-build-manifest.json` beside the executable. Confirm that it contains the
+expected app version, `CasePlannerWeb_v<version>` build identifier, `win-x64` target, self-contained flag,
+commit, and UTC timestamp. After extraction, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\local-package-smoke.ps1 -PackagePath .\release\CasePlannerIT_Handoff_<date> -Port 5300
+```
+
+The smoke test requires the manifest and verifies that its build identifier matches the running server before
+checking health, templates, backup/restore validation, and DOCX generation.
+
 Then copy `docs`, `config`, and the ordered `server\CasePlanner.DatabaseMigrator\Sql` scripts into the
 handoff folder before compressing it. The portable profile requires the `net10.0/win-x64` restore assets;
 the offline local machine cannot produce that self-contained profile.

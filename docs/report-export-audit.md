@@ -21,7 +21,7 @@ The Reports page currently contains five report views. All five use the shared `
 
 ## Permission boundary
 
-The report rows originate from the permission-filtered case/event data already loaded for the signed-in user. The Excel endpoint validates the report identifier and submitted case scope through `CaseAccessService`; it does not expand that scope. A future server-backed reporting API should accept the report identifier and filters instead of client-provided detail rows, re-run the permission-aware query, and retain this export contract.
+The case-list Excel export now sends its report identifier and filters to the server, which re-queries the provider-neutral case catalog, reapplies the filters/sort, and writes the workbook from that result. The other reports still send their already-filtered detail rows, while the endpoint validates their report identifier and submitted case scope through `CaseAccessService`; it does not expand that scope. Their aggregate query contracts can move server-side in the same pattern as provider-neutral report services are added.
 
 ## Work Queue date sources
 

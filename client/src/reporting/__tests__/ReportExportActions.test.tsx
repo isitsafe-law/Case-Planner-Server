@@ -13,7 +13,7 @@ describe('ReportExportActions', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
     vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:report'), revokeObjectURL: vi.fn() })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-    render(<ReportExportActions reportId="caseload" scopeCaseIds={[1]} title="Caseload" filters={{ attorney: 'A. Attorney' }} columns={[{ key: 'case', label: 'Case' }]} rows={[{ case: 'Case 1' }]} />)
+    render(<ReportExportActions reportId="caseload" serverQuery scopeCaseIds={[1]} title="Caseload" filters={{ attorney: 'A. Attorney' }} columns={[{ key: 'case', label: 'Case' }]} rows={[{ case: 'Case 1' }]} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Export Excel' }))
     expect(fetch).toHaveBeenCalledWith('/api/reports/export.xlsx', expect.objectContaining({ method: 'POST', body: expect.stringContaining('"reportId":"caseload"') }))

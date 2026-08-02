@@ -18,7 +18,7 @@ export function reportExportFileName(title: string, extension: 'csv' | 'xlsx', d
   return `CasePlanner_${safeFilePart(title)}_${date}.${extension}`
 }
 
-export function ReportExportActions({ reportId, scopeCaseIds = [], title, columns, rows, filters = {} }: { reportId: string; scopeCaseIds?: number[]; title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters?: Record<string, string> }) {
+export function ReportExportActions({ reportId, serverQuery = false, scopeCaseIds = [], title, columns, rows, filters = {} }: { reportId: string; serverQuery?: boolean; scopeCaseIds?: number[]; title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters?: Record<string, string> }) {
   const [busy, setBusy] = useState<'csv' | 'xlsx' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const generatedAt = new Date().toISOString()
@@ -51,7 +51,7 @@ export function ReportExportActions({ reportId, scopeCaseIds = [], title, column
       const response = await fetch('/api/reports/export.xlsx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId, scopeCaseIds, title, generatedAt, filters, fileName: reportExportFileName(title, 'xlsx'), columns, rows: rows.map((row) => Object.fromEntries(columns.map((column) => [column.key, displayValue(row[column.key])])) ) }),
+        body: JSON.stringify({ reportId, serverQuery, scopeCaseIds, title, generatedAt, filters, fileName: reportExportFileName(title, 'xlsx'), columns, rows: rows.map((row) => Object.fromEntries(columns.map((column) => [column.key, displayValue(row[column.key])])) ) }),
       })
       if (!response.ok) throw new Error('export failed')
       const blob = await response.blob()

@@ -789,6 +789,7 @@ public sealed class UpcomingWorkItemRecord
 public sealed class ReportExcelRequest
 {
     public string ReportId { get; set; } = "case-list";
+    public bool ServerQuery { get; set; }
     public string FileName { get; set; } = "Case_Report.xlsx";
     public string Title { get; set; } = "Case Report";
     public string GeneratedAt { get; set; } = "";

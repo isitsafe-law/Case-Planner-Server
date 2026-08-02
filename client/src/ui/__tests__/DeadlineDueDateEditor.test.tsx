@@ -19,6 +19,6 @@ describe('DeadlineDueDateEditor', () => {
     const onSave = vi.fn(async () => {})
     render(<DeadlineDueDateEditor item={deadline(false)} onSave={onSave} />)
     await userEvent.click(screen.getByRole('button', { name: 'Save date' }))
-    expect(onSave).toHaveBeenCalledWith('2026-08-10', undefined)
+    expect(onSave).toHaveBeenCalledWith('2026-08-10')
   })
 })

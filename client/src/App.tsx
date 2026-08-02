@@ -9221,10 +9221,18 @@ function App() {
   function exportPortableValidationCsv() {
     if (!portableValidation) return
     const escapeCsv = (value: string) => `"${value.replaceAll('"', '""')}"`
+    const metadata = diagnostics ? [
+      ['App version', diagnostics.version],
+      ['Schema contract', diagnostics.schemaContractVersion],
+      ['Database provider', diagnostics.databaseProvider],
+      ['Database path', diagnostics.databasePath],
+      ['Runtime', navigator.userAgent],
+    ] : []
     const rows = [
       ['Portable Validation Report'],
       ['Generated', portableValidation.generatedAt],
       ['Overall result', portableValidation.passed ? 'Passed' : 'Needs attention'],
+      ...metadata,
       [],
       ['Check', 'Result', 'Details', 'Recommended action'],
       ...portableValidation.checks.map((check) => [check.name, check.passed ? 'Pass' : 'Needs attention', check.details, portableCheckRemediation(check.name, check.passed)]),
@@ -9242,6 +9250,7 @@ function App() {
     const lines = [
       'Case Planner portable validation',
       `Generated: ${portableValidation.generatedAt}`,
+      ...(diagnostics ? [`App version: ${diagnostics.version}`, `Schema contract: ${diagnostics.schemaContractVersion}`, `Database provider: ${diagnostics.databaseProvider}`, `Database path: ${diagnostics.databasePath}`] : []),
       `Overall result: ${portableValidation.passed ? 'Passed' : 'Needs attention'}`,
       `Checks: ${portableValidation.checks.length - failed.length} passed, ${failed.length} needing attention`,
       ...failed.map((check) => `- ${check.name}: ${check.details} Recommended: ${portableCheckRemediation(check.name, false)}`),
@@ -9255,6 +9264,7 @@ function App() {
     if (!portableValidation) return
     const payload = {
       ...portableValidation,
+      environment: diagnostics ? { appVersion: diagnostics.version, schemaContractVersion: diagnostics.schemaContractVersion, databaseProvider: diagnostics.databaseProvider, databasePath: diagnostics.databasePath, runtime: navigator.userAgent } : null,
       checks: portableValidation.checks.map((check) => ({ ...check, remediation: portableCheckRemediation(check.name, check.passed) })),
     }
     const link = document.createElement('a')

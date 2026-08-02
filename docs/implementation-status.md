@@ -45,6 +45,9 @@
 
 ## Implemented
 
+- Work Queue cleanup: redundant `Open case` actions were removed while case-name links and item-specific actions remain. Eligible task/manual-deadline dates use inline editing; generated deadlines retain optional override reasons and history, while service/discovery dates remain source-controlled.
+- Report exports are standardized through one client export component for Case List Export, Upcoming Trials, Caseload & Workload, Outcomes, and Cycle Time. CSV and Excel use consistent labels, loading/error states, sanitized filenames, active filters, and the existing `/api/reports/export.xlsx` writer. Upcoming Trials exports the same active Jury Trial event rows as its report.
+
 - Active-only automation and attention gating with a separate resumable import-triage queue/wizard.
 - Dashboard triage engine, attorney work queues, quick waiting/holder/defer actions, and bulk defer.
 - Automatic activity events for core quick actions and editable activity entries with immutable edit history.

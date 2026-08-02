@@ -18,6 +18,7 @@ import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecis
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
 import { DashboardDueDate, DashboardWorkActions } from './dashboard/DashboardWorkActions'
 import { UpcomingTrialsReport } from './reporting/UpcomingTrialsReport'
+import { ReportExportActions, type ReportExportColumn, type ReportExportRow } from './reporting/ReportExportActions'
 import { DeadlineDueDateEditor } from './ui/DeadlineDueDateEditor'
 import { DashboardCompactSummaries, type PlanningSummary } from './dashboard/DashboardCompactSummaries'
 type DashboardBar = { key: string; label: string; count: number; detail?: string }
@@ -6676,35 +6677,23 @@ function App() {
   const cycleTimeByPhase = useMemo(() => [...aggregateDurations(cycleTimeSegments, (segment) => segment.fromStage)].sort((a, b) => b.avgDays - a.avgDays), [cycleTimeSegments])
   const cycleTimeByHolder = useMemo(() => [...aggregateDurations(cycleTimeSegments, (segment) => segment.fromHolder)].sort((a, b) => b.avgDays - a.avgDays), [cycleTimeSegments])
 
-  function exportReportCsv() {
-    const headers = reportColumns.map((column) => reportColumnOptions.find((option) => option.key === column)?.label ?? column)
-    const escape = (value: string) => `"${value.replaceAll('"', '""')}"`
-    const generated = new Date().toISOString()
-    const filters = `Opened ${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}; Status ${reportStatusFilter || 'all'}`
-    const csv = [['Case Report'], [`Generated: ${generated}`], [`Filters: ${filters}`], [], headers, ...reportRows.map((record) => reportColumns.map((column) => reportCellValue(record, column)))].map((row) => row.map(escape).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `Open_Case_Report_${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
-  }
-
-  async function exportReportExcel() {
-    const columns = reportColumns.map((key) => ({ key, label: reportColumnOptions.find((option) => option.key === key)?.label ?? key }))
-    const rows = reportRows.map((record) => Object.fromEntries(reportColumns.map((column) => [column, reportCellValue(record, column)])))
-    const generated = new Date().toISOString()
-    const filters = { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all' }
-    const response = await fetch('/api/reports/export.xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Case Lifecycle Report', generatedAt: generated, filters, fileName: `Open_Case_Report_${new Date().toISOString().slice(0, 10)}.xlsx`, columns, rows }) })
-    if (!response.ok) throw new Error('Unable to export the Excel report.')
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `Open_Case_Report_${new Date().toISOString().slice(0, 10)}.xlsx`
-    link.click()
-    URL.revokeObjectURL(url)
-  }
+  const caseListExportColumns = useMemo<ReportExportColumn[]>(() => reportColumns.map((key) => ({ key, label: reportColumnOptions.find((option) => option.key === key)?.label ?? key })), [reportColumns])
+  const caseListExportRows = useMemo<ReportExportRow[]>(() => reportRows.map((record) => Object.fromEntries(reportColumns.map((column) => [column, reportCellValue(record, column)]))), [reportRows, reportColumns])
+  const caseloadExportColumns: ReportExportColumn[] = [{ key: 'caseNumber', label: 'Case number' }, { key: 'caseName', label: 'Case' }, { key: 'attorneys', label: 'Attorneys' }, { key: 'status', label: 'Status' }, { key: 'dateOpened', label: 'Date opened' }, { key: 'county', label: 'County' }]
+  const caseloadExportRows = useMemo<ReportExportRow[]>(() => caseloadScopedCases.map((record) => ({ caseNumber: record.caseNumber || '', caseName: record.caseName || '', attorneys: attorneyNamesForCase(record).join(', '), status: record.caseStatus || record.status || '', dateOpened: record.dateOpened || '', county: record.county || '' })), [caseloadScopedCases, allCaseAttorneyAssignments])
+  const outcomeExportColumns: ReportExportColumn[] = [{ key: 'caseNumber', label: 'Case number' }, { key: 'caseName', label: 'Case' }, { key: 'closedDate', label: 'Closed date' }, { key: 'disposition', label: 'Disposition' }, { key: 'takingType', label: 'Taking type' }, { key: 'attorney', label: 'Attorney' }, { key: 'deposit', label: 'Deposit' }, { key: 'finalAmount', label: 'Final amount' }, { key: 'delta', label: 'Delta' }, { key: 'ratio', label: 'Final / deposit' }]
+  const outcomeExportRows = useMemo<ReportExportRow[]>(() => outcomeCaseRows.map((record) => ({ caseNumber: record.caseNumber || '', caseName: record.caseName || '', closedDate: record.closedDate || '', disposition: record.dispositionType || '', takingType: record.takingType || '', attorney: record.assignedAttorney || '', deposit: record.depositAmount ?? '', finalAmount: record.finalJudgmentAmount ?? '', delta: outcomeDelta(record), ratio: outcomeRatio(record) })), [outcomeCaseRows])
+  const cycleTimeExportColumns: ReportExportColumn[] = [{ key: 'caseNumber', label: 'Case number' }, { key: 'caseName', label: 'Case' }, { key: 'filedDate', label: 'Filed date' }, { key: 'closedDate', label: 'Closed date' }, { key: 'days', label: 'Days to resolution' }, { key: 'disposition', label: 'Disposition' }]
+  const cycleTimeExportRows = useMemo<ReportExportRow[]>(() => cycleTimeEligibleCases.map((record) => ({ caseNumber: record.caseNumber || '', caseName: record.caseName || '', filedDate: record.filingDate || '', closedDate: record.closedDate || '', days: resolutionDays(record) ?? '', disposition: record.dispositionType || '' })), [cycleTimeEligibleCases])
+  const reportExportSpec: { title: string; columns: ReportExportColumn[]; rows: ReportExportRow[]; filters: Record<string, string> } | null = reportView === 'export'
+    ? { title: 'Case Lifecycle Report', columns: caseListExportColumns, rows: caseListExportRows, filters: { dateOpened: `${reportOpenedFrom || 'any'} to ${reportOpenedTo || 'any'}`, status: reportStatusFilter || 'all', county: reportCountyFilter || 'all', district: reportDistrictFilter || 'all', search: reportSearch || 'all' } }
+    : reportView === 'caseload'
+      ? { title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
+      : reportView === 'outcomes'
+        ? { title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
+        : reportView === 'cycleTime'
+          ? { title: 'Cycle Time', columns: cycleTimeExportColumns, rows: cycleTimeExportRows, filters: { status: 'closed', eligibility: 'filing and closed dates' } }
+          : null
 
   async function exitCasePlanner() {
     if (shutdownBusy || !(await confirmAction({ title: 'Exit Case Planner?', message: 'Any request currently being saved or exported will be allowed to finish before the local server stops.', confirmLabel: 'Exit' }))) return
@@ -7272,7 +7261,6 @@ function App() {
                   <td>
                     <div className="ui-row-actions">
                       {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
-                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                     </div>
                   </td>
                 </tr>
@@ -7340,7 +7328,6 @@ function App() {
                   <td>
                     <div className="ui-row-actions">
                       {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
-                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                     </div>
                   </td>
                 </tr>
@@ -7396,7 +7383,6 @@ function App() {
                   <td>
                     <div className="ui-row-actions">
                       {!item.servicePerfected && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Mark perfected</Btn>}
-                      <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'servicePublication')}>Open case ▸</Btn>
                     </div>
                   </td>
                 </tr>
@@ -7435,7 +7421,6 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   {!item.servicePerfected && <Btn size="sm" onClick={() => void markGlobalServicePerfected(item.caseId)}>Mark perfected</Btn>}
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'servicePublication')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -7459,7 +7444,6 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   {!isDeadlineDone(item) && <Btn size="sm" onClick={() => void persistDeadline({ ...item, status: 'Done' }, 'Deadline marked done.', false)}>Mark done</Btn>}
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -7484,7 +7468,6 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   {!isChecklistDone(item) && <Btn size="sm" onClick={() => void persistChecklist({ ...item, status: 'Done' }, 'Task marked done.', false)}>Mark done</Btn>}
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -7507,7 +7490,6 @@ function App() {
               <td>
                 <div className="ui-row-actions">
                   <Btn size="sm" onClick={() => void recordDiscoveryResponse(item)}>Record response</Btn>
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'discovery')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -7527,7 +7509,6 @@ function App() {
               <td />
               <td>
                 <div className="ui-row-actions">
-                  <Btn size="sm" variant="ghost" onClick={() => openCase(item.caseId, 'work')}>Open case ▸</Btn>
                 </div>
               </td>
             </tr>
@@ -11234,12 +11215,7 @@ function App() {
         <main className="page">
           <div className="queue-title-row">
             <h2>Reports</h2>
-            {reportView === 'export' && (
-              <div className="ui-title-actions">
-                <Btn onClick={exportReportCsv}>Export CSV</Btn>
-                <Btn variant="primary" onClick={() => void exportReportExcel()}>Export Excel</Btn>
-              </div>
-            )}
+            {reportExportSpec && <ReportExportActions {...reportExportSpec} />}
           </div>
 
           <div className="segmented-tabs">

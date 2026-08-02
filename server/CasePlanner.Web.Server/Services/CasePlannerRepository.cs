@@ -6701,6 +6701,7 @@ public sealed partial class CasePlannerRepository
         {
             AppName = _paths.Config.AppName,
             Version = _paths.Config.Version,
+            BuildIdentifier = $"CasePlannerWeb_v{_paths.Config.Version}",
             SchemaContractVersion = await GetAppSettingAsync(connection, SchemaContractKey) ?? "Not stamped",
             SchemaContractCurrent = (await GetAppSettingAsync(connection, SchemaContractKey)) == SchemaContractValue,
             DatabaseProvider = "SQLite (active runtime); SQL Server migration target available",

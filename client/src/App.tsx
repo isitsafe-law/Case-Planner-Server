@@ -690,6 +690,7 @@ type WorkspaceResponse = {
 type DiagnosticsSnapshot = {
   appName: string
   version: string
+  buildIdentifier: string
   schemaContractVersion: string
   schemaContractCurrent: boolean
   databaseProvider: string
@@ -9223,6 +9224,7 @@ function App() {
     const escapeCsv = (value: string) => `"${value.replaceAll('"', '""')}"`
     const metadata = diagnostics ? [
       ['App version', diagnostics.version],
+      ['Build identifier', diagnostics.buildIdentifier],
       ['Schema contract', diagnostics.schemaContractVersion],
       ['Database provider', diagnostics.databaseProvider],
       ['Database path', diagnostics.databasePath],
@@ -9250,7 +9252,7 @@ function App() {
     const lines = [
       'Case Planner portable validation',
       `Generated: ${portableValidation.generatedAt}`,
-      ...(diagnostics ? [`App version: ${diagnostics.version}`, `Schema contract: ${diagnostics.schemaContractVersion}`, `Database provider: ${diagnostics.databaseProvider}`, `Database path: ${diagnostics.databasePath}`] : []),
+      ...(diagnostics ? [`App version: ${diagnostics.version}`, `Build identifier: ${diagnostics.buildIdentifier}`, `Schema contract: ${diagnostics.schemaContractVersion}`, `Database provider: ${diagnostics.databaseProvider}`, `Database path: ${diagnostics.databasePath}`] : []),
       `Overall result: ${portableValidation.passed ? 'Passed' : 'Needs attention'}`,
       `Checks: ${portableValidation.checks.length - failed.length} passed, ${failed.length} needing attention`,
       ...failed.map((check) => `- ${check.name}: ${check.details} Recommended: ${portableCheckRemediation(check.name, false)}`),
@@ -9264,7 +9266,7 @@ function App() {
     if (!portableValidation) return
     const payload = {
       ...portableValidation,
-      environment: diagnostics ? { appVersion: diagnostics.version, schemaContractVersion: diagnostics.schemaContractVersion, databaseProvider: diagnostics.databaseProvider, databasePath: diagnostics.databasePath, runtime: navigator.userAgent } : null,
+      environment: diagnostics ? { appVersion: diagnostics.version, buildIdentifier: diagnostics.buildIdentifier, schemaContractVersion: diagnostics.schemaContractVersion, databaseProvider: diagnostics.databaseProvider, databasePath: diagnostics.databasePath, runtime: navigator.userAgent } : null,
       checks: portableValidation.checks.map((check) => ({ ...check, remediation: portableCheckRemediation(check.name, check.passed) })),
     }
     const link = document.createElement('a')
@@ -11850,6 +11852,7 @@ function App() {
               {diagnostics ? (
                 <div className="diagnostics-grid">
                   <StatCard label="App / Version" value={`${diagnostics.appName} | ${diagnostics.version}`} />
+                  <StatCard label="Portable Build" value={diagnostics.buildIdentifier} />
                   <StatCard label="Portable Schema" value={diagnostics.schemaContractCurrent ? `Contract ${diagnostics.schemaContractVersion}` : `${diagnostics.schemaContractVersion} · Upgrade needed`} tone={diagnostics.schemaContractCurrent ? 'ok' : 'warn'} />
                   <StatCard label="Database Provider" value={diagnostics.databaseProvider} />
                   <StatCard label="Database Writable" value={diagnostics.databaseWritable ? 'Yes' : 'No'} tone={diagnostics.databaseWritable ? 'ok' : 'warn'} />

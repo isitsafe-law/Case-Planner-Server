@@ -1651,6 +1651,7 @@ public sealed class DiagnosticsSnapshot
 {
     public string AppName { get; set; } = "";
     public string Version { get; set; } = "";
+    public string BuildIdentifier { get; set; } = "";
     public string SchemaContractVersion { get; set; } = "";
     public bool SchemaContractCurrent { get; set; }
     public string DatabaseProvider { get; set; } = "SQLite (active runtime)";

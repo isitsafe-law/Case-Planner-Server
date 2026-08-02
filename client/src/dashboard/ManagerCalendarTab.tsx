@@ -99,7 +99,9 @@ export function ManagerCalendarTab({
     for (const hearing of hearings) {
       const day = toEpochDay(hearing.hearingDate)
       const endDay = toEpochDay(hearing.endDate || hearing.hearingDate)
-      if (day == null || endDay == null || INACTIVE_EVENT_STATUSES.has(hearing.status || '') || day < windowStart || endDay < today || (windowEnd != null && day > windowEnd)) continue
+      // A multi-day event remains visible once it has started as long as its end is
+      // still inside the selected window. This keeps an in-progress Jury Trial visible.
+      if (day == null || endDay == null || INACTIVE_EVENT_STATUSES.has(hearing.status || '') || endDay < windowStart || endDay < today || (windowEnd != null && day > windowEnd)) continue
       const record = caseById.get(hearing.caseId)
       if (!isActiveCase(record)) continue
       events.push({

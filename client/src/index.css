@@ -3654,6 +3654,11 @@ button.ui-tile.ui-tile-on .ui-tile-label {
 .assistant-dashboard-filters { display: inline-flex; align-items: center; gap: .65rem; margin-left: auto; }
 .assistant-dashboard-filters label { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; }
 .assistant-dashboard-filters select { min-width: 9rem; }
+.assistant-work-owner-row { align-items: center; }
+.assistant-row-link { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.assistant-row-link:hover, .assistant-row-link:focus-visible { color: var(--accent); outline: none; }
+.assistant-work-owner-row > span { display: grid; gap: .2rem; justify-items: end; }
+.assistant-owner-select { max-width: 10rem; }
 .preparation-completed { margin-top: 1rem; }
 .preparation-completed summary { cursor: pointer; padding: .85rem .9rem; font-weight: 600; }
 @media (max-width: 800px) { .assistant-dashboard-grid { grid-template-columns: 1fr; } }

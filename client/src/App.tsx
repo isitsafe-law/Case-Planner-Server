@@ -181,6 +181,7 @@ export type DeadlineItem = {
   sourceStage?: string | null
   generatedAt?: string | null
   generatedBy?: string | null
+  assignedStaffName?: string | null
   isManual: boolean
   severity: string
   completedAt?: string | null
@@ -1839,7 +1840,7 @@ function emptyOrgDefaults(): OrgDefaults {
 }
 
 function emptyDeadline(caseId = 0): DeadlineItem {
-  return { id: 0, caseId, title: '', dueDate: '', status: 'Open', notes: '', sourceType: 'Manual', isManual: true, severity: 'normal', reasonForChange: '' }
+  return { id: 0, caseId, title: '', dueDate: '', status: 'Open', notes: '', sourceType: 'Manual', isManual: true, severity: 'normal', reasonForChange: '', assignedStaffName: null }
 }
 
 const deadlineSeverities = ['normal', 'soft', 'urgent', 'critical']
@@ -4328,6 +4329,7 @@ function App() {
       sourceType: draft.sourceType.trim() || 'Manual',
       severity: draft.severity || 'normal',
       reasonForChange: normalizeTextValue(draft.reasonForChange),
+      assignedStaffName: normalizeTextValue(draft.assignedStaffName),
     }
   }
 
@@ -5302,6 +5304,23 @@ function App() {
     setSelectedPlatformTemplateKey(summary.template.templateKey)
     setPlatformConfigDraft({ sections: summary.sections, overlaps: summary.overlaps, runtimeInputs: summary.runtimeInputs })
     setPlatformCompleteness(null)
+  }
+
+  async function assignAssistantWork(item: { id: number; caseId: number; task?: string; title?: string; assignedStaffName?: string | null }, assignee: string | null) {
+    const previousOwner = item.assignedStaffName || 'Unassigned'
+    if (item.task) {
+      const existing = queueChecklist.find((candidate) => candidate.id === item.id)
+      if (existing) {
+        await persistChecklist({ ...existing, assignedStaffName: assignee }, 'Assistant work owner updated.', false)
+        await api('/api/cases/' + item.caseId + '/activity', { method: 'POST', body: JSON.stringify({ activityType: 'WorkOwnerChanged', notes: 'Task "' + item.task + '" reassigned from ' + previousOwner + ' to ' + (assignee || 'Unassigned') + '.', fieldChanged: 'AssignedStaffName', previousValue: previousOwner, newValue: assignee || 'Unassigned' }) })
+      }
+      return
+    }
+    const existing = queueDeadlines.find((candidate) => candidate.id === item.id)
+    if (existing) {
+      await persistDeadline({ ...existing, assignedStaffName: assignee }, 'Assistant work owner updated.', false)
+      await api('/api/cases/' + item.caseId + '/activity', { method: 'POST', body: JSON.stringify({ activityType: 'WorkOwnerChanged', notes: 'Deadline "' + (item.title || 'Untitled') + '" reassigned from ' + previousOwner + ' to ' + (assignee || 'Unassigned') + '.', fieldChanged: 'AssignedStaffName', previousValue: previousOwner, newValue: assignee || 'Unassigned' }) })
+    }
   }
 
   async function auditPlatformTemplate(templateKey: string) {
@@ -6788,6 +6807,11 @@ function App() {
     }
     return allCases.filter((item) => supportedCaseIds.has(item.id))
   }, [allCases, allCaseAttorneyAssignments, currentUser, legalAssistantSupportedAttorneyNames])
+  const legalAssistantWorkOwnerNames = useMemo(() => {
+    const names = legalAssistants.filter((item) => item.isActive).map((item) => item.name)
+    if (currentUser?.displayName) names.push(currentUser.displayName)
+    return [...new Set([...names, ...legalAssistantSupportedAttorneyNames])]
+  }, [currentUser, legalAssistants, legalAssistantSupportedAttorneyNames])
   // Metric-tile facet filter: a union of the selected priority levels; no tiles active shows everything.
   const filteredActionQueue = useMemo(() => {
     const queue = attorneyDashboard?.actionQueue ?? []
@@ -10892,11 +10916,13 @@ function App() {
         <LegalAssistantDashboard
           assistantName={currentUser.displayName}
           supportedAttorneyNames={legalAssistantSupportedAttorneyNames}
+          workOwnerNames={legalAssistantWorkOwnerNames}
           cases={legalAssistantCaseScope}
           work={[...queueDeadlines, ...queueChecklist]}
           events={queueHearings.map((event) => ({ ...event, pendingChange: pendingEventChangeIds.has(event.id) }))}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
           onOpenPreparation={(eventId) => { setSelectedPreparationEventId(eventId); setPage('eventPreparation') }}
+          onAssignWork={(item, assignee) => void assignAssistantWork(item, assignee)}
         />
       )}
 

@@ -104,7 +104,7 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id,case_id,related_event_id,title,due_date,status,notes,source_type,is_manual,severity,completed_at,
-                   source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,row_version
+                   source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_staff_name,row_version
             FROM dbo.deadlines
             WHERE is_deleted=0 AND (@caseId IS NULL OR case_id=@caseId)
             ORDER BY COALESCE(due_date,'9999-12-31'),title
@@ -147,15 +147,15 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         {
             command.CommandText = """
                 INSERT INTO dbo.deadlines (case_id,related_event_id,title,due_date,status,notes,source_type,is_manual,severity,created_at,updated_at,completed_at,
-                    source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by)
+                    source_kind,source_template_id,source_template_version,source_stage,generated_at,generated_by,assigned_staff_name)
                 OUTPUT INSERTED.id,INSERTED.row_version
-                VALUES (@caseId,@relatedEventId,@title,@due,@status,@notes,@sourceType,@manual,@severity,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy)
+                VALUES (@caseId,@relatedEventId,@title,@due,@status,@notes,@sourceType,@manual,@severity,@now,@now,@completed,@sourceKind,@templateId,@templateVersion,@sourceStage,@generatedAt,@generatedBy,@assignedStaffName)
                 """;
         }
         else
         {
             command.CommandText = """
-                UPDATE dbo.deadlines SET related_event_id=@relatedEventId,title=@title,due_date=@due,status=@status,notes=@notes,severity=@severity,updated_at=@now,completed_at=@completed
+                UPDATE dbo.deadlines SET related_event_id=@relatedEventId,title=@title,due_date=@due,status=@status,notes=@notes,severity=@severity,updated_at=@now,completed_at=@completed,assigned_staff_name=@assignedStaffName
                 OUTPUT INSERTED.id,INSERTED.row_version
                 WHERE id=@id AND row_version=@version AND is_deleted=0
                 """;
@@ -210,8 +210,8 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         Status=Text(reader,5)??"Open", Notes=Text(reader,6), SourceType=Text(reader,7)??"Manual", IsManual=Bool(reader,8),
         Severity=Text(reader,9)??"normal", CompletedAt=Text(reader,10), SourceKind=Text(reader,11)??"Manual",
         SourceTemplateId=Text(reader,12), SourceTemplateVersion=reader.IsDBNull(13)?null:Convert.ToInt32(reader.GetValue(13)),
-        SourceStage=Text(reader,14), GeneratedAt=Text(reader,15), GeneratedBy=Text(reader,16),
-        RowVersion=Convert.ToBase64String((byte[])reader.GetValue(17))
+        SourceStage=Text(reader,14), GeneratedAt=Text(reader,15), GeneratedBy=Text(reader,16), AssignedStaffName=Text(reader,17),
+        RowVersion=Convert.ToBase64String((byte[])reader.GetValue(18))
     };
 
     private static void AddParameters(DbCommand command, DeadlineItem model, string? completed, string now)
@@ -224,6 +224,7 @@ public sealed class SqlServerDeadlineStore(IDatabaseConnectionFactory connection
         command.Parameters.Add(new SqlParameter("@sourceKind",model.SourceKind)); command.Parameters.Add(new SqlParameter("@templateId",Db(model.SourceTemplateId)));
         command.Parameters.Add(new SqlParameter("@templateVersion",(object?)model.SourceTemplateVersion??DBNull.Value)); command.Parameters.Add(new SqlParameter("@sourceStage",Db(model.SourceStage)));
         command.Parameters.Add(new SqlParameter("@generatedAt",Db(model.GeneratedAt))); command.Parameters.Add(new SqlParameter("@generatedBy",Db(model.GeneratedBy)));
+        command.Parameters.Add(new SqlParameter("@assignedStaffName",Db(model.AssignedStaffName)));
     }
 
     private static async Task AttachHistoryAsync(DbConnection connection, List<DeadlineItem> items, long? caseId, CancellationToken token)

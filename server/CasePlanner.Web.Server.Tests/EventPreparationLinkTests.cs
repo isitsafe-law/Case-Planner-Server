@@ -101,4 +101,17 @@ public sealed class EventPreparationLinkTests : IAsyncLifetime
         Assert.Equal("2026-10-20", Assert.Single(await _fixture.Repository.GetHearingsAsync(caseRecord.Id), item => item.Id == hearing.Id).HearingDate);
         Assert.Null(await _fixture.Repository.GetPendingEventChangeAsync(hearing.Id));
     }
+
+    [Fact]
+    public async Task DeadlineOwnerRoundTripsForAssistantCoverage()
+    {
+        var caseRecord = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName = "Deadline Ownership Case", County = "Pulaski", Status = "Active" });
+        var deadline = await _fixture.Repository.SaveDeadlineAsync(new DeadlineItem { CaseId = caseRecord.Id, Title = "Prepare filing packet", DueDate = "2026-08-20", Status = "Open", AssignedStaffName = "Assistant One" });
+        var saved = Assert.Single(await _fixture.Repository.GetDeadlinesAsync(caseRecord.Id), item => item.Id == deadline.Id);
+        Assert.Equal("Assistant One", saved.AssignedStaffName);
+
+        saved.AssignedStaffName = "Assistant Two";
+        await _fixture.Repository.SaveDeadlineAsync(saved);
+        Assert.Equal("Assistant Two", Assert.Single(await _fixture.Repository.GetDeadlinesAsync(caseRecord.Id), item => item.Id == deadline.Id).AssignedStaffName);
+    }
 }

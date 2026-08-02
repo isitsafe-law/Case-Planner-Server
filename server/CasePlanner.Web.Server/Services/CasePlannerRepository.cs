@@ -1447,7 +1447,7 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, related_event_id, title, due_date, status, notes, source_type, is_manual, severity, completed_at,
-                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by
+                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_staff_name
             FROM deadlines
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY COALESCE(due_date, '9999-12-31'), title
@@ -1475,7 +1475,8 @@ public sealed partial class CasePlannerRepository
                     SourceTemplateVersion = reader.IsDBNull(13) ? null : reader.GetInt32(13),
                     SourceStage = reader.IsDBNull(14) ? null : reader.GetString(14),
                     GeneratedAt = reader.IsDBNull(15) ? null : reader.GetString(15),
-                    GeneratedBy = reader.IsDBNull(16) ? null : reader.GetString(16)
+                    GeneratedBy = reader.IsDBNull(16) ? null : reader.GetString(16),
+                    AssignedStaffName = reader.IsDBNull(17) ? null : reader.GetString(17)
                 });
             }
         }
@@ -1562,9 +1563,9 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     INSERT INTO deadlines (case_id, related_event_id, title, due_date, status, notes, source_type, is_manual, severity, created_at, updated_at, completed_at,
-                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by)
+                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_staff_name)
                     VALUES (@case_id, @related_event_id, @title, @due_date, @status, @notes, @source_type, @is_manual, @severity, @created_at, @updated_at, @completed_at,
-                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by);
+                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_staff_name);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -1572,7 +1573,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE deadlines
-                    SET related_event_id=@related_event_id, title=@title, due_date=@due_date, status=@status, notes=@notes, severity=@severity, updated_at=@updated_at, completed_at=@completed_at
+                    SET related_event_id=@related_event_id, title=@title, due_date=@due_date, status=@status, notes=@notes, severity=@severity, updated_at=@updated_at, completed_at=@completed_at, assigned_staff_name=@assigned_staff_name
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1597,6 +1598,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@source_stage", DbValue(model.SourceStage));
             cmd.Parameters.AddWithValue("@generated_at", DbValue(model.GeneratedAt));
             cmd.Parameters.AddWithValue("@generated_by", DbValue(model.GeneratedBy));
+            cmd.Parameters.AddWithValue("@assigned_staff_name", DbValue(model.AssignedStaffName));
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CompletedAt = completedAt;
 
@@ -6859,6 +6861,7 @@ public sealed partial class CasePlannerRepository
         // case's Assigned Attorney/Legal Assistants and actually driven by the UI today. Added
         // alongside, not instead of, assigned_user_id above, which remains completely untouched.
         await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_staff_name", "TEXT");
+        await AddColumnIfMissingAsync(connection, "deadlines", "assigned_staff_name", "TEXT");
         // Multi-user rollout Phase 3 (shared witness registry): links a per-case witness row to
         // the new global witness_persons identity. Nullable so pre-existing rows (and the
         // one-time migration that backfills them) can be told apart from never-linked ones.

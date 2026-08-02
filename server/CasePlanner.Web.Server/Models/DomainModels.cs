@@ -307,6 +307,7 @@ public sealed class DeadlineItem
     public string? SourceStage { get; set; }
     public string? GeneratedAt { get; set; }
     public string? GeneratedBy { get; set; }
+    public string? AssignedStaffName { get; set; }
     public bool IsManual { get; set; } = true;
     public string Severity { get; set; } = "normal";
     public string? CompletedAt { get; set; }

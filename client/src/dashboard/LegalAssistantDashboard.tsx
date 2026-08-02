@@ -39,18 +39,20 @@ type AssistantEvent = {
 export type LegalAssistantDashboardProps = {
   assistantName?: string | null
   supportedAttorneyNames?: string[]
+  workOwnerNames?: string[]
   cases: AssistantCase[]
   work: AssistantWork[]
   events: AssistantEvent[]
   onOpenCase: (caseId: number) => void
   onOpenPreparation: (eventId: number) => void
+  onAssignWork?: (item: AssistantWork, assignee: string | null) => void
 }
 
 const openStatus = (value?: string | null) => !['Done', 'Complete', 'Completed', 'N/A'].includes(value || '')
 const dateValue = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`) : null
 const dateLabel = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : 'No date'
 
-export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], cases, work, events, onOpenCase, onOpenPreparation }: LegalAssistantDashboardProps) {
+export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], workOwnerNames = [], cases, work, events, onOpenCase, onOpenPreparation, onAssignWork }: LegalAssistantDashboardProps) {
   const [selectedAttorney, setSelectedAttorney] = useState('All')
   const [horizonDays, setHorizonDays] = useState<number | 'all'>(180)
   const visibleAttorneyNames = supportedAttorneyNames.filter((name, index, list) => name && list.indexOf(name) === index)
@@ -65,6 +67,16 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
   const horizonEnd = horizonDays === 'all' ? null : new Date(today.getTime() + horizonDays * 86400000)
   const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return supportedCaseIds.has(item.caseId) && date && date >= today && (!horizonEnd || date <= horizonEnd) }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
   const service = scopedCases.filter((item) => item.caseStatus === 'Filed / Service Pending' && !item.servicePerfected)
+  const ownerOptions = workOwnerNames.filter((name, index, list) => name && list.indexOf(name) === index)
+
+  function renderOwnerControl(item: AssistantWork) {
+    if (!onAssignWork) return <small>{item.assignedStaffName || 'Unassigned'}</small>
+    return <select className="inline-edit-select assistant-owner-select" aria-label={'Assign ' + (item.task || item.title || 'work item')} value={item.assignedStaffName || ''} onChange={(event) => onAssignWork(item, event.target.value || null)}>
+      <option value="">Unassigned</option>
+      {ownerOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+      {item.assignedStaffName && !ownerOptions.includes(item.assignedStaffName) && <option value={item.assignedStaffName}>{item.assignedStaffName} (current)</option>}
+    </select>
+  }
 
   return (
     <main className="page legal-assistant-dashboard">
@@ -100,6 +112,17 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
                 <span><strong>{item?.caseName || `Case ${event.caseId}`}</strong><small>{item?.assignedAttorney || 'Attorney not assigned'} · {linked.length} open · {linkedOverdue.length} overdue · {linkedWaiting.length} waiting</small></span>
               </button>
             })}
+          </div>
+        </section>
+
+        <section className="ui-table-panel">
+          <div className="panel-hd"><h3>Assistant Work Ownership</h3><span className="count">{visibleWork.length} open</span></div>
+          <div className="assistant-list">
+            {visibleWork.slice(0, 8).map((item) => <div className="assistant-list-row assistant-work-owner-row" key={(item.task ? 'task-' : 'deadline-') + item.id}>
+              <button className="assistant-row-link" onClick={() => onOpenCase(item.caseId)}><span><strong>{item.task || item.title || 'Work item'}</strong><small>{cases.find((candidate) => candidate.id === item.caseId)?.caseName || ('Case ' + item.caseId)} · {item.dueDate ? 'Due ' + dateLabel(item.dueDate) : 'No due date'}</small></span></button>
+              <span><small>Owner</small>{renderOwnerControl(item)}</span>
+            </div>)}
+            {visibleWork.length === 0 && <p className="helper-text">No open assistant work is currently in scope.</p>}
           </div>
         </section>
 

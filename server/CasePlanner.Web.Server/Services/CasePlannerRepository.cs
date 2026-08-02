@@ -9506,6 +9506,16 @@ public sealed partial class CasePlannerRepository
             var integrityResult = Convert.ToString(await integrity.ExecuteScalarAsync()) ?? "";
             checks.Add(new PortableValidationCheck("Backup integrity", integrityResult.Equals("ok", StringComparison.OrdinalIgnoreCase), $"SQLite integrity_check: {integrityResult}."));
 
+            await using var foreignKeys = connection.CreateCommand();
+            foreignKeys.CommandText = "PRAGMA foreign_key_check";
+            var foreignKeyViolations = 0;
+            await using (var foreignKeyReader = await foreignKeys.ExecuteReaderAsync())
+            {
+                while (await foreignKeyReader.ReadAsync()) foreignKeyViolations++;
+            }
+            checks.Add(new PortableValidationCheck("Foreign-key consistency", foreignKeyViolations == 0,
+                foreignKeyViolations == 0 ? "No SQLite foreign-key violations were found in the restored copy." : $"Found {foreignKeyViolations:N0} SQLite foreign-key violation(s) in the restored copy."));
+
             var requiredTables = new[] { "cases", "app_settings", "document_templates", "document_template_versions", "document_generations", "document_exports" };
             var missingTables = new List<string>();
             foreach (var table in requiredTables)

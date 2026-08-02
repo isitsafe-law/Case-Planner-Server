@@ -41,6 +41,8 @@ user-scoped sharing remains follow-up work.
 Portable backup/restore validation now checks the saved-report setting in the temporary restored copy. This
 confirms that report definitions are carried with the SQLite database and that malformed saved-report JSON is
 reported as a validation failure before a future migration.
+The same restore check also runs SQLite foreign-key consistency validation, giving portable upgrade testing
+a data-integrity signal in addition to file integrity and required-table checks.
 - Phase 4: migration/backup verification and portable deployment.
 
 ## Deployment decision

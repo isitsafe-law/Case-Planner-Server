@@ -9203,6 +9203,21 @@ function App() {
       setMessage(result.passed ? 'Upgrade readiness passed.' : 'Upgrade readiness found issues to review.')
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to run upgrade readiness validation.') }
   }
+  function portableCheckRemediation(name: string, passed: boolean) {
+    if (passed) return 'No action needed.'
+    switch (name) {
+      case 'Database write safety': return 'Close other copies of Case Planner and confirm the database is inside the portable package data folder.'
+      case 'Backup folder writable': return 'Make the backups folder writable, then run validation again.'
+      case 'Export folder writable': return 'Make the exports folder writable before generating or exporting documents.'
+      case 'Log folder writable': return 'Make the logs folder writable so diagnostics can record failures.'
+      case 'Document template files': return 'Restore or re-upload the missing active DOCX templates.'
+      case 'Data quality critical issues': return 'Open Data Quality Findings, correct the critical records, and rerun validation.'
+      case 'Schema contract version': return 'Open the database once with the current build so startup upgrades can stamp the current schema contract.'
+      case 'Foreign-key consistency': return 'Do not use the backup for migration until the reported orphaned references are reviewed.'
+      case 'Saved report definitions': return 'Remove or repair the malformed saved-report setting before relying on the backup.'
+      default: return 'Review the details, correct the underlying issue, and run validation again.'
+    }
+  }
 
   async function updatePipelineHolder(holder: string) {
     const record = workspace?.case ?? selectedCase
@@ -11776,7 +11791,7 @@ function App() {
           {settingsSection === 'diagnostics' && (
             <Panel title="Diagnostics">
               <div className="button-row compact-actions top-gap-small"><button className="primary" onClick={() => void runPortableValidation()}>Run Portable Validation</button><button onClick={() => void runBackupRestoreValidation()}>Test Backup / Restore</button><button onClick={() => void runUpgradeReadiness()}>Check Upgrade Readiness</button><span className="helper-text">Checks writable paths, active document templates, data quality, and can safely open a temporary restored copy without replacing the live database.</span></div>
-              {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td></tr>)}</tbody></table></div></div>}
+              {portableValidation && <div className="settings-subpanel top-gap-small"><strong>{portableValidation.passed ? 'Validation passed' : 'Validation needs attention'}</strong><div className="table-wrap top-gap-small"><table className="ui-table compact-table"><thead><tr><th>Check</th><th>Result</th><th>Details</th><th>Recommended action</th></tr></thead><tbody>{portableValidation.checks.map((check) => <tr key={check.name}><td>{check.name}</td><td>{check.passed ? 'Pass' : 'Needs attention'}</td><td>{check.details}</td><td>{portableCheckRemediation(check.name, check.passed)}</td></tr>)}</tbody></table></div></div>}
               {diagnostics ? (
                 <div className="diagnostics-grid">
                   <StatCard label="App / Version" value={`${diagnostics.appName} | ${diagnostics.version}`} />

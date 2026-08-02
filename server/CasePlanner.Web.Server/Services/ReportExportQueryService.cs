@@ -85,6 +85,41 @@ public sealed class ReportExportQueryService(ICaseCatalogReader cases, IHearingS
         })).ToList();
     }
 
+    public Task<List<Dictionary<string, string>>> GetOutcomeRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token) =>
+        GetEligibleCaseRowsAsync(request, visibleCaseIds, token, record => record.DepositAmount.HasValue && record.FinalJudgmentAmount.HasValue, (record, key) => key switch
+        {
+            "caseNumber" => record.CaseNumber,
+            "caseName" => record.CaseName,
+            "closedDate" => record.ClosedDate ?? "",
+            "disposition" => record.DispositionType ?? "",
+            "takingType" => record.TakingType ?? "",
+            "attorney" => record.AssignedAttorney ?? "",
+            "deposit" => record.DepositAmount?.ToString() ?? "",
+            "finalAmount" => record.FinalJudgmentAmount?.ToString() ?? "",
+            "delta" => (record.FinalJudgmentAmount!.Value - record.DepositAmount!.Value).ToString(),
+            "ratio" => record.DepositAmount.GetValueOrDefault() == 0 ? "" : (record.FinalJudgmentAmount.GetValueOrDefault() / record.DepositAmount.GetValueOrDefault()).ToString(),
+            _ => ""
+        });
+
+    public Task<List<Dictionary<string, string>>> GetCycleTimeRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token) =>
+        GetEligibleCaseRowsAsync(request, visibleCaseIds, token, record => !string.IsNullOrWhiteSpace(record.FilingDate) && !string.IsNullOrWhiteSpace(record.ClosedDate), (record, key) => key switch
+        {
+            "caseNumber" => record.CaseNumber,
+            "caseName" => record.CaseName,
+            "filedDate" => record.FilingDate ?? "",
+            "closedDate" => record.ClosedDate ?? "",
+            "days" => AgeDays(record.FilingDate, record.ClosedDate),
+            "disposition" => record.DispositionType ?? "",
+            _ => ""
+        });
+
+    private async Task<List<Dictionary<string, string>>> GetEligibleCaseRowsAsync(ReportExcelRequest request, IReadOnlySet<long>? visibleCaseIds, CancellationToken token, Func<CaseRecord, bool> eligible, Func<CaseRecord, string, string> value)
+    {
+        var records = await cases.GetCasesAsync(new CaseCatalogQuery(IncludeClosed: true), token);
+        if (visibleCaseIds is not null) records = records.Where(record => visibleCaseIds.Contains(record.Id)).ToList();
+        return records.Where(eligible).OrderByDescending(record => record.ClosedDate).ThenBy(record => record.Id).Select(record => request.Columns.ToDictionary(column => column.Key, column => value(record, column.Key))).ToList();
+    }
+
     private static string Value(CaseRecord record, string key) => key switch
     {
         "caseName" => record.CaseName,

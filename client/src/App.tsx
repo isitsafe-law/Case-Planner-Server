@@ -6690,9 +6690,9 @@ function App() {
     : reportView === 'caseload'
       ? { reportId: 'caseload', scopeCaseIds: caseloadScopedCases.map((record) => record.id), title: 'Caseload and Workload', columns: caseloadExportColumns, rows: caseloadExportRows, filters: { attorney: caseloadViewAttorney || 'all', status: 'open cases' } }
       : reportView === 'outcomes'
-        ? { reportId: 'outcomes', scopeCaseIds: outcomeCaseRows.map((record) => record.id), title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
+        ? { reportId: 'outcomes', serverQuery: true, scopeCaseIds: outcomeCaseRows.map((record) => record.id), title: 'Outcomes', columns: outcomeExportColumns, rows: outcomeExportRows, filters: { status: 'closed', eligibility: 'deposit and final judgment' } }
         : reportView === 'cycleTime'
-          ? { reportId: 'cycle-time', scopeCaseIds: cycleTimeEligibleCases.map((record) => record.id), title: 'Cycle Time', columns: cycleTimeExportColumns, rows: cycleTimeExportRows, filters: { status: 'closed', eligibility: 'filing and closed dates' } }
+          ? { reportId: 'cycle-time', serverQuery: true, scopeCaseIds: cycleTimeEligibleCases.map((record) => record.id), title: 'Cycle Time', columns: cycleTimeExportColumns, rows: cycleTimeExportRows, filters: { status: 'closed', eligibility: 'filing and closed dates' } }
           : null
 
   async function exitCasePlanner() {

@@ -48,6 +48,7 @@ import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPa
 import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 
 type PageKey = 'dashboard' | 'legalAssistantDashboard' | 'eventPreparation' | 'managerDashboard' | 'calendar' | 'cases' | 'queues' | 'reports' | 'settings'
+type LocalDashboardRole = 'standard' | 'legalAssistant'
 type CaseSortColumn = 'caseName' | 'jobNumber' | 'tract' | 'county' | 'nextDeadlineDate' | 'attentionStatus' | 'dateOpened' | 'closedDate'
 type QueueSortMode = 'dueAsc' | 'dueDesc' | 'caseAsc' | 'caseDesc'
 type CaseTabKey = 'overview' | 'work' | 'events' | 'discovery' | 'documents' | 'riskAnalysis' | 'trialNotebook' | 'notes' | 'servicePublication'
@@ -2395,6 +2396,9 @@ function App() {
   const [cases, setCases] = useState<CaseRecord[]>([])
   const [allCases, setAllCases] = useState<CaseRecord[]>([])
   const [currentUser, setCurrentUser] = useState<AuthenticatedUserProfile | null>(null)
+  const [localDashboardRole, setLocalDashboardRole] = useState<LocalDashboardRole>(() => {
+    try { return window.localStorage.getItem('case-planner-local-dashboard-role') === 'legalAssistant' ? 'legalAssistant' : 'standard' } catch { return 'standard' }
+  })
   const [myAssignedCaseIds, setMyAssignedCaseIds] = useState<Set<number> | null>(null)
   const [caseListScope, setCaseListScope] = useState<'mine' | 'all'>('mine')
   const [staffRoster, setStaffRoster] = useState<AppUserSummary[]>([])
@@ -3757,6 +3761,12 @@ function App() {
     } finally {
       setNotificationPreferencesSaving(false)
     }
+  }
+
+  function changeLocalDashboardRole(role: LocalDashboardRole) {
+    setLocalDashboardRole(role)
+    try { window.localStorage.setItem('case-planner-local-dashboard-role', role) } catch { /* local storage is optional */ }
+    setPage(role === 'legalAssistant' ? 'legalAssistantDashboard' : 'dashboard')
   }
 
   async function loadActionabilityPolicy() {
@@ -6792,12 +6802,13 @@ function App() {
     return map
   }, [allCases, cases, dashboard])
   const legalAssistantSupportedAttorneyNames = useMemo(() => {
-    if (!currentUser?.isLegalAssistant) return []
+    if (!currentUser?.isLegalAssistant && !(currentUser === null && localDashboardRole === 'legalAssistant')) return []
+    if (!currentUser) return attorneys.filter((item) => item.isActive).map((item) => item.name)
     const directoryRecord = legalAssistants.find((item) => item.linkedUserId === currentUser.id || item.linkedUserId === currentUser.objectId || item.name === currentUser.displayName)
     return directoryRecord?.attorneyNames ?? []
-  }, [currentUser, legalAssistants])
+  }, [currentUser, attorneys, legalAssistants, localDashboardRole])
   const legalAssistantCaseScope = useMemo(() => {
-    if (!currentUser?.isLegalAssistant || legalAssistantSupportedAttorneyNames.length === 0) return allCases
+    if ((!currentUser?.isLegalAssistant && !(currentUser === null && localDashboardRole === 'legalAssistant')) || legalAssistantSupportedAttorneyNames.length === 0) return allCases
     const supported = new Set(legalAssistantSupportedAttorneyNames)
     const supportedCaseIds = new Set(allCases.filter((item) => item.assignedAttorney && supported.has(item.assignedAttorney)).map((item) => item.id))
     for (const assignments of Object.values(allCaseAttorneyAssignments)) {
@@ -6806,7 +6817,7 @@ function App() {
       }
     }
     return allCases.filter((item) => supportedCaseIds.has(item.id))
-  }, [allCases, allCaseAttorneyAssignments, currentUser, legalAssistantSupportedAttorneyNames])
+  }, [allCases, allCaseAttorneyAssignments, currentUser, localDashboardRole, legalAssistantSupportedAttorneyNames])
   const legalAssistantWorkOwnerNames = useMemo(() => {
     const names = legalAssistants.filter((item) => item.isActive).map((item) => item.name)
     if (currentUser?.displayName) names.push(currentUser.displayName)
@@ -10009,6 +10020,7 @@ function App() {
             </div>
           )}
         </form>
+        {!currentUser && <label className="local-role-switcher"><span>Local preview role</span><select value={localDashboardRole} onChange={(event) => changeLocalDashboardRole(event.target.value as LocalDashboardRole)}><option value="standard">Standard dashboard</option><option value="legalAssistant">Legal Assistant dashboard</option></select></label>}
         <NotificationBell
           items={notificationItems}
           unreadCount={notificationUnreadCount}
@@ -10912,9 +10924,9 @@ function App() {
         </ModalShell>
       )}
 
-      {page === 'legalAssistantDashboard' && currentUser?.isLegalAssistant && !currentUser.isManager && (
+      {page === 'legalAssistantDashboard' && (currentUser?.isLegalAssistant || (!currentUser && localDashboardRole === 'legalAssistant')) && !currentUser?.isManager && (
         <LegalAssistantDashboard
-          assistantName={currentUser.displayName}
+          assistantName={currentUser?.displayName || 'Local Legal Assistant'}
           supportedAttorneyNames={legalAssistantSupportedAttorneyNames}
           workOwnerNames={legalAssistantWorkOwnerNames}
           cases={legalAssistantCaseScope}
@@ -10926,7 +10938,7 @@ function App() {
         />
       )}
 
-      {page === 'eventPreparation' && currentUser?.isLegalAssistant && selectedPreparationEventId && (() => {
+      {page === 'eventPreparation' && (currentUser?.isLegalAssistant || (!currentUser && localDashboardRole === 'legalAssistant')) && selectedPreparationEventId && (() => {
         const event = queueHearings.find((item) => item.id === selectedPreparationEventId)
         if (!event) return <ErrorState message="The selected proceeding could not be found." onRetry={() => setPage('legalAssistantDashboard')} />
         const caseRecord = allCases.find((item) => item.id === event.caseId)

@@ -1,5 +1,7 @@
 # Case Planner
 
+For local SQLite preview testing, use the app-bar Local preview role switcher to open the Legal Assistant dashboard without Entra. Authenticated Entra profiles retain authoritative role routing.
+
 Case Planner is an ARDOT condemnation case-management application for attorneys, legal assistants, administrators, and managing attorneys. The case is the primary work unit; a case may represent one tract within a larger job.
 
 The Legal Assistant dashboard foundation is now role-aware for Entra deployments. A non-manager identity carrying the configurable `CasePlanner.LegalAssistant` app role is routed to a distinct operational dashboard built from the existing cases, pipeline holders/handoffs, tasks, deadlines, events, and service records. It is intentionally not a renamed copy of the attorney dashboard. SQLite preview mode remains unrestricted and unauthenticated, so it is not a substitute for testing Entra role visibility.

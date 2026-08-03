@@ -490,6 +490,9 @@ label span {
   flex: 1;
 }
 
+.local-role-switcher { display: inline-flex; align-items: center; gap: .35rem; margin-right: .5rem; color: var(--text-muted); font-size: .72rem; }
+.local-role-switcher select { max-width: 11rem; }
+
 .appbar-search {
   position: relative;
   display: flex;

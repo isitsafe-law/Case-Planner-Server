@@ -15,44 +15,17 @@ namespace CasePlanner.Web.Server.Persistence;
 // that used to sit in CasePlannerRepository.SetHolderAsync/SqlServerCaseQuickActionService.SetHolderAsync -
 // removed entirely, not just relaxed, so Chief Counsel (or anyone else in the chain) never needs to
 // take any in-system action for a file to advance past them.
+//
+// A second leanness pass removed this class's RequiresFilingApproval/EnsureFilingReady members as
+// dead code - zero real callers anywhere (RequiresFilingApproval was never actually invoked, and
+// EnsureFilingReady had already been reduced to a documented no-op). Leaving Pipeline status has no
+// in-system gate today; see CaseRecord.FilingGateOverrideReason for the still-live, non-blocking
+// audit-context field this left behind. GatedChain stays - it's still real, used below to derive
+// step-state for the client's HolderPipelineStepper and to compute "the role immediately before
+// this one" for the Return for Revision convenience action, just no longer for any gating decision.
 internal static class PipelinePromotionGate
 {
-    // Matches HOLDER_STEPS in the client's HolderPipelineStepper.tsx exactly - still used to derive
-    // step-state (completed/current/upcoming) for the stepper's display and to compute "the role
-    // immediately before this one" for the Return for Revision convenience action below. No longer
-    // used for any gating decision.
     public static readonly string[] GatedChain = ["Legal Assistant", "Attorney", "Deputy Chief Counsel", "Chief Counsel"];
-
-    // Legacy filing-gate compatibility helpers. The active case-status transition no longer
-    // checks DirectorSignatureReceived because that milestone was removed from the workflow UI.
-    // Historical rows and the transient override property remain compatible with older data and
-    // clients, but no user is required to enter a director-signature value to leave Pipeline.
-    //
-    // Manager/Administrator Dashboard Milestone 4 correction: this check basis used to be "Chief
-    // Counsel has recorded an Approved decision in pipeline_holder_approvals" (EnsureFilingApproved,
-    // now removed) - that modeled the WRONG thing. ARDOT's actual pleadings-package/
-    // Declaration-of-Taking sign-off process happens outside this system entirely, by email; there
-    // is no in-system "Chief Counsel approves the filing" action. RequiresFilingApproval's trigger
-    // condition (previousCaseStatus=="Pipeline", newCaseStatus a genuine change away from
-    // "Pipeline") is unchanged from Milestone 2 - only what EnsureFilingReady checks has changed.
-    //
-    // Pre-filing sign-off/Settlement Authority final implementation, item 4: a historically-imported
-    // case (originatedInSystem false - see CaseRecord.OriginatedInSystem's doc comment) has no real
-    // in-system Director-signature event to ever mark, so the entire forcing-prompt is skipped for
-    // it, not just softened - callers must read this from the row's own persisted value, never from
-    // a client-supplied model, since it is otherwise a trivial bypass.
-    public static bool RequiresFilingApproval(string? previousCaseStatus, string? newCaseStatus, bool originatedInSystem = true) =>
-        originatedInSystem
-        && string.Equals(previousCaseStatus, "Pipeline", StringComparison.Ordinal)
-        && !string.IsNullOrWhiteSpace(newCaseStatus)
-        && !string.Equals(newCaseStatus, "Pipeline", StringComparison.Ordinal);
-
-    // Retained for source/API compatibility with older callers and tests. It is no longer called
-    // by either SQLite or SQL Server case saves.
-    public static void EnsureFilingReady(bool directorSignatureMarked, string? overrideReason)
-    {
-        return;
-    }
 }
 
 // Manager/Administrator Dashboard Milestone 4 correction: enforces the strict sequential order of

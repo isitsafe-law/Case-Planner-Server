@@ -27,9 +27,8 @@ export type AttorneyRow = {
   overdueDeadlines: number
 }
 
-// Groups allCases by assignedAttorney (blank/missing -> "Unassigned", matching
-// IncomingPipelinePanel.tsx's own convention) and computes each column's value for every group.
-// Exported for unit testing independent of the rendered table.
+// Groups allCases by assignedAttorney (blank/missing -> "Unassigned") and computes each column's
+// value for every group. Exported for unit testing independent of the rendered table.
 export function buildAttorneyRows(allCases: CaseRecord[], hearings: Hearing[], deadlines: DeadlineItem[] = []): AttorneyRow[] {
   const today = new Date().toISOString().slice(0, 10)
   const groups = new Map<string, CaseRecord[]>()
@@ -58,7 +57,7 @@ type AttorneySortColumn = 'attorney' | 'tracts' | 'nextHardDate' | 'needsAttenti
 // Sortable on every column per spec. The stacked-bar "tract counts by status" column has no single
 // obvious sort key of its own, so it sorts by total tract count (a judgment call, documented here
 // rather than left implicit). Undated "next hard date" rows always sort last regardless of
-// direction - matches IncomingPipelinePanel.tsx's own dateSentToCurrentHolder sort convention.
+// direction.
 export function sortAttorneyRows(rows: AttorneyRow[], column: AttorneySortColumn, direction: 'asc' | 'desc'): AttorneyRow[] {
   const dir = direction === 'asc' ? 1 : -1
   return [...rows].sort((a, b) => {

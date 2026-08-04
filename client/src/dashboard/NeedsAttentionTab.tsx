@@ -45,9 +45,10 @@ function daysSince(dateStr: string, now: Date = new Date()): number {
 }
 
 // Rule (0, final implementation item 3): a Pipeline tract stalled on pre-filing sign-off beyond a
-// configurable threshold (default 7 days) - reads the SAME shared detector IncomingPipelinePanel.tsx
-// uses (computePreFilingStallInfo), so a case appears here for exactly the reason its Pipeline Health
-// row shows, never a separately-derived one. Only applies to a case actually in Pipeline status
+// configurable threshold (default 7 days) - reads the shared detector (computePreFilingStallInfo,
+// preFilingStallDetection.ts) also used by DivisionPipelineTab, so a case appears here for exactly
+// the same reason it would elsewhere, never a separately-derived one. Only applies to a case
+// actually in Pipeline status
 // (milestones/review notes are meaningless once filed) and only when there's an age to measure
 // (daysStalled null - nothing marked, no review notes - never fires here, since there's nothing yet
 // to call a "stall").

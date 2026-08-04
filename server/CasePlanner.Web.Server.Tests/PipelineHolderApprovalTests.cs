@@ -19,9 +19,8 @@ public class PipelineHolderApprovalTests : IAsyncLifetime
     public async Task DisposeAsync() => await _fixture.DisposeAsync();
 
     // Status="Pipeline" is required so SaveCaseAsync's MapConsolidatedCaseStatus derives
-    // CaseStatus="Pipeline" (the phase PipelinePromotionGate.RequiresFilingApproval still gates on
-    // exit) rather than the "Active Litigation" bucket CaseDefendantTests's plain "Active" helper
-    // case lands in.
+    // CaseStatus="Pipeline" rather than the "Active Litigation" bucket CaseDefendantTests's plain
+    // "Active" helper case lands in.
     private async Task<CaseRecord> CreatePipelineCaseAsync(string currentHolder = "Legal Assistant") =>
         await _fixture.Repository.SaveCaseAsync(new CaseRecord
         {

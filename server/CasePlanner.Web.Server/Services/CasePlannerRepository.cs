@@ -2491,8 +2491,8 @@ public sealed partial class CasePlannerRepository
         "SettlementAuthorityRequested", "SettlementAuthorityReceived",
         "SettlementAuthorityDenied", "SettlementAuthorityInfoRequested",
         // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker
-        // (case_prefiling_milestones) and the manager-override path on the filing gate itself
-        // (PipelinePromotionGate.EnsureFilingReady) are meaningful case events too.
+        // (case_prefiling_milestones) and the manager-supplied filing-gate override reason
+        // (CaseRecord.FilingGateOverrideReason) are meaningful case events too.
         "PreFilingMilestoneMarked", "PreFilingMilestoneUnmarked", "FilingGateOverridden",
         // Pre-filing sign-off/Settlement Authority final implementation, item 2: an unstructured
         // review note is a real case event too, even though it enforces nothing on its own.
@@ -5535,42 +5535,10 @@ public sealed partial class CasePlannerRepository
         });
     }
 
-    public async Task<FileExportResult> ExportCaseNotesAsync(long caseId)
-    {
-        var workspace = await GetCaseWorkspaceAsync(caseId) ?? throw new InvalidOperationException("Case not found.");
-        var notes = await GetCaseNotesAsync(caseId);
-        var fileName = $"{SanitizeFileSegment(workspace.Case.CaseNumber)}_CaseNotes_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
-        var outputPath = _documents.CreatePath(caseId,fileName);
-        var lines = new List<string>
-        {
-            $"{workspace.Case.CaseName} ({workspace.Case.CaseNumber})",
-            $"Generated: {DateTime.Now:G}",
-            ""
-        };
-
-        if (notes.Count == 0)
-        {
-            lines.Add("No case notes yet.");
-        }
-        else
-        {
-            foreach (var note in notes)
-            {
-                lines.Add(note.Title);
-                lines.Add($"Created: {DisplayTimestamp(note.CreatedAt)}");
-                lines.Add($"Last Updated: {DisplayTimestamp(note.UpdatedAt)}");
-                lines.Add(note.Body);
-                lines.Add("");
-            }
-        }
-
-        await _documents.WriteLinesAsync(outputPath,lines);
-        return new FileExportResult
-        {
-            Title = $"{workspace.Case.CaseNumber} Case Notes",
-            OutputPath = outputPath
-        };
-    }
+    // ExportCaseNotesAsync (a plain .txt case-notes export) was removed as dead code in a second
+    // leanness pass - zero callers anywhere, fully superseded by the provider-neutral
+    // ProviderNeutralCaseNotesExportService.ExportAsync (Persistence/CaseNotesExportService.cs)
+    // that the live export endpoint actually calls.
 
     public async Task<DocumentExportRecord> GenerateDocumentAsync(long caseId, string kind)
     {
@@ -5759,26 +5727,10 @@ public sealed partial class CasePlannerRepository
         return await _documents.ReadTextAsync(record.OutputPath);
     }
 
-    public async Task<List<ReferenceDocument>> GetReferenceLibraryAsync()
-    {
-        var catalog = new (string Key, string Title, string Description, string FileName)[]
-        {
-            ("opening_statement_reyes", "Opening Statement — Reyes (Prior Case)", "Real opening statement from a prior ARDOT condemnation trial. Reference only — copy from, don't auto-generate.", "OpeningStatement_Reyes.txt"),
-            ("direct_exam_fanning", "Direct Examination — Maxwell Fanning", "Prior-case direct examination outline for an appraisal witness.", "DirectExamination_MaxwellFanning.txt"),
-            ("direct_exam_bartlett", "Direct Examination Questions — Ches Bartlett", "Prior-case direct examination question outline.", "DirectExamination_ChesBartlett.txt"),
-            ("jury_instructions", "Jury Instructions (AMI Reference Library)", "Arkansas Model Instruction reference language for condemnation trials.", "JuryInstructions.txt")
-        };
-
-        var results = new List<ReferenceDocument>();
-        foreach (var entry in catalog)
-        {
-            var path = Path.Combine(_paths.Config.ReferenceFolder, entry.FileName);
-            var text = File.Exists(path) ? await File.ReadAllTextAsync(path) : "(Reference file not found on disk.)";
-            results.Add(new ReferenceDocument { Key = entry.Key, Title = entry.Title, Description = entry.Description, Text = text });
-        }
-
-        return results;
-    }
+    // GetReferenceLibraryAsync (a hardcoded 4-entry trial-reference catalog read from disk) was
+    // removed as dead code in a second leanness pass - zero callers, fully superseded by
+    // ReferenceLibraryStore/SqlServerReferenceLibraryStore (Persistence/ReferenceLibraryStore.cs),
+    // which backs the live /api/reference-library endpoints the client actually calls.
 
     public async Task<RiskAnalysisResult> PreviewRiskAnalysisAsync(long caseId, RiskAnalysisInput input)
     {

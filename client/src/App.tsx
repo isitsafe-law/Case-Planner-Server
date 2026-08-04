@@ -1710,8 +1710,8 @@ export function districtForCountyChange(currentDistrict: string | null | undefin
 
 const takingTypes = ['Partial', 'Full', 'TCE'] as const
 
-// Exported so dashboard sub-components (e.g. IncomingPipelinePanel.tsx's inline milestone mark) can
-// call this directly rather than going through an App.tsx-level onSubmit callback the way
+// Exported so dashboard/case-workspace sub-components (e.g. PreFilingMilestonesPanel.tsx's inline
+// milestone mark) can call this directly rather than going through an App.tsx-level onSubmit callback the way
 // RecordDecisionDialog/PipelineHandoffDialog do, since that action is opened and owned entirely
 // within the sub-component's own tree (dialog/inline-form state included), not threaded up to
 // App.tsx.
@@ -2416,11 +2416,11 @@ function App() {
   // Manager/Administrator Dashboard Milestone 4: division-wide (no caseId query param), the same
   // way circuitClerksData/assessorsData are fetched - see loadInitial below.
   const [preFilingMilestones, setPreFilingMilestones] = useState<PreFilingMilestoneRecord[]>([])
-  // Manager/Administrator Dashboard Milestone 5: the Approvals tab's Filing Status section uses the
-  // server's already-aggregated aging view (GET /api/prefiling-milestones/aging) rather than
-  // re-deriving furthest-milestone-per-case client-side the way IncomingPipelinePanel.tsx does for
-  // its own (different) Calendar-tab purpose. Fetched once in loadInitial alongside the Milestone 4
-  // additions above, not on-demand, so the tab renders instantly on first click like every sibling tab.
+  // Manager/Administrator Dashboard Milestone 5: DivisionPipelineTab's milestone-aging summary strip
+  // uses the server's already-aggregated aging view (GET /api/prefiling-milestones/aging) rather than
+  // re-deriving furthest-milestone-per-case client-side. Fetched once in loadInitial alongside the
+  // Milestone 4 additions above, not on-demand, so the tab renders instantly on first click like
+  // every sibling tab.
   const [preFilingMilestonesAging, setPreFilingMilestonesAging] = useState<PreFilingMilestoneAgingSummary | null>(null)
   // Final implementation, item 3 (stall detection): division-wide (no caseId query param), same
   // fetch shape as preFilingMilestones above - the shared client-side stall detector

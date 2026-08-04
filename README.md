@@ -179,7 +179,6 @@ Document templates also expose `/api/document-platform/templates/{key}/completen
 - Entra authentication and final manager/admin authorization
 - Trial-event source-of-truth migration; `cases.trial_date` remains authoritative
 - Weighted workload scoring
-- Final confidential settlement/authority tag policy
 - Production deployment and network-share storage policy
 
 An actual restore now returns the restored backup name, the automatically created pre-restore safety backup name, and the restore timestamp so the recovery action is auditable in the UI.

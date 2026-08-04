@@ -119,9 +119,9 @@ public sealed class CaseRecord
     // created by the CSV/Excel import path (ImportCasesCsvAsync/ImportCasesXlsxAsync and their SQL
     // Server equivalents), and never written to again by any later save - immutable after creation
     // by construction, since SaveCaseInternalAsync/SqlServerCaseCatalogReader.SaveCaseAsync's UPDATE
-    // branches never include this column. Lets PipelinePromotionGate.RequiresFilingApproval skip the
-    // Director-signature forcing-prompt entirely for a historically-imported case that has no real
-    // in-system milestone to record.
+    // branches never include this column. Distinguishes a historically-imported case (no real
+    // in-system pre-filing milestone history to expect) from one that went through the workflow
+    // here from the start.
     public bool OriginatedInSystem { get; set; } = true;
     public string? CreatedAt { get; set; }
     public string? UpdatedAt { get; set; }
@@ -189,11 +189,12 @@ public sealed class CaseRecord
     // field from CaseStatus (which stays "Pipeline" the whole pre-filing lifecycle - see
     // WorkflowStatusRules) and from DispositionType (litigation-outcome-scoped, not reused here).
     public string? RowIntakeStatus { get; set; }
-    // Transient: optional reason captured on save when a manager overrides
-    // PipelinePromotionGate.EnsureFilingReady's Director-signature-milestone requirement so the
-    // case can leave Pipeline status anyway. Never persisted to the cases row itself - read once
-    // during the gate check in SaveCaseInternalAsync/SqlServerCaseCatalogReader.SaveCaseAsync, then
-    // discarded. Follows the exact precedent of DeadlineItem.ReasonForChange above.
+    // Transient: an optional reason the client can supply when saving a case that's leaving
+    // Pipeline status without the (now-removed) Director-signature milestone. Never persisted to
+    // the cases row itself. Follows the exact precedent of DeadlineItem.ReasonForChange above.
+    // NOTE: SaveCaseInternalAsync's overrideApplied flag that this was meant to feed into an audit
+    // log entry is hardcoded false and never set true - the intended "FilingGateOverridden" activity
+    // record is currently unreachable. Flagged as a follow-up rather than fixed here.
     public string? FilingGateOverrideReason { get; set; }
 }
 

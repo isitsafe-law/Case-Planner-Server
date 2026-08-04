@@ -83,7 +83,6 @@ Document-generation diagnostics also expose `/api/document-platform/templates/{k
 - Entra authentication and final permissions
 - Trial-event source-of-truth migration
 - Weighted workload scoring
-- Final policy for confidential settlement/authority merge tags
 - Production deployment and network-share storage policy
 
 An actual restore reports the selected backup and the automatically created pre-restore safety backup. Keep that safety backup until the restored database has been reviewed.

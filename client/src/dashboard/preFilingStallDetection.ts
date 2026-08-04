@@ -2,17 +2,16 @@ import { CORE_PRE_FILING_MILESTONE_ORDER, preFilingMilestoneLabel, type PreFilin
 import { isReturnedForRevisionDecision } from '../case-workspace/ReviewNotesLog'
 
 // Final implementation, item 3: ONE aging calculation per tract, not two parallel ones - shared by
-// NeedsAttentionTab.tsx (the division-wide exception feed) and IncomingPipelinePanel.tsx (the
-// Division Overview's per-tract pipeline view), so both surfaces agree on what's stalled and why,
-// distinguished only by which label/age they render, never by separately re-deriving it.
+// NeedsAttentionTab.tsx (the division-wide exception feed) and DivisionPipelineTab.tsx (the
+// per-tract pipeline view), so both surfaces agree on what's stalled and why, distinguished only
+// by which label/age they render, never by separately re-deriving it.
 export type PreFilingStallInfo = {
   label: string
   daysStalled: number | null
   isReturnedForRevision: boolean
   // The milestone a "Mark" action here would target - null once every milestone is complete. A
   // review note never changes which milestone is next; only the aging clock/label switches when
-  // one exists (see item 1c: IncomingPipelinePanel's inline mark action reads this directly rather
-  // than re-deriving "what's next" itself).
+  // one exists.
   nextMilestone: PreFilingMilestone | null
 }
 
@@ -25,8 +24,8 @@ function daysSince(dateStr: string, now: Date): number {
 }
 
 // Base case: time since the most recent milestone was marked, labeled by what's next in sequence -
-// NOT the furthest-marked milestone itself (that's IncomingPipelinePanel's OLD framing, retired in
-// favor of this shared one). If a later review note with decision "sent back for revision" exists,
+// NOT the furthest-marked milestone itself (an old, retired framing). If a later review note with
+// decision "sent back for revision" exists,
 // the clock and label switch to measure from THAT note instead - "most recent" is compared using
 // each event's own system-entry timestamp (markedAt / createdAt), not the user-entered, potentially
 // backdated occurredDate, so a backdated entry can never make an already-known-about event look

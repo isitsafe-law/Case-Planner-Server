@@ -6,9 +6,9 @@ namespace CasePlanner.Web.Server.Tests;
 
 // Manager/Administrator Dashboard Milestone 4 correction coverage: the pre-filing milestone
 // tracker (case_prefiling_milestones / PreFilingMilestoneGate) that replaces part of Milestone 2's
-// Filing Approval gate, plus PipelinePromotionGate.EnsureFilingReady - the corrected check basis
-// for a case leaving CaseStatus="Pipeline" - and its override path (open to any actor since Manager
-// Dashboard sign-off consolidation item 3, not just managers). A fresh RepositoryTestFixture per
+// Filing Approval gate - leaving CaseStatus="Pipeline" has no in-system gate today - and its
+// override-reason path (open to any actor since Manager Dashboard sign-off consolidation item 3,
+// not just managers). A fresh RepositoryTestFixture per
 // test, plain assertions against the real SQLite repository (no mocking). Exercises
 // CasePlannerRepository's methods directly (the same surface
 // SqlitePreFilingMilestoneStore just delegates to).
@@ -259,7 +259,7 @@ public class PreFilingMilestoneTests : IAsyncLifetime
         Assert.Contains("not currently marked", ex.Message);
     }
 
-    // --- PipelinePromotionGate.EnsureFilingReady: the corrected Pipeline-exit gate ---
+    // --- Leaving Pipeline status: no in-system gate ---
 
     [Fact]
     public async Task SaveCaseAsync_LeavingPipeline_DoesNotRequireRemovedDirectorSignatureMilestone()
@@ -381,10 +381,10 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     [Fact]
     public async Task SaveCaseAsync_LeavingPipeline_AttorneyOverride_SucceedsWithReason()
     {
-        // Manager Dashboard sign-off consolidation, item 3: the Director signature gate is a soft
-        // forcing-prompt, not a hard block restricted to managers - EnsureFilingReady no longer
-        // checks actorRole at all, so a plain Attorney's override reason is honored the same as a
-        // manager's (see SaveCaseAsync_LeavingPipeline_ManagerOverride_SucceedsWithoutDirectorSignature_AndWritesFilingGateOverriddenActivity above).
+        // Manager Dashboard sign-off consolidation, item 3: leaving Pipeline without the Director
+        // signature milestone is not restricted to managers - a plain Attorney's override reason is
+        // honored the same as a manager's (see
+        // SaveCaseAsync_LeavingPipeline_LegacyOverrideReasonDoesNotCreateASeparateGateEvent above).
         await using var attorneyFixture = await RepositoryTestFixture.CreateAsync(new RoleTestActor(Guid.NewGuid(), "Attorney"));
         var c = await attorneyFixture.Repository.SaveCaseAsync(new CaseRecord
         {

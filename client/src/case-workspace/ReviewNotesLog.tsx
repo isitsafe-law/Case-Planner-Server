@@ -18,10 +18,9 @@ import type { ReviewNoteRecord } from '../dashboard/types'
 // string, case-insensitively - keep them in sync.
 const DECISION_SUGGESTIONS = ['Looks good', 'Sent back for revision', 'Other'] as const
 
-// Client-side mirror of the server's stall-detection matching rule (see the SETTLED_FOR_REVISION
-// constant shared with buildNeedsAttentionRows/IncomingPipelinePanel) - exported so both the log
-// display and the stall detector agree on what counts as a "sent back" note without duplicating the
-// literal string in three places.
+// Client-side mirror of the server's stall-detection matching rule - exported so both this log
+// display and the shared stall detector (preFilingStallDetection.ts, used by NeedsAttentionTab and
+// ByAttorneyTab) agree on what counts as a "sent back" note without duplicating the literal string.
 export function isReturnedForRevisionDecision(decision: string): boolean {
   return decision.trim().toLowerCase() === 'sent back for revision'
 }

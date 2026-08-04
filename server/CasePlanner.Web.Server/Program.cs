@@ -1028,7 +1028,6 @@ app.MapGet("/api/cases/paged", async (string? search, string? status, string? co
     var authorized=(await cases.GetCasesAsync(query,token)).Where(c=>visible.Contains(c.Id)).ToList();
     return Results.Ok(new CaseCatalogPage(authorized.Count, pageSize, pageOffset, authorized.Skip(pageOffset).Take(pageSize).ToList()));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapGet("/api/case-statuses", () => Results.Ok(new[] { "Pipeline", "Filed / Service Pending", "Active Litigation", "Settlement Pending", "Trial Preparation", "Resolved / Closed", "Triage" })).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/case-status-mapping-review", async (CaseAccessService access,CancellationToken token) =>
 {
     var result=(await repo.GetCasesAsync("","","","",true)).Where(c=>c.StatusMappingReview);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?result:result.Where(c=>visible.Contains(c.Id)));
@@ -1685,74 +1684,14 @@ app.MapDelete("/api/document-platform-generations/{id:long}", async (long id,IDo
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/document-platform/templates", async (IDocumentPlatformService platform,CancellationToken token) =>
     Results.Ok(await platform.GetAllTemplatesAsync(token))).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapPost("/api/document-platform/templates/upload", async (HttpRequest request,IDocumentPlatformService platform,CancellationToken token) =>
-{
-    if (!request.HasFormContentType)
-    {
-        return Results.BadRequest(new { error = "Expected multipart form upload." });
-    }
-
-    var form = await request.ReadFormAsync(token);
-    var file = form.Files["file"];
-    if (file is null || file.Length == 0)
-    {
-        return Results.BadRequest(new { error = "Template file is required." });
-    }
-
-    var templateKey = form["templateKey"].FirstOrDefault() ?? "";
-    var title = form["title"].FirstOrDefault() ?? "";
-    var description = form["description"].FirstOrDefault();
-    var category = form["category"].FirstOrDefault() ?? "Other";
-
-    try
-    {
-        using var stream = new MemoryStream();
-        await file.CopyToAsync(stream, token);
-        return Results.Ok(await platform.UploadTemplateAsync(templateKey, title, description, category, stream.ToArray(), token));
-    }
-    catch (ArgumentException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-}).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapPut("/api/document-platform/templates/{key}/configuration", async (string key,DocumentTemplateConfigurationRequest request,IDocumentPlatformService platform,CancellationToken token) =>
-{
-    try
-    {
-        return Results.Ok(await platform.SaveConfigurationAsync(key, request, token));
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-}).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapPost("/api/document-platform/templates/{key}/versions/{version:int}/activate", async (string key,int version,IDocumentPlatformService platform,CancellationToken token) =>
-{
-    try
-    {
-        return Results.Ok(await platform.ActivateVersionAsync(key, version, token));
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-}).WithMetadata(new AssignmentAwareEndpointMetadata());
-app.MapDelete("/api/document-platform/templates/{key}", async (string key,IDocumentPlatformService platform,CancellationToken token) =>
-{
-    try
-    {
-        await platform.DeleteTemplateAsync(key, token);
-        return Results.Ok();
-    }
-    catch (InvalidOperationException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-}).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Upload/configuration/version-activate/delete admin endpoints were removed as unreachable surface
+// in a second leanness pass - the Document Templates management screen that called them was
+// already removed from Settings, and nothing else in the client calls these routes. The underlying
+// IDocumentPlatformService methods (UploadTemplateAsync/SaveConfigurationAsync/ActivateVersionAsync/
+// DeleteTemplateAsync) and their real, substantive test coverage (DocumentTemplateAdminTests.cs)
+// were deliberately left in place rather than deleted alongside the routes - that's tested,
+// working logic (DOCX linting, versioning, section carry-forward), not dead code, and stays ready
+// to be re-exposed if template administration needs an HTTP surface again.
 app.MapGet("/api/document-platform/sample-template", () =>
 {
     var bytes = DocumentGenerationEngine.BuildSampleMergeFieldTemplateDocx();

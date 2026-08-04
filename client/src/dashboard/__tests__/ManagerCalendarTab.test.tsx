@@ -9,13 +9,17 @@ describe('ManagerCalendarTab horizons', () => {
     expect(CALENDAR_HORIZONS).toEqual([7, 30, 60, 90, 120, 180, 'all'])
   })
 
+  // Fixed "today" (as an epoch day, matching ManagerCalendarTab's UTC epoch-day convention) so
+  // these assertions don't drift as real wall-clock time moves past the fixture dates.
+  const fixedToday = Date.UTC(2026, 7, 2) / 86400000 // 2026-08-02
+
   it('counts event-backed trials, including an in-progress multi-day event, without legacy projections', () => {
     const cases = [caseRecord(1, '2026-08-10'), caseRecord(2, '2026-08-11')]
     const hearings: Hearing[] = [
       { id: 1, caseId: 1, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-01', endDate: '2026-08-03', createdAt: '', updatedAt: '' },
       { id: 2, caseId: 2, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-20', createdAt: '', updatedAt: '' },
     ]
-    expect(countEventsInWindow(cases, hearings, 30)).toBe(2)
+    expect(countEventsInWindow(cases, hearings, 30, fixedToday)).toBe(2)
   })
 
   it('excludes canceled and completed events from the shared count', () => {
@@ -24,6 +28,6 @@ describe('ManagerCalendarTab horizons', () => {
       { id: 1, caseId: 1, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-10', status: 'Canceled', createdAt: '', updatedAt: '' },
       { id: 2, caseId: 2, title: 'Jury Trial', eventType: 'Jury Trial', hearingDate: '2026-08-11', status: 'Scheduled', createdAt: '', updatedAt: '' },
     ]
-    expect(countEventsInWindow(cases, hearings, 30)).toBe(1)
+    expect(countEventsInWindow(cases, hearings, 30, fixedToday)).toBe(1)
   })
 })

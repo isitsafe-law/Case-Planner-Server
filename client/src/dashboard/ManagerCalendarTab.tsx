@@ -51,8 +51,8 @@ function mondayWeekKey(dateStr: string): string {
 
 // Counts used by the top-strip "Events next N days" tiles. Calendar and reports use the same
 // hearing rows, including Jury Trial events, so counts do not drift to a legacy case date.
-export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[], days: number): number {
-  const today = todayEpochDay()
+// `today` defaults to the real date; tests pass a fixed value so assertions stay stable over time.
+export function countEventsInWindow(allCases: CaseRecord[], hearings: Hearing[], days: number, today: number = todayEpochDay()): number {
   const windowEnd = today + days
   void allCases
   return hearings.filter((h) => {

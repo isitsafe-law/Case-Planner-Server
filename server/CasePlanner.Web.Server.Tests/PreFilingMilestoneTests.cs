@@ -97,6 +97,41 @@ public class PreFilingMilestoneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MarkAsync_OnBehalfOf_RecordsApprovingPartySeparatelyFromActor_AndUnmarkClearsItBackToNull()
+    {
+        // The acting user (RoleLabel "Attorney" - see InitializeAsync) is who marked this
+        // milestone; OnBehalfOf* records that the sign-off actually belongs to someone else (e.g.
+        // an assistant marking Chief Counsel's signature on her behalf).
+        var c = await CreatePipelineCaseAsync();
+        var marked = await _fixture.Repository.MarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest
+        {
+            OccurredDate = "2026-01-15",
+            OnBehalfOfDisplay = "Jane Smith",
+            OnBehalfOfRole = "Chief Counsel",
+        });
+        Assert.Equal("Jane Smith", marked.OnBehalfOfDisplay);
+        Assert.Equal("Chief Counsel", marked.OnBehalfOfRole);
+        Assert.NotEqual(marked.OnBehalfOfDisplay, marked.MarkedByDisplay);
+
+        var reloaded = (await _fixture.Repository.GetPreFilingMilestonesAsync(c.Id)).Single();
+        Assert.Equal("Jane Smith", reloaded.OnBehalfOfDisplay);
+        Assert.Equal("Chief Counsel", reloaded.OnBehalfOfRole);
+
+        var unmarked = await _fixture.Repository.UnmarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new UnmarkPreFilingMilestoneRequest { Reason = "Entered against the wrong tract." });
+        Assert.Null(unmarked.OnBehalfOfDisplay);
+        Assert.Null(unmarked.OnBehalfOfRole);
+    }
+
+    [Fact]
+    public async Task MarkAsync_WithoutOnBehalfOf_LeavesItNull()
+    {
+        var c = await CreatePipelineCaseAsync();
+        var marked = await _fixture.Repository.MarkPreFilingMilestoneAsync(c.Id, "PleadingsPackageSent", new MarkPreFilingMilestoneRequest { OccurredDate = "2026-01-15" });
+        Assert.Null(marked.OnBehalfOfDisplay);
+        Assert.Null(marked.OnBehalfOfRole);
+    }
+
+    [Fact]
     public async Task MarkAsync_SameBatchId_AcrossMultipleCases_LinksThemForTheAuditTrail()
     {
         var a = await CreatePipelineCaseAsync();

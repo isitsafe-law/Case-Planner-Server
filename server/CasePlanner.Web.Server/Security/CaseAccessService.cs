@@ -24,6 +24,15 @@ public sealed class CaseAccessService(
         accessor.HttpContext?.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile
         && (profile.IsManager || profile.ManagerTier is "ChiefCounsel" or "DeputyChiefCounsel");
 
+    // Decided explicitly with the user: a Legal Assistant gets the same unrestricted case
+    // visibility/write access as a Manager rather than being scoped to their supported attorneys'
+    // cases at this layer - that narrower default view is a client-side dashboard concern (Staff
+    // Directory-linked case scope), not an access-control one. No field-level write restriction
+    // (e.g. Risk Analysis) for now; revisit if that turns out to matter in practice.
+    public bool IsLegalAssistant =>
+        accessor.HttpContext?.Items[EntraUserProvisioningMiddleware.ProfileItemKey] is AuthenticatedUserProfile profile
+        && profile.IsLegalAssistant;
+
     public bool CanCreateCases => !options.Enabled || IsAdministrator;
 
     public async Task<bool> CanReadAsync(long caseId, CancellationToken token = default) =>
@@ -44,7 +53,7 @@ public sealed class CaseAccessService(
         return ids;
     }
 
-    private bool IsUnrestricted => !options.Enabled || IsAdministrator || IsManagerTierOrHigher;
+    private bool IsUnrestricted => !options.Enabled || IsAdministrator || IsManagerTierOrHigher || IsLegalAssistant;
 
     private async Task<string?> GetRoleAsync(long caseId, CancellationToken token)
     {

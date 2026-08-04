@@ -156,6 +156,50 @@ describe('PreFilingMilestonesPanel', () => {
     expect(confirmButton).not.toBeDisabled()
   })
 
+  it('sends onBehalfOfDisplay/onBehalfOfRole when marking on someone else\'s behalf', async () => {
+    apiMock
+      .mockResolvedValueOnce(noMilestonesMarked) // initial GET
+      .mockResolvedValueOnce(null) // POST mark
+      .mockResolvedValueOnce(noMilestonesMarked) // refetch GET
+
+    render(
+      <PreFilingMilestonesPanel
+        caseId={7}
+        onOverrideReasonChange={() => {}}
+        onMutated={async () => {}}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getAllByText('Not marked')).toHaveLength(4))
+    await userEvent.click(screen.getAllByRole('button', { name: 'Marking on someone else’s behalf?' })[0])
+    await userEvent.type(screen.getByPlaceholderText('Leave blank if you are the approving party'), 'Jane Smith')
+    await userEvent.type(screen.getByPlaceholderText('e.g. Chief Counsel'), 'Chief Counsel')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Mark' })[0])
+
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith(
+      '/api/cases/7/prefiling-milestones/PleadingsPackageSent/mark',
+      expect.objectContaining({ method: 'POST' }),
+    ))
+    const markCall = apiMock.mock.calls.find(([url]) => url === '/api/cases/7/prefiling-milestones/PleadingsPackageSent/mark')
+    const body = JSON.parse((markCall![1] as { body: string }).body)
+    expect(body.onBehalfOfDisplay).toBe('Jane Smith')
+    expect(body.onBehalfOfRole).toBe('Chief Counsel')
+  })
+
+  it('does not offer the on-behalf-of toggle for the Director signature milestone', async () => {
+    apiMock.mockResolvedValueOnce(noMilestonesMarked)
+    render(
+      <PreFilingMilestonesPanel
+        caseId={1}
+        onOverrideReasonChange={() => {}}
+        onMutated={async () => {}}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getAllByText('Not marked')).toHaveLength(4))
+    expect(screen.getAllByRole('button', { name: 'Marking on someone else’s behalf?' })).toHaveLength(3)
+  })
+
   it.skip('the removed Continue Without Marking control is no longer rendered', async () => {
     apiMock.mockResolvedValueOnce(noMilestonesMarked)
     render(

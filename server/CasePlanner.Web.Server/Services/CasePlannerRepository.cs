@@ -4295,7 +4295,8 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                   marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
+                   marked_by_user_id, marked_by_display, marked_by_role, note, batch_id,
+                   on_behalf_of_display, on_behalf_of_role
             FROM case_prefiling_milestones
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY case_id, id
@@ -4323,6 +4324,8 @@ public sealed partial class CasePlannerRepository
         MarkedByRole = reader.IsDBNull(8) ? null : reader.GetString(8),
         Note = reader.IsDBNull(9) ? null : reader.GetString(9),
         BatchId = reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null,
+        OnBehalfOfDisplay = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
+        OnBehalfOfRole = reader.FieldCount > 12 && !reader.IsDBNull(12) ? reader.GetString(12) : null,
     };
 
     private static async Task<Dictionary<string, bool>> LoadPreFilingMilestoneMarksAsync(SqliteConnection connection, SqliteTransaction tx, long caseId)
@@ -4361,9 +4364,9 @@ public sealed partial class CasePlannerRepository
                 insert.Transaction = tx;
                 insert.CommandText = """
                     INSERT INTO case_prefiling_milestones
-                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note, batch_id)
+                        (case_id, milestone, is_marked, occurred_date, marked_at, marked_by_user_id, marked_by_display, marked_by_role, note, batch_id, on_behalf_of_display, on_behalf_of_role)
                     VALUES
-                        (@case_id, @milestone, 1, @occurred_date, @marked_at, @marked_by_user_id, @marked_by_display, @marked_by_role, @note, @batch_id);
+                        (@case_id, @milestone, 1, @occurred_date, @marked_at, @marked_by_user_id, @marked_by_display, @marked_by_role, @note, @batch_id, @on_behalf_of_display, @on_behalf_of_role);
                     SELECT last_insert_rowid();
                     """;
                 insert.Parameters.AddWithValue("@case_id", caseId);
@@ -4375,6 +4378,8 @@ public sealed partial class CasePlannerRepository
                 insert.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
                 insert.Parameters.AddWithValue("@note", DbValue(request.Note));
                 insert.Parameters.AddWithValue("@batch_id", DbValue(request.BatchId));
+                insert.Parameters.AddWithValue("@on_behalf_of_display", DbValue(request.OnBehalfOfDisplay));
+                insert.Parameters.AddWithValue("@on_behalf_of_role", DbValue(request.OnBehalfOfRole));
                 id = Convert.ToInt64(await insert.ExecuteScalarAsync());
             }
             else
@@ -4386,7 +4391,8 @@ public sealed partial class CasePlannerRepository
                     UPDATE case_prefiling_milestones SET
                         is_marked=1, occurred_date=@occurred_date, marked_at=@marked_at,
                         marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
-                        marked_by_role=@marked_by_role, note=@note, batch_id=@batch_id
+                        marked_by_role=@marked_by_role, note=@note, batch_id=@batch_id,
+                        on_behalf_of_display=@on_behalf_of_display, on_behalf_of_role=@on_behalf_of_role
                     WHERE id=@id
                     """;
                 update.Parameters.AddWithValue("@occurred_date", DbValue(request.OccurredDate));
@@ -4396,6 +4402,8 @@ public sealed partial class CasePlannerRepository
                 update.Parameters.AddWithValue("@marked_by_role", DbValue(_actor.Role));
                 update.Parameters.AddWithValue("@note", DbValue(request.Note));
                 update.Parameters.AddWithValue("@batch_id", DbValue(request.BatchId));
+                update.Parameters.AddWithValue("@on_behalf_of_display", DbValue(request.OnBehalfOfDisplay));
+                update.Parameters.AddWithValue("@on_behalf_of_role", DbValue(request.OnBehalfOfRole));
                 update.Parameters.AddWithValue("@id", id);
                 await update.ExecuteNonQueryAsync();
             }
@@ -4404,7 +4412,8 @@ public sealed partial class CasePlannerRepository
             readBackCmd.Transaction = tx;
             readBackCmd.CommandText = """
                 SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
+                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id,
+                       on_behalf_of_display, on_behalf_of_role
                 FROM case_prefiling_milestones WHERE id=@id
                 """;
             readBackCmd.Parameters.AddWithValue("@id", id);
@@ -4453,7 +4462,8 @@ public sealed partial class CasePlannerRepository
                 UPDATE case_prefiling_milestones SET
                     is_marked=0, occurred_date=NULL, marked_at=@marked_at,
                     marked_by_user_id=@marked_by_user_id, marked_by_display=@marked_by_display,
-                    marked_by_role=@marked_by_role, note=@note, batch_id=NULL
+                    marked_by_role=@marked_by_role, note=@note, batch_id=NULL,
+                    on_behalf_of_display=NULL, on_behalf_of_role=NULL
                 WHERE id=@id
                 """;
             update.Parameters.AddWithValue("@marked_at", now);
@@ -4468,7 +4478,8 @@ public sealed partial class CasePlannerRepository
             readBackCmd.Transaction = tx;
             readBackCmd.CommandText = """
                 SELECT id, case_id, milestone, is_marked, occurred_date, marked_at,
-                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id
+                       marked_by_user_id, marked_by_display, marked_by_role, note, batch_id,
+                       on_behalf_of_display, on_behalf_of_role
                 FROM case_prefiling_milestones WHERE id=@id
                 """;
             readBackCmd.Parameters.AddWithValue("@id", id);
@@ -6696,16 +6707,19 @@ public sealed partial class CasePlannerRepository
         // DEFAULT backfills every existing row) unless a case was created by the CSV/Excel import
         // path - see CaseRecord.OriginatedInSystem's doc comment.
         await AddColumnIfMissingAsync(connection, "cases", "originated_in_system", "INTEGER NOT NULL DEFAULT 1");
-        // Manager Dashboard sign-off consolidation, item 4: Settlement Authority becomes pure
-        // record-keeping - a "grant" is a distinct real-world fact from "decided_at" (when the
-        // system entry was made) and "decided_by_display" (who operated the UI to record it).
-        // granted_by/granted_by_role name whoever actually granted the authority (often outside
-        // the system, e.g. by email) and granted_date is that real-world, backdatable date -
         // Pre-filing sign-off/Settlement Authority final implementation, item 1: shared by every
         // row a single bulk-mark action touches, so the activity trail shows they came from one
         // action - null for a single-case mark. (The Bulk Mark Milestones feature this served has
         // since been removed too; batch_id is kept only for historical rows.)
         await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "batch_id", "TEXT");
+        // Distinct from marked_by_display/marked_by_role (the acting user, e.g. an assistant): the
+        // free-text name/role of the real approving party when a milestone represents someone
+        // else's sign-off (e.g. Chief Counsel's signature marked by the assistant on her behalf).
+        // Null when the acting user IS the approving party (most milestones), or simply not
+        // recorded. Same "who acted vs. whose approval it represents" pattern as ReviewNoteRecord's
+        // reviewerName/reviewerRole.
+        await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "on_behalf_of_display", "TEXT");
+        await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "on_behalf_of_role", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -10839,6 +10853,8 @@ public sealed partial class CasePlannerRepository
             marked_by_role TEXT,
             note TEXT,
             batch_id TEXT,
+            on_behalf_of_display TEXT,
+            on_behalf_of_role TEXT,
             UNIQUE(case_id, milestone)
         );
         CREATE TABLE IF NOT EXISTS case_review_notes (

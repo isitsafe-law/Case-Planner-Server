@@ -577,6 +577,13 @@ public sealed class PreFilingMilestoneRecord
     public string? MarkedByUserId { get; set; }
     public string? MarkedByDisplay { get; set; }
     public string? MarkedByRole { get; set; }
+    // Distinct from MarkedBy* above (who acted in the system, e.g. an assistant): the free-text
+    // name/role of the real approving party when this milestone represents someone else's sign-off
+    // (e.g. Chief Counsel's signature, marked by the assistant on her behalf). Null when the acting
+    // user IS the approving party, or simply not recorded - same "who acted vs. whose approval it
+    // represents" pattern as ReviewNoteRecord's ReviewerName/ReviewerRole.
+    public string? OnBehalfOfDisplay { get; set; }
+    public string? OnBehalfOfRole { get; set; }
     // Optional. On "PleadingsPackageSent" specifically, the client may format this as a simple
     // checklist-style text list since package contents vary by case - a client-side UX choice only;
     // there is deliberately no separate structured document-checklist table here.
@@ -596,6 +603,10 @@ public sealed class MarkPreFilingMilestoneRequest
 {
     public string OccurredDate { get; set; } = "";
     public string? Note { get; set; }
+    // See PreFilingMilestoneRecord.OnBehalfOfDisplay's doc comment. Both optional - leave blank
+    // when the person marking this milestone is also the approving party.
+    public string? OnBehalfOfDisplay { get; set; }
+    public string? OnBehalfOfRole { get; set; }
     // See PreFilingMilestoneRecord.BatchId's doc comment. Null for a single-case mark from the case
     // workspace - the Bulk Mark Milestones feature that used to set this was removed as redundant
     // with the manager dashboard's simplified surface.

@@ -5,12 +5,15 @@ using Microsoft.AspNetCore.Http;
 
 namespace CasePlanner.Web.Server.Tests;
 
-// Manager/Administrator Dashboard Milestone 4 coverage: CaseAccessService.IsManagerTierOrHigher and
-// its effect on IsUnrestricted (private, exercised here through CanReadAsync/CanWriteAsync/
-// GetVisibleCaseIdsAsync - the public surface every AssignmentAwareEndpointMetadata-tagged endpoint
-// actually calls). A Manager/Chief Counsel/Deputy Chief Counsel gets the same unrestricted access
-// Administrator already has, decided explicitly with the user so the Manager Dashboard's
-// division-wide visibility works without a separate, narrower "all cases" query path. Entra is
+// Manager/Administrator Dashboard Milestone 4 coverage: CaseAccessService.IsManagerTierOrHigher/
+// IsLegalAssistant and their effect on IsUnrestricted (private, exercised here through
+// CanReadAsync/CanWriteAsync/GetVisibleCaseIdsAsync - the public surface every
+// AssignmentAwareEndpointMetadata-tagged endpoint actually calls). A Manager/Chief Counsel/Deputy
+// Chief Counsel/Legal Assistant gets the same unrestricted access Administrator already has,
+// decided explicitly with the user so the Manager Dashboard's division-wide visibility works
+// without a separate, narrower "all cases" query path, and so a Legal Assistant's narrower default
+// dashboard view (Staff Directory-linked case scope) stays a client-side concern rather than a
+// second access-control path. Entra is
 // enabled in every fixture here specifically to exercise the restricted-vs-unrestricted branch -
 // the existing !options.Enabled-means-unrestricted convention is intentionally bypassed by setting
 // Enabled=true, matching how a real deployment would behave.
@@ -36,8 +39,8 @@ public class CaseAccessServiceTests
         return new CaseAccessService(accessor, assignments, options);
     }
 
-    private static AuthenticatedUserProfile Profile(bool isManager, string? managerTier) =>
-        new(Guid.NewGuid(), "tenant", "object", "Jane Doe", "jane@example.com", new List<string>(), isManager, managerTier);
+    private static AuthenticatedUserProfile Profile(bool isManager, string? managerTier, bool isLegalAssistant = false) =>
+        new(Guid.NewGuid(), "tenant", "object", "Jane Doe", "jane@example.com", new List<string>(), isManager, managerTier, isLegalAssistant);
 
     [Fact]
     public async Task PlainManager_IsUnrestricted_SeesEveryCase_WithoutTouchingAssignmentRepository()
@@ -65,6 +68,19 @@ public class CaseAccessServiceTests
     {
         var service = BuildService(Profile(isManager: false, managerTier: "DeputyChiefCounsel"));
 
+        Assert.True(await service.CanWriteAsync(caseId: 999_999));
+        Assert.Null(await service.GetVisibleCaseIdsAsync());
+    }
+
+    [Fact]
+    public async Task LegalAssistant_IsUnrestricted_SeesEveryCase_WithoutTouchingAssignmentRepository()
+    {
+        // Decided explicitly with the user: a Legal Assistant gets the same unrestricted access a
+        // Manager has, rather than being scoped to their supported attorneys' cases at this layer -
+        // that narrower default view is a client-side dashboard concern, not access control.
+        var service = BuildService(Profile(isManager: false, managerTier: null, isLegalAssistant: true));
+
+        Assert.True(await service.CanReadAsync(caseId: 999_999));
         Assert.True(await service.CanWriteAsync(caseId: 999_999));
         Assert.Null(await service.GetVisibleCaseIdsAsync());
     }

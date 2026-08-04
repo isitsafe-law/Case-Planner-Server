@@ -55,7 +55,7 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-type MarkDraft = { occurredDate: string; note: string }
+type MarkDraft = { occurredDate: string; note: string; onBehalfOfDisplay: string; onBehalfOfRole: string }
 
 export function PreFilingMilestonesPanel({
   caseId,
@@ -77,6 +77,7 @@ export function PreFilingMilestonesPanel({
   const [errorMessage, setErrorMessage] = useState('')
   const [markDrafts, setMarkDrafts] = useState<Record<string, MarkDraft>>({})
   const [noteOpenFor, setNoteOpenFor] = useState<string | null>(null)
+  const [onBehalfOfOpenFor, setOnBehalfOfOpenFor] = useState<string | null>(null)
   const [unmarkOpenFor, setUnmarkOpenFor] = useState<string | null>(null)
   const [unmarkReason, setUnmarkReason] = useState('')
   const [busyMilestone, setBusyMilestone] = useState<string | null>(null)
@@ -101,6 +102,7 @@ export function PreFilingMilestonesPanel({
     setUnmarkReason('')
     setMarkDrafts({})
     setNoteOpenFor(null)
+    setOnBehalfOfOpenFor(null)
     if (caseId) void load()
     return () => {
       cancelled = true
@@ -116,7 +118,7 @@ export function PreFilingMilestonesPanel({
   }
 
   async function mark(milestone: PreFilingMilestone) {
-    const draft = markDrafts[milestone] ?? { occurredDate: todayIsoDate(), note: '' }
+    const draft = markDrafts[milestone] ?? { occurredDate: todayIsoDate(), note: '', onBehalfOfDisplay: '', onBehalfOfRole: '' }
     setBusyMilestone(milestone)
     try {
       setErrorMessage('')
@@ -132,7 +134,12 @@ export function PreFilingMilestonesPanel({
       } else {
         await api(`/api/cases/${caseId}/prefiling-milestones/${milestone}/mark`, {
           method: 'POST',
-          body: JSON.stringify({ occurredDate: draft.occurredDate, note: draft.note.trim() || undefined }),
+          body: JSON.stringify({
+            occurredDate: draft.occurredDate,
+            note: draft.note.trim() || undefined,
+            onBehalfOfDisplay: draft.onBehalfOfDisplay.trim() || undefined,
+            onBehalfOfRole: draft.onBehalfOfRole.trim() || undefined,
+          }),
         })
       }
       setMarkDrafts((current) => {
@@ -141,6 +148,7 @@ export function PreFilingMilestonesPanel({
         return next
       })
       setNoteOpenFor(null)
+      setOnBehalfOfOpenFor(null)
       await refetch()
       await onMutated()
     } catch (error) {
@@ -192,7 +200,7 @@ export function PreFilingMilestonesPanel({
             const record = milestones.find((item) => item.milestone === milestone)
             const isMarked = Boolean(record?.isMarked)
             const isBusy = busyMilestone === milestone
-            const draft = markDrafts[milestone] ?? { occurredDate: todayIsoDate(), note: '' }
+            const draft = markDrafts[milestone] ?? { occurredDate: todayIsoDate(), note: '', onBehalfOfDisplay: '', onBehalfOfRole: '' }
             const missingPrereq = missingPrerequisiteLabel(milestones, milestone)
             const laterMarked = laterMarkedMilestoneLabel(milestones, milestone)
 
@@ -210,6 +218,11 @@ export function PreFilingMilestonesPanel({
                       {record?.markedByDisplay ? ` · ${record.markedByDisplay}` : ''}
                       {record?.markedByRole ? ` (${record.markedByRole})` : ''}
                     </p>
+                    {record?.onBehalfOfDisplay && (
+                      <p className="subtle-text">
+                        On behalf of {record.onBehalfOfDisplay}{record.onBehalfOfRole ? ` (${record.onBehalfOfRole})` : ''}
+                      </p>
+                    )}
                     {record?.note && (
                       <details className="prefiling-note-detail">
                         <summary>Note available</summary>
@@ -267,6 +280,28 @@ export function PreFilingMilestonesPanel({
                         />
                       </label>
                       {noteOpenFor === milestone && <label className="full-span"><span>Note (optional)</span><textarea rows={2} value={draft.note} onChange={(event) => setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, note: event.currentTarget.value } }))} placeholder={milestone === 'PleadingsPackageSent' ? 'What was included?' : 'Optional note'} /></label>}
+                      {onBehalfOfOpenFor === milestone && milestone !== 'DirectorSignatureReceived' && (
+                        <>
+                          <label>
+                            <span>Recorded on behalf of (name)</span>
+                            <input
+                              type="text"
+                              value={draft.onBehalfOfDisplay}
+                              onChange={(event) => { const value = event.currentTarget.value; setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, onBehalfOfDisplay: value } })) }}
+                              placeholder="Leave blank if you are the approving party"
+                            />
+                          </label>
+                          <label>
+                            <span>Their role</span>
+                            <input
+                              type="text"
+                              value={draft.onBehalfOfRole}
+                              onChange={(event) => { const value = event.currentTarget.value; setMarkDrafts((current) => ({ ...current, [milestone]: { ...draft, onBehalfOfRole: value } })) }}
+                              placeholder="e.g. Chief Counsel"
+                            />
+                          </label>
+                        </>
+                      )}
                     </div>
                     {missingPrereq && (
                       <p className="helper-text">{missingPrereq} must be marked first.</p>
@@ -276,6 +311,11 @@ export function PreFilingMilestonesPanel({
                         Mark complete
                       </Btn>
                       <Btn size="sm" variant="ghost" onClick={() => setNoteOpenFor(noteOpenFor === milestone ? null : milestone)}>{noteOpenFor === milestone ? 'Hide note' : 'Add note'}</Btn>
+                      {milestone !== 'DirectorSignatureReceived' && (
+                        <Btn size="sm" variant="ghost" onClick={() => setOnBehalfOfOpenFor(onBehalfOfOpenFor === milestone ? null : milestone)}>
+                          {onBehalfOfOpenFor === milestone ? 'Hide on-behalf-of' : 'Marking on someone else’s behalf?'}
+                        </Btn>
+                      )}
                     </div>
                   </div>
                 )}

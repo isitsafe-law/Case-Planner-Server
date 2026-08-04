@@ -99,11 +99,22 @@ public sealed class DeadlineReminderBackgroundService(
         }
     }
 
+    // Excludes Triage/Pipeline cases the same way WorkflowGenerationService.IsPreWorkflow and
+    // GenerateDeadlinesForCaseAsync (SQLite) do - this is the root-cause fix for a real incident
+    // where reminders fired for historically-imported cases still sitting in Triage with a
+    // never-confirmed trial_date/service_deadline_120 carried over from the source spreadsheet.
+    // Checks both status and case_status (matching IsPreWorkflow's OR) since a not-yet-migrated
+    // legacy row may only have the older column populated.
     private static async Task<List<CaseDeadlineSnapshot>> LoadCaseDeadlinesAsync(DbConnection connection, CancellationToken token)
     {
         var result = new List<CaseDeadlineSnapshot>();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id,case_number,trial_date,service_deadline_120 FROM dbo.cases WHERE is_deleted=0";
+        command.CommandText = """
+            SELECT id,case_number,trial_date,service_deadline_120 FROM dbo.cases
+            WHERE is_deleted=0
+              AND COALESCE(status,'') NOT IN ('Triage','Pipeline')
+              AND COALESCE(case_status,'') NOT IN ('Triage','Pipeline')
+            """;
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
         {

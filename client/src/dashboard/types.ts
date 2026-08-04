@@ -280,6 +280,12 @@ export type PreFilingMilestoneRecord = {
   markedByUserId?: string | null
   markedByDisplay?: string | null
   markedByRole?: string | null
+  // Distinct from markedByDisplay/markedByRole above (who acted in the system, e.g. an assistant):
+  // the free-text name/role of the real approving party when this milestone represents someone
+  // else's sign-off (e.g. Chief Counsel's signature, marked by the assistant on her behalf). Null
+  // when the acting user IS the approving party, or simply not recorded.
+  onBehalfOfDisplay?: string | null
+  onBehalfOfRole?: string | null
   note?: string | null
   // Historical: shared by every row a single bulk-mark action touched, back when the Bulk Mark
   // Milestones feature existed (since removed). Null for every mark going forward.

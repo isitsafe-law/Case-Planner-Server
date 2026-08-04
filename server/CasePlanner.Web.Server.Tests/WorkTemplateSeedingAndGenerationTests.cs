@@ -125,4 +125,36 @@ public sealed class WorkTemplateSeedingAndGenerationTests : IAsyncLifetime
         Assert.Contains(tasks, t => t.Contains("30 days from service", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(tasks, t => t.Contains("Review landowner's appraisal against checklist", StringComparison.OrdinalIgnoreCase));
     }
+
+    // Regression test for a real gap: GenerateDeadlinesForCaseAsync used to check only the legacy
+    // Status column, not CaseStatus. A pre-filing ROW-intake tract (MatterType="PreFilingTract")
+    // has Status="Active" (not "Pipeline") while CaseStatus="Pipeline" - so deadline generation was
+    // not actually suppressed for pre-filing tracts before WorkflowStatusRules centralized the
+    // check to look at both columns.
+    [Fact]
+    public async Task GenerateDeadlinesAndChecklist_ForPreFilingTractWithActiveLegacyStatus_ProducesNothing()
+    {
+        var c = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Pre-Filing Tract",
+            County = "Pulaski",
+            Status = "Active",
+            CaseStatus = "Pipeline",
+            MatterType = "PreFilingTract",
+            CurrentHolder = "Legal Assistant",
+            PipelineStage = "With Legal Assistant",
+            Track = "Contested",
+            FilingDate = "2026-01-01",
+        });
+        Assert.Equal("Pipeline", c.CaseStatus); // guards the SaveCaseInternalAsync recompute trap this test exists to catch
+
+        var (added, updated) = await _fixture.Repository.GenerateDeadlinesAsync(c.Id);
+        Assert.Equal(0, added);
+        Assert.Equal(0, updated);
+        Assert.Empty(await _fixture.Repository.GetDeadlinesAsync(c.Id));
+
+        var checklistAdded = await _fixture.Repository.GenerateChecklistAsync(c.Id);
+        Assert.Equal(0, checklistAdded);
+        Assert.Empty(await _fixture.Repository.GetChecklistItemsAsync(c.Id));
+    }
 }

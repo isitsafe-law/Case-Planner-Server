@@ -44,6 +44,7 @@ import { CloseCaseDialog, dispositionTypeOptions, type CloseCaseDetails } from '
 import { NotificationBell, type NotificationItem } from './ui/NotificationBell'
 import { formatDate, formatDateTime } from './ui/format'
 import { PreFilingMilestonesPanel } from './case-workspace/PreFilingMilestonesPanel'
+import { RowIntakePanel } from './case-workspace/RowIntakePanel'
 import { ReviewNotesLog } from './case-workspace/ReviewNotesLog'
 
 type PageKey = 'dashboard' | 'legalAssistantDashboard' | 'eventPreparation' | 'managerDashboard' | 'calendar' | 'cases' | 'queues' | 'reports' | 'settings'
@@ -127,6 +128,10 @@ export type CaseRecord = {
   deferredReason?: string | null
   deferredAt?: string | null
   deferredBy?: string | null
+  // Mirrors the server's CaseRecord.MatterType (Models/DomainModels.cs) - "FiledCase" (default) or
+  // "PreFilingTract". Previously omitted client-side since nothing branched on it; added to gate
+  // RowIntakePanel, which only applies to pre-filing tracts.
+  matterType?: string | null
   currentHolder?: string | null
   // Mirrors the server's CaseRecord.DateSentToCurrentHolder (DomainModels.cs) - previously omitted
   // from this client-side type even though the server already round-trips it; added for the
@@ -157,6 +162,11 @@ export type CaseRecord = {
   caseStyle?: string | null
   opposingCounselContact?: string | null
   caseFolderPath?: string | null
+  // Mirrors the server's CaseRecord.RowIntakeStatus (Models/DomainModels.cs) - a different axis
+  // from pipelineStage/currentHolder above (the internal Legal Assistant -> Attorney -> Deputy
+  // Chief Counsel -> Chief Counsel review chain): tracks where a tract sits relative to ROW, which
+  // happens earlier. Null for any case never tracked through ROW intake. See RowIntakePanel.
+  rowIntakeStatus?: string | null
 }
 
 type DeadlineHistoryEntry = {
@@ -7525,6 +7535,16 @@ function App() {
                 </div>
                 <span className="helper-text">Core pre-filing milestones only. Existing legacy milestone history remains preserved.</span>
                 <div className="prefiling-workflow-review">
+                  {selectedCase.matterType === 'PreFilingTract' && (
+                    <>
+                      <RowIntakePanel
+                        caseId={selectedCase.id}
+                        rowIntakeStatus={selectedCase.rowIntakeStatus}
+                        onMutated={async () => { await loadInitial(); await refreshCaseActivityLog(selectedCase.id) }}
+                      />
+                      <h5 className="form-section-heading top-gap">Internal Review</h5>
+                    </>
+                  )}
                   <PreFilingMilestonesPanel
                     caseId={selectedCase.id}
                     visibleMilestones={['PleadingsPackageSent', 'ChiefCounselSignaturesReceived']}

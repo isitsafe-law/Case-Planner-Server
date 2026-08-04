@@ -750,6 +750,13 @@ app.MapPost("/api/cases/{caseId:long}/prefiling-review", async (long caseId, Pre
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+app.MapPost("/api/cases/{caseId:long}/prefiling-review/title-review", async (long caseId, TitleReviewRoundRequest request, IPrefilingReviewStore review, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
+    try { return Results.Ok(await review.RecordTitleReviewRoundAsync(caseId, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 app.MapGet("/api/prefiling-review/settings", async (IPrefilingReviewStore review, CancellationToken token) =>
     Results.Ok(await review.GetSettingsAsync(token)));
 app.MapPut("/api/prefiling-review/settings", async (SavePrefilingReviewSettingsRequest request, IPrefilingReviewStore review, CancellationToken token) =>

@@ -692,7 +692,7 @@ public sealed partial class CasePlannerRepository
             AddItem(upcoming, "trial", caseRecord.Id, null, "Trial / hearing date", caseRecord.TrialDate, "overview");
         }
 
-        var activeCases = cases.Where(c => c.Status is not "Closed" and not "Complete" and not "Triage").ToList();
+        var activeCases = cases.Where(c => c.Status is not "Closed" and not "Complete" and not "Triage" && !WorkflowStatusRules.IsRowIntakeInactive(c.RowIntakeStatus)).ToList();
         // "unconfirmed" is deliberately excluded here - it's a distinct, lower-stakes backlog
         // (service records with no data to confirm or deny them), not part of the genuinely
         // urgent/attention/stalled worklist this table is meant to be a prioritized view of.
@@ -792,7 +792,7 @@ public sealed partial class CasePlannerRepository
         bool Allowed(long caseId) => allowedCaseIds is null || allowedCaseIds.Contains(caseId);
         var allCases = (await GetCasesAsync("", "", "", "", true)).Where(c => Allowed(c.Id)).ToList();
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var activeCases = allCases.Where(c => c.Status is not "Closed" and not "Complete" and not "Triage").ToList();
+        var activeCases = allCases.Where(c => c.Status is not "Closed" and not "Complete" and not "Triage" && !WorkflowStatusRules.IsRowIntakeInactive(c.RowIntakeStatus)).ToList();
         var triageCaseCount = allCases.Count(c => c.Status == "Triage");
 
         var deadlines = (await GetDeadlinesAsync(null)).Where(x => Allowed(x.CaseId)).ToList();
@@ -1142,7 +1142,8 @@ public sealed partial class CasePlannerRepository
                    attorney_fees_awarded, attorney_fees_amount, judge, division,
                    fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
                    settlement_authorized_ceiling,
-                   COALESCE(originated_in_system, 1)
+                   COALESCE(originated_in_system, 1),
+                   row_intake_status
             FROM cases
             WHERE (@includeClosed = 1 OR COALESCE(status,'') NOT IN ('Closed','Complete'))
               AND (@search = '' OR case_number LIKE @like OR case_name LIKE @like OR job_number LIKE @like OR tract LIKE @like)
@@ -4061,7 +4062,7 @@ public sealed partial class CasePlannerRepository
         cmd.CommandText = """
             SELECT id, case_id, event_type, prior_holder, new_holder, prior_stage, new_stage,
                    submitted_by_holder, submitted_by_display, recorded_by_display, occurred_at,
-                   recorded_at, note, override_reason
+                   recorded_at, note, override_reason, outcome, reviewer_display
             FROM case_prefiling_review_events
             WHERE (@caseId IS NULL OR case_id=@caseId)
             ORDER BY id DESC
@@ -4088,6 +4089,8 @@ public sealed partial class CasePlannerRepository
         RecordedAt = reader.GetString(11),
         Note = reader.IsDBNull(12) ? null : reader.GetString(12),
         OverrideReason = reader.IsDBNull(13) ? null : reader.GetString(13),
+        Outcome = reader.IsDBNull(14) ? null : reader.GetString(14),
+        ReviewerDisplay = reader.IsDBNull(15) ? null : reader.GetString(15),
     };
 
     public async Task<PrefilingReviewEventRecord> RecordPrefilingReviewActionAsync(long caseId, PrefilingReviewActionRequest request)
@@ -4282,6 +4285,69 @@ public sealed partial class CasePlannerRepository
                 SubmittedByHolder = currentHolder, SubmittedByDisplay = _actor.AuditLabel,
                 RecordedByDisplay = _actor.AuditLabel, OccurredAt = occurredAt, RecordedAt = now,
                 Note = request.Note, OverrideReason = request.OverrideReason,
+            };
+        });
+    }
+
+    // Records one ROW title-review round: appends a case_prefiling_review_events row
+    // (event_type="TitleReview") and transitions cases.row_intake_status to request.Outcome. A
+    // separate action space from RecordPrefilingReviewActionAsync above - ROW rounds don't touch
+    // current_holder/pipeline_stage, since ROW intake is an earlier, orthogonal stage (see
+    // CaseRecord.RowIntakeStatus's doc comment). ReviewerDisplay is required every call - the title
+    // reviewer is prompted each round rather than inferred from the acting user.
+    public async Task<PrefilingReviewEventRecord> RecordTitleReviewRoundAsync(long caseId, TitleReviewRoundRequest request)
+    {
+        var outcome = request.Outcome?.Trim() ?? "";
+        if (!WorkflowStatusRules.RowIntakeStatuses.Contains(outcome))
+            throw new ArgumentException("Unsupported ROW intake outcome.");
+        var reviewerDisplay = request.ReviewerDisplay?.Trim();
+        if (string.IsNullOrWhiteSpace(reviewerDisplay))
+            throw new ArgumentException("A title reviewer is required.");
+
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+            var occurredAt = string.IsNullOrWhiteSpace(request.OccurredAt) ? now : request.OccurredAt!;
+
+            var caseCmd = connection.CreateCommand();
+            caseCmd.Transaction = tx;
+            caseCmd.CommandText = "SELECT row_intake_status FROM cases WHERE id=@id";
+            caseCmd.Parameters.AddWithValue("@id", caseId);
+            var priorOutcomeObj = await caseCmd.ExecuteScalarAsync();
+            if (priorOutcomeObj is null) throw new InvalidOperationException("Case not found.");
+
+            var update = connection.CreateCommand();
+            update.Transaction = tx;
+            update.CommandText = "UPDATE cases SET row_intake_status=@outcome, updated_at=@now WHERE id=@id";
+            update.Parameters.AddWithValue("@outcome", outcome);
+            update.Parameters.AddWithValue("@now", now);
+            update.Parameters.AddWithValue("@id", caseId);
+            await update.ExecuteNonQueryAsync();
+
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO case_prefiling_review_events
+                    (case_id,event_type,recorded_by_display,occurred_at,recorded_at,note,outcome,reviewer_display)
+                VALUES
+                    (@case_id,'TitleReview',@recorded_by_display,@occurred_at,@recorded_at,@note,@outcome,@reviewer_display);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@case_id", caseId);
+            insert.Parameters.AddWithValue("@recorded_by_display", DbValue(_actor.AuditLabel));
+            insert.Parameters.AddWithValue("@occurred_at", occurredAt);
+            insert.Parameters.AddWithValue("@recorded_at", now);
+            insert.Parameters.AddWithValue("@note", DbValue(request.Note));
+            insert.Parameters.AddWithValue("@outcome", outcome);
+            insert.Parameters.AddWithValue("@reviewer_display", reviewerDisplay);
+            var eventId = Convert.ToInt64(await insert.ExecuteScalarAsync());
+
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Recorded ROW title-review round for case {caseId} at {DateTime.Now:G}");
+            return new PrefilingReviewEventRecord
+            {
+                Id = eventId, CaseId = caseId, EventType = "TitleReview",
+                RecordedByDisplay = _actor.AuditLabel, OccurredAt = occurredAt, RecordedAt = now,
+                Note = request.Note, Outcome = outcome, ReviewerDisplay = reviewerDisplay,
             };
         });
     }
@@ -6672,6 +6738,8 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "trial_track", "INTEGER DEFAULT 0");
         await AddColumnIfMissingAsync(connection, "cases", "short_posture_summary", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "current_issue", "TEXT");
+        // ROW intake tracking - see CaseRecord.RowIntakeStatus's doc comment for the full rationale.
+        await AddColumnIfMissingAsync(connection, "cases", "row_intake_status", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_status", "TEXT DEFAULT 'Pipeline'");
         await AddColumnIfMissingAsync(connection, "cases", "status_mapping_review", "INTEGER DEFAULT 0");
         await AddColumnIfMissingAsync(connection, "cases", "trial_end_date", "TEXT");
@@ -6730,6 +6798,11 @@ public sealed partial class CasePlannerRepository
         // reviewerName/reviewerRole.
         await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "on_behalf_of_display", "TEXT");
         await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "on_behalf_of_role", "TEXT");
+        // ROW title-review rounds (event_type="TitleReview") - see TitleReviewRoundRequest's doc
+        // comment. Outcome is the RowIntakeStatus value the round transitions the case to;
+        // reviewer_display is the title reviewer for that round, distinct from recorded_by_display.
+        await AddColumnIfMissingAsync(connection, "case_prefiling_review_events", "outcome", "TEXT");
+        await AddColumnIfMissingAsync(connection, "case_prefiling_review_events", "reviewer_display", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -7615,7 +7688,7 @@ public sealed partial class CasePlannerRepository
         var result = new List<WorkTemplateCandidate>();
         var today = DateOnly.FromDateTime(DateTime.Today);
         var workflowStatus = string.IsNullOrWhiteSpace(ws.Case.CaseStatus)
-            ? MapConsolidatedCaseStatus(ws.Case.Status, ws.Case.Stage, ws.Case.CaseNumber, ws.Case.PipelineStage)
+            ? MapConsolidatedCaseStatus(ws.Case.Status, ws.Case.Stage, ws.Case.CaseNumber, ws.Case.PipelineStage, ws.Case.RowIntakeStatus)
             : ws.Case.CaseStatus;
         foreach (var template in await GetChecklistTemplatesAsync())
         {
@@ -8712,7 +8785,7 @@ public sealed partial class CasePlannerRepository
         caseCmd.CommandText = """
             SELECT filing_date, trial_date, date_opened, date_of_taking, closed_date,
                    service_perfected, service_perfected_date, answer_filed_date,
-                   COALESCE(status,''), COALESCE(stage,'')
+                   COALESCE(status,''), COALESCE(stage,''), COALESCE(case_status,'')
             FROM cases WHERE id=@id
             """;
         caseCmd.Parameters.AddWithValue("@id", caseId);
@@ -8726,6 +8799,7 @@ public sealed partial class CasePlannerRepository
         DateOnly? answerFiledDate;
         string caseStatus;
         string caseStage;
+        string consolidatedCaseStatus;
         await using (var caseReader = await caseCmd.ExecuteReaderAsync())
         {
             if (!await caseReader.ReadAsync())
@@ -8743,13 +8817,16 @@ public sealed partial class CasePlannerRepository
             answerFiledDate = ParseDate(caseReader.IsDBNull(7) ? null : caseReader.GetString(7));
             caseStatus = caseReader.GetString(8);
             caseStage = caseReader.GetString(9);
+            consolidatedCaseStatus = caseReader.GetString(10);
         }
 
-        // Triage cases (freshly imported, not yet confirmed through the triage wizard) generate
-        // no deadlines at all - the wizard backfills historical dates first, then activation
-        // triggers generation with the correct anchors. This is the root fix for historical
-        // imports spawning "31 days after filing" reminders decades late.
-        if (caseStatus is "Triage" or "Pipeline")
+        // Triage cases (freshly imported, not yet confirmed through the triage wizard) generate no
+        // deadlines at all - the wizard backfills historical dates first, then activation triggers
+        // generation with the correct anchors. This is the root fix for historical imports spawning
+        // "31 days after filing" reminders decades late. Checks CaseStatus too (not just the legacy
+        // Status column) via the shared WorkflowStatusRules predicate - a pre-filing ROW-intake
+        // tract has Status="Active" but CaseStatus="Pipeline", so Status alone would have missed it.
+        if (WorkflowStatusRules.IsPreFiling(caseStatus, consolidatedCaseStatus))
         {
             return (0, 0);
         }
@@ -8947,8 +9024,8 @@ public sealed partial class CasePlannerRepository
             }
 
             // Triage cases skip template generation - their stage isn't confirmed yet (same gate as
-            // GenerateDeadlinesForCaseAsync).
-            if (caseReader.GetString(1) is "Triage" or "Pipeline" || caseReader.GetString(2) is "Triage" or "Pipeline")
+            // GenerateDeadlinesForCaseAsync, via the shared WorkflowStatusRules predicate).
+            if (WorkflowStatusRules.IsPreFiling(caseReader.GetString(1), caseReader.GetString(2)))
             {
                 return 0;
             }
@@ -9421,7 +9498,7 @@ public sealed partial class CasePlannerRepository
         if (string.IsNullOrWhiteSpace(model.Status)) model.Status = "Pipeline";
         if (string.IsNullOrWhiteSpace(model.CaseStatus) || model.CaseStatus == "Pipeline" && model.Status != "Pipeline")
         {
-            model.CaseStatus = MapConsolidatedCaseStatus(model.Status, model.Stage, model.CaseNumber, model.PipelineStage);
+            model.CaseStatus = MapConsolidatedCaseStatus(model.Status, model.Stage, model.CaseNumber, model.PipelineStage, model.RowIntakeStatus);
         }
         // Auto-fill and persist the 120-day service deadline from the filing date (or an explicit
         // basis date, if set) the first time it's missing, so it's a real stored value rather than
@@ -9485,6 +9562,7 @@ public sealed partial class CasePlannerRepository
                     next_review_date, momentum_status, waiting_reason, waiting_on, waiting_started_date,
                     expected_response, waiting_follow_up_date, waiting_escalation_action, trial_track,
                     short_posture_summary, current_issue,
+                    row_intake_status,
                     deferred_until, deferred_reason, deferred_at, deferred_by,
                     case_status, status_mapping_review,
                     trial_end_date, property_description,
@@ -9508,6 +9586,7 @@ public sealed partial class CasePlannerRepository
                     @next_review_date, @momentum_status, @waiting_reason, @waiting_on, @waiting_started_date,
                     @expected_response, @waiting_follow_up_date, @waiting_escalation_action, @trial_track,
                     @short_posture_summary, @current_issue,
+                    @row_intake_status,
                     @deferred_until, @deferred_reason, @deferred_at, @deferred_by,
                     @case_status, @status_mapping_review,
                     @trial_end_date, @property_description,
@@ -9585,6 +9664,7 @@ public sealed partial class CasePlannerRepository
                     trial_track=@trial_track,
                     short_posture_summary=@short_posture_summary,
                     current_issue=@current_issue,
+                    row_intake_status=@row_intake_status,
                     deferred_until=@deferred_until,
                     deferred_reason=@deferred_reason,
                     deferred_at=@deferred_at,
@@ -9630,11 +9710,15 @@ public sealed partial class CasePlannerRepository
     // the directly-set source of truth for that value (the client sends it explicitly on every save
     // - see App.tsx's serializeCaseDraft). This function only runs as a fallback for a case whose
     // CaseStatus was never populated (a legacy row, or a direct API write that omitted it).
-    private static string MapConsolidatedCaseStatus(string? status, string? stage, string? caseNumber = null, string? pipelineStage = null)
+    private static string MapConsolidatedCaseStatus(string? status, string? stage, string? caseNumber = null, string? pipelineStage = null, string? rowIntakeStatus = null)
     {
         if (status == "Triage") return "Triage";
         if (status is "Closed" or "Complete" || stage == "Resolved") return "Resolved / Closed";
-        if (status == "Pipeline" || (string.IsNullOrWhiteSpace(caseNumber) && !string.IsNullOrWhiteSpace(pipelineStage))) return "Pipeline";
+        // A case with no case number that's still being internally processed pre-filing is
+        // "Pipeline" - true whether that processing is the internal holder chain (PipelineStage) or
+        // ROW intake (RowIntakeStatus, which comes earlier: a tract can be with ROW/the title
+        // attorney before it's ever assigned to anyone in the PipelineStage chain).
+        if (status == "Pipeline" || (string.IsNullOrWhiteSpace(caseNumber) && (!string.IsNullOrWhiteSpace(pipelineStage) || !string.IsNullOrWhiteSpace(rowIntakeStatus)))) return "Pipeline";
         if (stage == "Trial Track") return "Trial Preparation";
         if (stage == "Service") return "Filed / Service Pending";
         return "Active Litigation";
@@ -9702,6 +9786,7 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@trial_track", model.TrialTrack ? 1 : 0);
         cmd.Parameters.AddWithValue("@short_posture_summary", DbValue(model.ShortPostureSummary));
         cmd.Parameters.AddWithValue("@current_issue", DbValue(model.CurrentIssue));
+        cmd.Parameters.AddWithValue("@row_intake_status", DbValue(model.RowIntakeStatus));
         cmd.Parameters.AddWithValue("@deferred_until", DbValue(model.DeferredUntil));
         cmd.Parameters.AddWithValue("@deferred_reason", DbValue(model.DeferredReason));
         cmd.Parameters.AddWithValue("@deferred_at", DbValue(model.DeferredAt));
@@ -10519,7 +10604,9 @@ public sealed partial class CasePlannerRepository
             occurred_at TEXT NOT NULL,
             recorded_at TEXT NOT NULL,
             note TEXT,
-            override_reason TEXT
+            override_reason TEXT,
+            outcome TEXT,
+            reviewer_display TEXT
         );
         CREATE TABLE IF NOT EXISTS case_attorney_assignments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

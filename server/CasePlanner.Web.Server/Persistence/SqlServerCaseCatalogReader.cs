@@ -232,6 +232,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["expected_response"] = Null(model.ExpectedResponse), ["waiting_follow_up_date"] = Null(model.WaitingFollowUpDate),
         ["waiting_escalation_action"] = Null(model.WaitingEscalationAction), ["trial_track"] = model.TrialTrack ? 1L : 0L,
         ["short_posture_summary"] = Null(model.ShortPostureSummary), ["current_issue"] = Null(model.CurrentIssue),
+        ["row_intake_status"] = Null(model.RowIntakeStatus),
         ["deferred_until"] = Null(model.DeferredUntil), ["deferred_reason"] = Null(model.DeferredReason), ["deferred_at"] = Null(model.DeferredAt),
         ["deferred_by"] = Null(model.DeferredBy), ["case_status"] = model.CaseStatus, ["status_mapping_review"] = model.StatusMappingReview ? 1L : 0L,
         ["created_at"] = model.Id == 0 ? now : model.CreatedAt, ["updated_at"] = now
@@ -261,7 +262,10 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
     {
         if (model.Status == "Triage") return "Triage";
         if (model.Status is "Closed" or "Complete" || model.Stage == "Resolved") return "Resolved / Closed";
-        if (model.Status == "Pipeline" || string.IsNullOrWhiteSpace(model.CaseNumber) && !string.IsNullOrWhiteSpace(model.PipelineStage)) return "Pipeline";
+        // A case with no case number that's still being internally processed pre-filing is
+        // "Pipeline" - whether that's the internal holder chain (PipelineStage) or ROW intake
+        // (RowIntakeStatus, which comes earlier - see CaseRecord.RowIntakeStatus's doc comment).
+        if (model.Status == "Pipeline" || string.IsNullOrWhiteSpace(model.CaseNumber) && (!string.IsNullOrWhiteSpace(model.PipelineStage) || !string.IsNullOrWhiteSpace(model.RowIntakeStatus))) return "Pipeline";
         if (model.Stage == "Trial Track") return "Trial Preparation";
         if (model.Stage == "Service") return "Filed / Service Pending";
         return "Active Litigation";
@@ -302,6 +306,7 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
                fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
                settlement_authorized_ceiling,
                COALESCE(originated_in_system, 1),
+               row_intake_status,
                row_version
         FROM cases
         WHERE COALESCE(is_deleted, 0) = 0

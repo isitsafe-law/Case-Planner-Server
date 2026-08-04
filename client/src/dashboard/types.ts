@@ -338,6 +338,60 @@ export const CORE_PRE_FILING_MILESTONE_ORDER: PreFilingMilestone[] = [
   'ChiefCounselSignaturesReceived',
 ]
 
+// ROW intake tracking - mirrors server/CasePlanner.Web.Server/Models/DomainModels.cs's
+// CaseRecord.RowIntakeStatus. A different axis from pipelineStage/currentHolder above (the
+// internal Legal Assistant -> Attorney -> Deputy Chief Counsel -> Chief Counsel review chain):
+// tracks where a tract sits relative to ROW, which happens earlier. The last three values are
+// terminal (the tract is never filed); the rest can cycle (e.g. Returned to ROW -> In Title
+// Review again on resubmission).
+export const ROW_INTAKE_STATUSES = [
+  'Received from ROW',
+  'In Title Review',
+  'Returned to ROW',
+  'Ready for Assignment',
+  'Acquired by Agreement',
+  'Project Revised',
+  'Withdrawn',
+] as const
+
+export type RowIntakeStatus = (typeof ROW_INTAKE_STATUSES)[number]
+
+export const ROW_INTAKE_TERMINAL_STATUSES: RowIntakeStatus[] = [
+  'Acquired by Agreement',
+  'Project Revised',
+  'Withdrawn',
+]
+
+// Mirrors the server's PrefilingReviewEventRecord (Models/DomainModels.cs) field-for-field. Used
+// both for the internal holder-chain review log (event_type in Advance/ReturnForRevision/etc.)
+// and, since this feature, ROW title-review rounds (event_type="TitleReview", with outcome/
+// reviewerDisplay populated and the holder-chain fields left null).
+export type PrefilingReviewEventRecord = {
+  id: number
+  caseId: number
+  eventType: string
+  priorHolder?: string | null
+  newHolder?: string | null
+  priorStage?: string | null
+  newStage?: string | null
+  submittedByHolder?: string | null
+  submittedByDisplay?: string | null
+  recordedByDisplay?: string | null
+  occurredAt: string
+  recordedAt: string
+  note?: string | null
+  overrideReason?: string | null
+  outcome?: string | null
+  reviewerDisplay?: string | null
+}
+
+export type TitleReviewRoundRequest = {
+  outcome: RowIntakeStatus
+  reviewerDisplay: string
+  note?: string
+  occurredAt?: string
+}
+
 const PRE_FILING_MILESTONE_LABELS: Record<PreFilingMilestone, string> = {
   PleadingsPackageSent: 'Pleadings Package Sent',
   ChiefCounselSignaturesReceived: 'Chief Counsel Signatures Received',

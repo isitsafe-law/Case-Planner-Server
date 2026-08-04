@@ -48,4 +48,22 @@ public sealed class AttorneyDashboardComposerTests
         var entry=Assert.Single(result.TrialWatch);
         Assert.Equal(185000m,entry.LastOffer);
     }
+
+    // ROW-intake tracts sent back to ROW or at a terminal outcome drop out of the dashboard's
+    // active set - same exclusion already applied for Closed/Complete/Triage - while still being
+    // fully queryable elsewhere (the general case list, direct search).
+    [Fact]
+    public void Compose_ExcludesRowIntakeInactiveTracts_ButKeepsLiveRoundsOnTheDesk()
+    {
+        var cases=new[]
+        {
+            new CaseRecord{Id=1,CaseName="In Title Review Tract",Status="Active",CaseStatus="Pipeline",MatterType="PreFilingTract",CurrentHolder="Attorney",RowIntakeStatus="In Title Review"},
+            new CaseRecord{Id=2,CaseName="Returned To ROW Tract",Status="Active",CaseStatus="Pipeline",MatterType="PreFilingTract",CurrentHolder="Attorney",RowIntakeStatus="Returned to ROW"},
+            new CaseRecord{Id=3,CaseName="Acquired Tract",Status="Active",CaseStatus="Pipeline",MatterType="PreFilingTract",CurrentHolder="Attorney",RowIntakeStatus="Acquired by Agreement"},
+        };
+        var result=AttorneyDashboardComposer.Compose(cases,[],[],[],new(),new DateOnly(2026,7,16));
+        Assert.Equal(1,result.SummaryCounts.OnMyDesk);
+        var row=Assert.Single(result.FilingPipeline.AllPipeline);
+        Assert.Equal(1,row.CaseId);
+    }
 }

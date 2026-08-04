@@ -176,6 +176,19 @@ public sealed class CaseRecord
     // Pre-filing tract's current blocking issue (spec's "CurrentIssue" pipeline field) - a short
     // display string, distinct from the free-form case_notes thread.
     public string? CurrentIssue { get; set; }
+    // ROW intake tracking: "Received from ROW" | "In Title Review" | "Returned to ROW" |
+    // "Ready for Assignment" | "Acquired by Agreement" | "Project Revised" | "Withdrawn". A
+    // different axis from CurrentHolder/PipelineStage above (who currently holds the file in the
+    // internal Legal Assistant -> Attorney -> Deputy Chief Counsel -> Chief Counsel review chain) -
+    // this tracks where a tract sits relative to ROW, which happens earlier: before a tract is even
+    // assigned to an attorney for that internal review, it's still with ROW/the title attorney.
+    // Null for any case that was never tracked through ROW intake. The last three values are
+    // terminal (the tract is never filed); the rest can cycle (e.g. Returned to ROW -> In Title
+    // Review again on resubmission) - each round is its own case_prefiling_review_events row
+    // (event_type="TitleReview"), not just this current-state snapshot. Deliberately a separate
+    // field from CaseStatus (which stays "Pipeline" the whole pre-filing lifecycle - see
+    // WorkflowStatusRules) and from DispositionType (litigation-outcome-scoped, not reused here).
+    public string? RowIntakeStatus { get; set; }
     // Transient: optional reason captured on save when a manager overrides
     // PipelinePromotionGate.EnsureFilingReady's Director-signature-milestone requirement so the
     // case can leave Pipeline status anyway. Never persisted to the cases row itself - read once
@@ -738,6 +751,13 @@ public sealed class PrefilingReviewEventRecord
     public string RecordedAt { get; set; } = "";
     public string? Note { get; set; }
     public string? OverrideReason { get; set; }
+    // TitleReview rounds only (see RowIntakeStatus's doc comment on CaseRecord). Outcome is the
+    // RowIntakeStatus value this round transitions the case to. ReviewerDisplay is the title
+    // reviewer for this round specifically - distinct from RecordedByDisplay (the acting user
+    // entering the round, which may not be the reviewer) - same "who acted vs. whose approval it
+    // represents" split as PreFilingMilestoneRecord's OnBehalfOfDisplay.
+    public string? Outcome { get; set; }
+    public string? ReviewerDisplay { get; set; }
 }
 
 public sealed class PrefilingReviewActionRequest
@@ -747,6 +767,19 @@ public sealed class PrefilingReviewActionRequest
     public string? Note { get; set; }
     public string? OccurredAt { get; set; }
     public string? OverrideReason { get; set; }
+}
+
+// Records one ROW title-review round (case_prefiling_review_events, event_type="TitleReview") and
+// transitions the case's RowIntakeStatus to Outcome. A separate action space from
+// PrefilingReviewActionRequest's internal holder-chain actions above - ROW rounds don't move
+// current_holder/pipeline_stage. ReviewerDisplay must be supplied every round (not inferred from
+// the acting user/session) per the product decision that the title reviewer is prompted each time.
+public sealed class TitleReviewRoundRequest
+{
+    public string Outcome { get; set; } = "";
+    public string ReviewerDisplay { get; set; } = "";
+    public string? Note { get; set; }
+    public string? OccurredAt { get; set; }
 }
 
 public class PrefilingReviewSettings

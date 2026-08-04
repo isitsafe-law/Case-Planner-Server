@@ -115,13 +115,17 @@ internal static class CaseRecordDataMapper
             // unmapped column (the Settlement Authority workflow that wrote it was removed) - left
             // in place in the SELECT/schema rather than renumbering every later ordinal below.
             // Pre-filing sign-off/Settlement Authority final implementation, item 4 - appended after
-            // settlement_authorized_ceiling, same FieldCount-guard pattern as every block above;
-            // row_version (SQL Server only) shifted from ordinal 90 to 91 to make room. Missing
-            // column (older queries not yet updated) defaults to true - "originated in system" is
-            // the correct assumption for any case a caller doesn't explicitly know is imported.
+            // settlement_authorized_ceiling, same FieldCount-guard pattern as every block above.
+            // Missing column (older queries not yet updated) defaults to true - "originated in
+            // system" is the correct assumption for any case a caller doesn't explicitly know is
+            // imported.
             OriginatedInSystem = reader.FieldCount <= 90 || Bool(reader, 90),
-            RowVersion = reader.FieldCount > 91 && !reader.IsDBNull(91)
-                ? Convert.ToBase64String((byte[])reader.GetValue(91))
+            // ROW intake tracking (see CaseRecord.RowIntakeStatus) - present on both providers, so
+            // it gets a shared ordinal (91) unlike RowVersion below, which is SQL Server-only and
+            // shifted from ordinal 91 to 92 to make room for this column ahead of it.
+            RowIntakeStatus = reader.FieldCount > 91 ? String(reader, 91) : null,
+            RowVersion = reader.FieldCount > 92 && !reader.IsDBNull(92)
+                ? Convert.ToBase64String((byte[])reader.GetValue(92))
                 : null
         };
     }

@@ -17,7 +17,7 @@ public static class AttorneyDashboardComposer
         // Database collations differ (SQLite binary ordering versus SQL Server's configured
         // collation), so establish a provider-neutral order before building UI sections.
         var allCases=caseSource.OrderBy(c=>c.CaseName,StringComparer.OrdinalIgnoreCase).ThenBy(c=>c.Id).ToList();
-        var active=allCases.Where(c=>c.Status is not("Closed" or "Complete" or "Triage")).ToList();
+        var active=allCases.Where(c=>c.Status is not("Closed" or "Complete" or "Triage")&&!WorkflowStatusRules.IsRowIntakeInactive(c.RowIntakeStatus)).ToList();
         var triageCount=allCases.Count(c=>c.Status=="Triage");
         var deadlineGroups=deadlineSource.Where(d=>d.Status is not("Done" or "Complete"))
             .GroupBy(d=>d.CaseId).ToDictionary(g=>g.Key,g=>(IReadOnlyList<DeadlineItem>)g.ToList());

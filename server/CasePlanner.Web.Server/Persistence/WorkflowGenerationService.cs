@@ -167,7 +167,7 @@ public sealed class SqlServerWorkflowGenerationService(
 
     private async Task<CaseWorkspaceResponse> RequiredWorkspace(long caseId,CancellationToken token)=>
         await workspaces.GetWorkspaceAsync(caseId,null,token)??throw new InvalidOperationException("Case not found.");
-    private static bool IsPreWorkflow(CaseRecord c)=>c.Status is "Triage" or "Pipeline"||c.CaseStatus is "Triage" or "Pipeline";
+    private static bool IsPreWorkflow(CaseRecord c)=>WorkflowStatusRules.IsPreFiling(c.Status,c.CaseStatus);
     private static DateOnly? Date(string? value)=>DateOnly.TryParse(value,out var date)?date:null;
     private string Now()=>DateTime.UtcNow.ToString("O");
     private ChecklistItemRecord NewTask(long caseId,WorkTemplateCandidate c,string? due)=>new(){CaseId=caseId,Phase=c.Stage,Task=c.Title,DueDate=due,Status="Not Started",SourceType=$"Template:{c.TemplateId}",SourceKind="StageTemplate",SourceTemplateId=c.TemplateId,SourceTemplateVersion=c.TemplateVersion,SourceStage=c.Stage,GeneratedAt=Now(),GeneratedBy=actor.AuditLabel,IsManual=false};

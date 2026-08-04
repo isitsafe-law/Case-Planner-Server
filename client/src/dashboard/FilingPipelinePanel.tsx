@@ -1,6 +1,8 @@
 import type { FilingPipelineView } from './types'
 import { EmptyState } from './EmptyState'
 import { HOLDER_STEPS, OTHER_HOLDER, holderStepIndex } from '../ui/HolderPipelineStepper'
+import { StatusChip } from '../ui/StatusChip'
+import { Btn } from '../ui/Btn'
 
 export type HolderDistributionEntry = { holder: string; count: number }
 
@@ -64,20 +66,20 @@ export function FilingPipelinePanel({
       <div className="pipeline-watch-list">
       {rows.map((row) => {
         const days = daysWithHolder(row.dateSentToCurrentHolder)
-        const priorityTone = row.priority === 'Rushed' ? 'pill-danger' : row.priority === 'Priority' ? 'pill-warn' : null
+        const priorityTone = row.priority === 'Rushed' ? 'danger' : row.priority === 'Priority' ? 'warn' : null
         return (
           <article key={row.caseId} className="pipeline-watch-card" onClick={() => onOpenCase(row.caseId)}>
             <div className="pipeline-watch-card-header">
               <div><strong>{row.tractOrOwnerName}</strong></div>
-              {priorityTone && <span className={`pill ${priorityTone}`}>{row.priority}</span>}
+              {priorityTone && <StatusChip tone={priorityTone}>{row.priority}</StatusChip>}
             </div>
             <div className="pipeline-watch-primary">
               <div><span>Current holder</span><strong>{row.currentHolder || 'Unassigned'}</strong></div>
               <div><span>Days with holder</span><strong>{days ?? '—'}</strong></div>
             </div>
             <div className="button-row">
-              <button onClick={(event) => { event.stopPropagation(); onOpenCase(row.caseId) }}>Open Case</button>
-              <button onClick={(event) => { event.stopPropagation(); onHandoff(row.caseId) }}>Hand off</button>
+              <Btn size="sm" onClick={(event) => { event.stopPropagation(); onOpenCase(row.caseId) }}>Open Case</Btn>
+              <Btn size="sm" onClick={(event) => { event.stopPropagation(); onHandoff(row.caseId) }}>Hand off</Btn>
             </div>
           </article>
         )

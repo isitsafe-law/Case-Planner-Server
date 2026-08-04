@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import type { TrialWatchEntry } from './types'
 import { EmptyState } from './EmptyState'
 import { formatDate } from '../ui/format'
+import { StatusChip } from '../ui/StatusChip'
+import { Btn } from '../ui/Btn'
 
 type TrialHorizon = 90 | 180 | 365 | 'all'
 
@@ -41,10 +43,10 @@ export function TrialWatchTable({ entries, onOpenCase }: { entries: TrialWatchEn
             const days = trial.daysUntilTrial
             const warning = days !== null && days <= 30 ? 'Immediate attention' : days !== null && days <= 90 ? 'Coming up' : 'Scheduled'
             return <article key={trial.caseId} className="trial-watch-card" onClick={() => onOpenCase(trial.caseId)}>
-              <div className="trial-watch-card-header"><div><strong>{trial.caseName}</strong>{trial.caseNumber && <span className="subtle-text"> - {trial.caseNumber}</span>}</div><span className={`pill ${days !== null && days <= 30 ? 'pill-warn' : 'pill-neutral'}`}>{warning}</span></div>
+              <div className="trial-watch-card-header"><div><strong>{trial.caseName}</strong>{trial.caseNumber && <span className="subtle-text"> - {trial.caseNumber}</span>}</div><StatusChip tone={days !== null && days <= 30 ? 'warn' : 'neutral'}>{warning}</StatusChip></div>
               <div className="trial-watch-primary"><div><span>Trial date</span><strong>{formatDate(trial.trialDate)}</strong></div><div><span>Days until trial</span><strong>{days ?? '-'}</strong></div><div><span>Current status</span><strong>{trial.discoveryStatus || 'Trial preparation'}</strong></div></div>
               <div className="trial-watch-next"><span>Next required action</span><strong>{trial.nextTrialDecision || 'Review trial preparation plan'}</strong></div>
-              <button onClick={(event) => { event.stopPropagation(); onOpenCase(trial.caseId) }}>Open Case</button>
+              <Btn size="sm" onClick={(event) => { event.stopPropagation(); onOpenCase(trial.caseId) }}>Open Case</Btn>
             </article>
           })}
           {ordered.length > visible.length && <button className="link-button" onClick={() => setShowAll(true)}>Show {ordered.length - visible.length} more trials</button>}

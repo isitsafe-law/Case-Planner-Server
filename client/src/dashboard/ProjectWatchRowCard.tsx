@@ -1,5 +1,6 @@
 import type { ProjectWatchRow } from './types'
 import { formatDate } from '../ui/format'
+import { StatusChip } from '../ui/StatusChip'
 
 // Named ProjectWatchRowCard (not ProjectWatchRow) to avoid colliding with the ProjectWatchRow
 // *type* in ./types - same component the dashboard brief calls "ProjectWatchRow".
@@ -16,7 +17,7 @@ export function ProjectWatchRowCard({ project }: { project: ProjectWatchRow }) {
         <span>{project.filedCount} filed</span>
         <span>{project.resolvedCount} resolved</span>
         <span>{project.onAttorneyDeskCount} on desk</span>
-        {project.stalledCount > 0 && <span className="pill pill-warn">{project.stalledCount} stalled</span>}
+        {project.stalledCount > 0 && <StatusChip tone="warn">{project.stalledCount} stalled</StatusChip>}
         {project.earliestTrialDate && <span>Earliest trial {formatDate(project.earliestTrialDate)}</span>}
       </div>
       {project.sharedIssue && (

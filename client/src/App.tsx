@@ -2347,8 +2347,11 @@ function App() {
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
   const [attorneyDashboardFilters, setAttorneyDashboardFilters] = useState<AttorneyDashboardFilters>({})
-  // Default = the two highest-priority tiles (Immediate + Attorney decision) so the queue starts focused.
-  const [activeQueueTiles, setActiveQueueTiles] = useState<Set<number>>(() => new Set([1, 2]))
+  // All four priority levels start active - a silently-filtered default queue can read as "all
+  // clear" when it isn't, the worst failure mode for deadline-tracking software (critique P0,
+  // 2026-08-04). Levels 1/2 only had toggle affordances in the visible KPI strip anyway, so a
+  // narrower default couldn't have been un-hidden by the user without already knowing to look.
+  const [activeQueueTiles, setActiveQueueTiles] = useState<Set<number>>(() => new Set([1, 2, 3, 4]))
   const [handoffTarget, setHandoffTarget] = useState<{ caseId: number; caseName: string } | null>(null)
   const [selectedActionQueueIds, setSelectedActionQueueIds] = useState<number[]>([])
   const [bulkDeferOpen, setBulkDeferOpen] = useState(false)
@@ -10864,7 +10867,7 @@ function App() {
             <>
               <div className="ui-tiles dashboard-kpi-strip" style={{ marginBottom: '1rem' }}>
                 <MetricTile label="Immediate" value={dashboardOverdueItems.length + dashboardUpcomingWorkItems.filter((item) => item.dueDate === new Date().toISOString().slice(0, 10)).length} tone="danger" hint="Overdue or due today" onClick={() => { setWorkQueueUrgency('Immediate'); setWorkQueueFilter('all'); setWorkQueueSearch(''); setPage('queues') }} />
-                <MetricTile label="Attorney decision" value={priorityQueueCounts[2] ?? 0} tone="warn" hint="Cases requiring your decision" active={activeQueueTiles.has(2)} onClick={() => toggleQueueTile(2)} />
+                <MetricTile label="Attorney decision" value={priorityQueueCounts[2] ?? 0} tone="warn" hint="Cases requiring your decision" />
                 <MetricTile label="Upcoming work" value={dashboardUpcomingWorkItems8To30.length} hint="Open work due in 8–30 days" onClick={openUpcomingWork} />
                 <MetricTile label="Jury trials" value={dashboardPlanningSummary.juryTrials} hint="Within 180 days" onClick={openDashboardJuryTrials} />
                 {attorneyDashboard.triageCaseCount > 0 && <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />}
@@ -10899,11 +10902,23 @@ function App() {
                 <div className="ui-table-panel dashboard-action-queue-card">
                   <div className="panel-hd">
                     <h3>Action Queue</h3>
-                    <span className="count">
-                      {filteredActionQueue.length} item{filteredActionQueue.length === 1 ? '' : 's'}
-                      {activeQueueTiles.size > 0 && activeQueueTiles.size < PRIORITY_TILES.length && ` · filtered: ${PRIORITY_TILES.filter((tile) => activeQueueTiles.has(tile.level)).map((tile) => tile.label).join(', ')}`}
-                    </span>
+                    <span className="count">{filteredActionQueue.length} item{filteredActionQueue.length === 1 ? '' : 's'}</span>
                   </div>
+                  {/* Real per-level toggles, one per PRIORITY_TILES entry - replaces the old single
+                      "Attorney decision" tile as the only togglable level, with "click tiles above
+                      to include" pointing at tiles (Immediate, Upcoming work, Jury trials) that
+                      never filtered anything. Deactivating every chip falls back to the unfiltered
+                      queue (see filteredActionQueue's useMemo) rather than showing an empty table -
+                      deliberate, not a bug. */}
+                  <FilterBar>
+                    {PRIORITY_TILES.map((tile) => (
+                      <FilterChip key={tile.level} active={activeQueueTiles.has(tile.level)} onClick={() => toggleQueueTile(tile.level)}>
+                        {tile.label}
+                      </FilterChip>
+                    ))}
+                    <FilterSep />
+                    <FilterSummary>{activeQueueTiles.size} of {PRIORITY_TILES.length} shown</FilterSummary>
+                  </FilterBar>
                   {queueHearings.filter((event) => pendingEventChangeIds.has(event.id)).length > 0 && <div className="pending-approval-strip">
                     <strong>Pending event-date approvals</strong>
                     {queueHearings.filter((event) => pendingEventChangeIds.has(event.id)).slice(0, 4).map((event) => <button key={event.id} className="text-button" onClick={() => openCase(event.caseId, 'events')}>
@@ -10951,11 +10966,6 @@ function App() {
                       )}
                       {selectedActionQueueIds.length > 0 && (
                         <Btn size="sm" onClick={() => { applyBulkDeferPreset('7'); setBulkDeferOpen(true) }}>Defer selected…</Btn>
-                      )}
-                      {activeQueueTiles.size > 0 && activeQueueTiles.size < PRIORITY_TILES.length && (
-                        <span className="ui-cell-faint" style={{ marginLeft: 'auto', fontSize: '.78rem' }}>
-                          {PRIORITY_TILES.filter((tile) => !activeQueueTiles.has(tile.level)).map((tile) => tile.label).join(' & ')} hidden — click tiles above to include
-                        </span>
                       )}
                     </div>
                   )}

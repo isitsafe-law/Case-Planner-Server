@@ -216,6 +216,10 @@ type ChecklistItem = {
   // the case's Assigned Attorney and Legal Assistants (assignableStaffNames below) - the dual-
   // provider field that actually works locally, unlike assignedUserId above.
   assignedStaffName?: string | null
+  // Legal Assistant view, phase 2: "Attorney" | "LegalAssistant" | "Either" (default) - which role
+  // this task is naturally for, distinct from assignedStaffName (who specifically owns it). Filters
+  // which dashboard's queue shows a task.
+  ownerRole?: string
 }
 
 // Multi-user rollout Phase 4a (notifications core). Empty items/zero unread when there's no
@@ -1819,7 +1823,7 @@ const deadlineSeverities = ['normal', 'soft', 'urgent', 'critical']
 // defaultAssignedStaffNameForCase's callers) - purely a default for a fresh draft, never applied
 // retroactively to an existing task.
 function emptyChecklist(caseId = 0, assignedStaffName: string | null = null): ChecklistItem {
-  return { id: 0, caseId, phase: 'General', task: '', dueDate: '', status: 'Not Started', notes: '', sourceType: 'Manual', isManual: true, assignedStaffName }
+  return { id: 0, caseId, phase: 'General', task: '', dueDate: '', status: 'Not Started', notes: '', sourceType: 'Manual', isManual: true, assignedStaffName, ownerRole: 'Either' }
 }
 
 function emptyDiscovery(caseId = 0): DiscoveryItem {
@@ -10055,6 +10059,14 @@ function App() {
                       {options.map((name) => <option key={name} value={name}>{name}</option>)}
                     </>
                   })()}
+                </select>
+              </label>
+              <label>
+                <span>Shows on</span>
+                <select value={checklistDraft.ownerRole || 'Either'} onChange={(event) => patchChecklistDraft({ ownerRole: event.target.value })}>
+                  <option value="Either">Attorney and Assistant dashboards</option>
+                  <option value="Attorney">Attorney dashboard only</option>
+                  <option value="LegalAssistant">Assistant dashboard only</option>
                 </select>
               </label>
               <label className="full-span"><span>Notes</span><textarea value={checklistDraft.notes || ''} onChange={(event) => patchChecklistDraft({ notes: event.target.value })} placeholder="Checklist notes" /></label>

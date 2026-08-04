@@ -1645,7 +1645,8 @@ public sealed partial class CasePlannerRepository
         var cmd = connection.CreateCommand();
         cmd.CommandText = """
             SELECT id, case_id, related_event_id, phase, task, due_date, status, notes, source_type, is_manual, completed_at,
-                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name
+                   source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name,
+                   owner_role
             FROM checklist_items
             WHERE (@caseId IS NULL OR case_id = @caseId)
             ORDER BY phase, task
@@ -1674,7 +1675,8 @@ public sealed partial class CasePlannerRepository
                 GeneratedAt = reader.IsDBNull(15) ? null : reader.GetString(15),
                 GeneratedBy = reader.IsDBNull(16) ? null : reader.GetString(16),
                 AssignedUserId = reader.IsDBNull(17) ? null : reader.GetString(17),
-                AssignedStaffName = reader.IsDBNull(18) ? null : reader.GetString(18)
+                AssignedStaffName = reader.IsDBNull(18) ? null : reader.GetString(18),
+                OwnerRole = reader.FieldCount > 19 && !reader.IsDBNull(19) ? reader.GetString(19) : "Either",
             });
         }
 
@@ -1719,9 +1721,9 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     INSERT INTO checklist_items (case_id, related_event_id, phase, task, due_date, status, notes, source_type, is_manual, created_at, updated_at, completed_at,
-                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name)
+                        source_kind, source_template_id, source_template_version, source_stage, generated_at, generated_by, assigned_user_id, assigned_staff_name, owner_role)
                     VALUES (@case_id, @related_event_id, @phase, @task, @due_date, @status, @notes, @source_type, @is_manual, @created_at, @updated_at, @completed_at,
-                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id,@assigned_staff_name);
+                        @source_kind,@source_template_id,@source_template_version,@source_stage,@generated_at,@generated_by,@assigned_user_id,@assigned_staff_name,@owner_role);
                     SELECT last_insert_rowid();
                     """;
             }
@@ -1729,7 +1731,7 @@ public sealed partial class CasePlannerRepository
             {
                 cmd.CommandText = """
                     UPDATE checklist_items
-                    SET related_event_id=@related_event_id, phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id, assigned_staff_name=@assigned_staff_name
+                    SET related_event_id=@related_event_id, phase=@phase, task=@task, due_date=@due_date, status=@status, notes=@notes, updated_at=@updated_at, completed_at=@completed_at, assigned_user_id=@assigned_user_id, assigned_staff_name=@assigned_staff_name, owner_role=@owner_role
                     WHERE id=@id;
                     SELECT @id;
                     """;
@@ -1756,6 +1758,7 @@ public sealed partial class CasePlannerRepository
             cmd.Parameters.AddWithValue("@generated_by", DbValue(model.GeneratedBy));
             cmd.Parameters.AddWithValue("@assigned_user_id", DbValue(model.AssignedUserId));
             cmd.Parameters.AddWithValue("@assigned_staff_name", DbValue(model.AssignedStaffName));
+            cmd.Parameters.AddWithValue("@owner_role", string.IsNullOrWhiteSpace(model.OwnerRole) ? "Either" : model.OwnerRole.Trim());
             model.Id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
             model.CompletedAt = completedAt;
 
@@ -6569,6 +6572,13 @@ public sealed partial class CasePlannerRepository
         // alongside, not instead of, assigned_user_id above, which remains completely untouched.
         await AddColumnIfMissingAsync(connection, "checklist_items", "assigned_staff_name", "TEXT");
         await AddColumnIfMissingAsync(connection, "deadlines", "assigned_staff_name", "TEXT");
+        // Legal Assistant view, phase 2: "Attorney" | "LegalAssistant" | "Either" (default) - which
+        // role this task is naturally for, distinct from assigned_staff_name (who among possibly-
+        // several people of that role currently owns it). Filters which dashboard's queue shows a
+        // task; every existing row defaults to "Either" so nothing already on either dashboard
+        // disappears - classifying specific tasks/templates more precisely is a deliberate later
+        // pass, not guessed here from task text.
+        await AddColumnIfMissingAsync(connection, "checklist_items", "owner_role", "TEXT DEFAULT 'Either'");
         // Multi-user rollout Phase 3 (shared witness registry): links a per-case witness row to
         // the new global witness_persons identity. Nullable so pre-existing rows (and the
         // one-time migration that backfills them) can be told apart from never-linked ones.

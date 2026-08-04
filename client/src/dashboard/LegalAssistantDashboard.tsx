@@ -23,6 +23,11 @@ type AssistantWork = {
   dueDate?: string | null
   status?: string | null
   assignedStaffName?: string | null
+  // Legal Assistant view, phase 2: "Attorney" | "LegalAssistant" | "Either" (default) - a task
+  // classified Attorney-only is excluded from this dashboard's queues below (see visibleWork).
+  // Deadlines don't carry this field (only checklist items do), so it's undefined for those - the
+  // filter treats undefined the same as "Either".
+  ownerRole?: string
 }
 
 type AssistantEvent = {
@@ -60,7 +65,7 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const supportedCaseIds = new Set(scopedCases.map((item) => item.id))
-  const visibleWork = work.filter((item) => supportedCaseIds.has(item.caseId) && openStatus(item.status))
+  const visibleWork = work.filter((item) => supportedCaseIds.has(item.caseId) && openStatus(item.status) && item.ownerRole !== 'Attorney')
   const onDesk = visibleWork.filter((item) => !item.assignedStaffName || item.assignedStaffName === assistantName)
   const overdue = visibleWork.filter((item) => { const due = dateValue(item.dueDate); return due && due < today })
   const waitingAttorney = scopedCases.filter((item) => item.caseStatus === 'Pipeline' && ['Attorney', 'Deputy Chief Counsel', 'Chief Counsel'].includes(item.currentHolder || ''))

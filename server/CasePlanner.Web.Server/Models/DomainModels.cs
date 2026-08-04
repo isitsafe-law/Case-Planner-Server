@@ -340,6 +340,12 @@ public sealed class ChecklistItemRecord
     // Attorney plus its Legal Assistants); AssignedUserId above stays fully dormant, reserved for
     // a future real Entra deployment, and is intentionally left untouched by this field.
     public string? AssignedStaffName { get; set; }
+    // Legal Assistant view, phase 2: which role this task is naturally for - "Attorney" |
+    // "LegalAssistant" | "Either" (default). Distinct from AssignedStaffName above: this classifies
+    // the KIND of task (used to filter which dashboard's queue shows it at all), not WHO among
+    // possibly-several people of that role currently owns it. One shared task list serves both
+    // dashboards through this filter rather than a second checklist system.
+    public string OwnerRole { get; set; } = "Either";
     // Transient marker used by event-date recalculation so a system move does not become a
     // manual override. Ordinary edits that change a generated due date set IsManual instead.
     public bool IsDateRecalculation { get; set; }

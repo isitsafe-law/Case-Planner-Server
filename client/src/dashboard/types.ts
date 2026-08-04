@@ -52,6 +52,11 @@ export type ActionQueueItem = {
   currentHolder: string | null
   matterType: MatterType
   relatedDeadlineId?: number | null
+  // Set only for a synthetic entry sourced from an open reminder thread (Legal Assistant Dashboard
+  // audit Phase 4) - see ReminderRequestRecord below. Lets the client render a Resolve action
+  // instead of the usual case-action controls.
+  reminderRequestId?: number | null
+  reminderRelatedEventId?: number | null
 }
 
 export type DiscoveryControlCaseRef = {
@@ -390,6 +395,43 @@ export type TitleReviewRoundRequest = {
   reviewerDisplay: string
   note?: string
   occurredAt?: string
+}
+
+// Legal Assistant Dashboard audit Phase 4 ("Attorney reminder design" - docs/legal-assistant-dashboard-audit.md).
+// Mirrors server/CasePlanner.Web.Server/Models/DomainModels.cs's ReminderRequestRecord field-for-field.
+// One append-only thread per (caseId, relatedEventId) - relatedEventId is null for a general
+// case-level reminder, set when raised from a specific proceeding's preparation page. The latest
+// row for a thread is its current state; repeated reminders on an open thread append a FollowUp
+// row rather than starting a second thread. No email is ever sent by this feature.
+export type ReminderRequestRecord = {
+  id: number
+  caseId: number
+  relatedEventId?: number | null
+  eventType: string
+  requestedAction?: string | null
+  targetAttorneyDisplay?: string | null
+  requestedByDisplay?: string | null
+  requestedByRole?: string | null
+  requestedCompletionDate?: string | null
+  followUpDate?: string | null
+  comment?: string | null
+  status: string
+  occurredAt: string
+  recordedAt: string
+}
+
+export type RequestAttorneyReminderRequest = {
+  relatedEventId?: number | null
+  requestedAction?: string
+  targetAttorneyDisplay?: string
+  requestedCompletionDate?: string
+  followUpDate?: string
+  comment?: string
+}
+
+export type ResolveReminderRequest = {
+  relatedEventId?: number | null
+  comment?: string
 }
 
 const PRE_FILING_MILESTONE_LABELS: Record<PreFilingMilestone, string> = {

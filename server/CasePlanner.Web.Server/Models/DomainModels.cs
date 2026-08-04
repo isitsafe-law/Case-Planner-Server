@@ -796,6 +796,51 @@ public sealed class SavePrefilingReviewSettingsRequest : PrefilingReviewSettings
 {
 }
 
+// Legal Assistant Dashboard audit, Phase 4 ("Attorney reminder design" - docs/legal-assistant-dashboard-audit.md):
+// a durable, append-only replacement for the case-level waiting_* fields previously (mis)used by the Event
+// Preparation page's Remind Attorney action. One "thread" per (CaseId, RelatedEventId) - RelatedEventId is
+// null for a general case-level reminder, non-null when raised from a specific proceeding's preparation page,
+// same nullable-association convention as ChecklistItemRecord/DeadlineItem.RelatedEventId. Each row is an
+// append-only event on that thread (EventType: Requested | FollowUp | Resolved); the latest row for a thread
+// is its current state. Repeated reminders on an still-open thread append a FollowUp row rather than opening a
+// second thread, so the attorney's Action Queue never shows duplicate entries for the same ask - see
+// RequestOrFollowUpAttorneyReminderAsync. TargetAttorneyDisplay/RequestedByDisplay are the same
+// "who this is for" vs "who acted" split used elsewhere (PreFilingMilestoneRecord.OnBehalfOfDisplay). No
+// email is ever sent by this feature - the UI must say "follow-up recorded," never "email sent."
+public sealed class ReminderRequestRecord
+{
+    public long Id { get; set; }
+    public long CaseId { get; set; }
+    public long? RelatedEventId { get; set; }
+    public string EventType { get; set; } = "Requested";
+    public string? RequestedAction { get; set; }
+    public string? TargetAttorneyDisplay { get; set; }
+    public string? RequestedByDisplay { get; set; }
+    public string? RequestedByRole { get; set; }
+    public string? RequestedCompletionDate { get; set; }
+    public string? FollowUpDate { get; set; }
+    public string? Comment { get; set; }
+    public string Status { get; set; } = "Open";
+    public string OccurredAt { get; set; } = "";
+    public string RecordedAt { get; set; } = "";
+}
+
+public sealed class RequestAttorneyReminderRequest
+{
+    public long? RelatedEventId { get; set; }
+    public string? RequestedAction { get; set; }
+    public string? TargetAttorneyDisplay { get; set; }
+    public string? RequestedCompletionDate { get; set; }
+    public string? FollowUpDate { get; set; }
+    public string? Comment { get; set; }
+}
+
+public sealed class ResolveReminderRequest
+{
+    public long? RelatedEventId { get; set; }
+    public string? Comment { get; set; }
+}
+
 public class DashboardActionabilityPolicy
 {
     public int DiscoveryCutoffLookaheadDays { get; set; } = 45;
@@ -1121,6 +1166,13 @@ public sealed class ActionQueueItem
     public string? CurrentHolder { get; set; }
     public string MatterType { get; set; } = "FiledCase";
     public long? RelatedDeadlineId { get; set; }
+    // Set only for a synthetic entry sourced from an open ReminderRequestRecord thread (Legal
+    // Assistant Dashboard audit Phase 4) rather than computed by AttorneyDashboardEngine - lets the
+    // client render a Resolve action instead of the usual case-action controls. RelatedEventId
+    // identifies which (CaseId, RelatedEventId) thread to resolve - a reminder raised from an event
+    // preparation page must be resolved on that same thread, not the general case-level one.
+    public long? ReminderRequestId { get; set; }
+    public long? ReminderRelatedEventId { get; set; }
 }
 
 public sealed class DiscoveryControlSummary

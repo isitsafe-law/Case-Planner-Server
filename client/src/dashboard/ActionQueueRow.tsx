@@ -26,6 +26,8 @@ export type ActionQueueHandlers = {
   onAddNote: (caseId: number, note: string) => Promise<void>
   onDefer: (caseId: number, reason: string, futureReviewDate: string) => Promise<void>
   onAssignHolder: (caseId: number, holder: string) => Promise<void>
+  /** Legal Assistant Dashboard audit Phase 4: resolves the reminder thread behind a reminder-sourced row. */
+  onResolveReminder?: (caseId: number, relatedEventId: number | null) => Promise<void>
 }
 
 const PRIORITY_STRIPE: Record<number, string> = { 1: 'p1', 2: 'p2', 3: 'p3', 4: 'p4' }
@@ -108,6 +110,9 @@ export function ActionQueueRow({
           )}
           <div className="ui-row-actions ui-row-actions-wrap">
             <Btn size="sm" onClick={() => handlers.onOpenCase(item.caseId)}>Open case</Btn>
+            {item.reminderRequestId != null && handlers.onResolveReminder && (
+              <Btn size="sm" disabled={busy} onClick={() => void run(() => handlers.onResolveReminder!(item.caseId, item.reminderRelatedEventId ?? null))}>Resolve reminder</Btn>
+            )}
             {item.relatedDeadlineId != null && handlers.onCompleteDeadline && item.reason.toLowerCase().includes('deadline') && (
               <Btn size="sm" onClick={() => void run(() => handlers.onCompleteDeadline!(item.caseId, item.relatedDeadlineId!))}>Mark complete</Btn>
             )}

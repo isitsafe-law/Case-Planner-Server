@@ -66,4 +66,39 @@ public sealed class AttorneyDashboardComposerTests
         var row=Assert.Single(result.FilingPipeline.AllPipeline);
         Assert.Equal(1,row.CaseId);
     }
+
+    // Legal Assistant Dashboard audit Phase 4: an open reminder thread surfaces as its own Action
+    // Queue entry - "reused only as the destination/projection" per the audit, not a second UI.
+    [Fact]
+    public void Compose_SurfacesOpenReminder_AsActionQueueItem_WithReminderRequestId()
+    {
+        var cases=new[]
+        {
+            new CaseRecord{Id=1,CaseName="Reminder Case",Status="Active",CaseStatus="Active Litigation",MatterType="FiledCase",LastMeaningfulActivityDate="2026-07-01"},
+        };
+        var openReminders=new[]
+        {
+            new ReminderRequestRecord{Id=99,CaseId=1,EventType="Requested",RequestedAction="Review discovery responses",FollowUpDate="2026-07-10",Status="Open"},
+        };
+        var result=AttorneyDashboardComposer.Compose(cases,[],[],[],new(),new DateOnly(2026,7,16),openReminders: openReminders);
+        var reminderItem=Assert.Single(result.ActionQueue,a=>a.ReminderRequestId==99);
+        Assert.Equal("Act",reminderItem.ActionCategory);
+        Assert.Contains("Review discovery responses",reminderItem.Reason);
+        Assert.Equal(1,reminderItem.PriorityLevel); // overdue follow-up date -> Immediate
+    }
+
+    [Fact]
+    public void Compose_OpenReminderForClosedCase_DoesNotAppearInActionQueue()
+    {
+        var cases=new[]
+        {
+            new CaseRecord{Id=1,CaseName="Closed Case",Status="Closed",CaseStatus="Resolved / Closed",MatterType="FiledCase"},
+        };
+        var openReminders=new[]
+        {
+            new ReminderRequestRecord{Id=1,CaseId=1,EventType="Requested",RequestedAction="Stale ask",Status="Open"},
+        };
+        var result=AttorneyDashboardComposer.Compose(cases,[],[],[],new(),new DateOnly(2026,7,16),openReminders: openReminders);
+        Assert.DoesNotContain(result.ActionQueue,a=>a.ReminderRequestId==1);
+    }
 }

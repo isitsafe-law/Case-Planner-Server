@@ -786,7 +786,8 @@ public sealed partial class CasePlannerRepository
             var dashboardPostures=(await GetDiscoveryPosturesAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
             var actionabilityPolicy = await GetDashboardActionabilityPolicyAsync();
             var lastOffersByCase = await GetLatestOfferAmountsByCaseAsync();
-            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters,policy: actionabilityPolicy,lastOffersByCase: lastOffersByCase);
+            var openReminders = (await GetOpenAttorneyRemindersAsync()).Where(r=>IsAllowed(r.CaseId)).ToList();
+            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters,policy: actionabilityPolicy,lastOffersByCase: lastOffersByCase,openReminders: openReminders);
         }
 #pragma warning disable CS0162
         bool Allowed(long caseId) => allowedCaseIds is null || allowedCaseIds.Contains(caseId);
@@ -4352,6 +4353,224 @@ public sealed partial class CasePlannerRepository
         });
     }
 
+    // Legal Assistant Dashboard audit Phase 4 ("Attorney reminder design") - see
+    // ReminderRequestRecord's doc comment. caseId null returns every thread across the docket (used
+    // by the Attorney Action Queue integration below); non-null scopes to one case's full history,
+    // newest first, for the case/event-preparation reminder log.
+    public async Task<List<ReminderRequestRecord>> GetReminderRequestsAsync(long? caseId)
+    {
+        var list = new List<ReminderRequestRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, related_event_id, event_type, requested_action, target_attorney_display,
+                   requested_by_display, requested_by_role, requested_completion_date, follow_up_date,
+                   comment, status, occurred_at, recorded_at
+            FROM case_reminder_requests
+            WHERE (@caseId IS NULL OR case_id = @caseId)
+            ORDER BY id DESC
+            """;
+        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) list.Add(ReadReminderRequest(reader));
+        return list;
+    }
+
+    private static ReminderRequestRecord ReadReminderRequest(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt64(0),
+        CaseId = reader.GetInt64(1),
+        RelatedEventId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+        EventType = reader.GetString(3),
+        RequestedAction = reader.IsDBNull(4) ? null : reader.GetString(4),
+        TargetAttorneyDisplay = reader.IsDBNull(5) ? null : reader.GetString(5),
+        RequestedByDisplay = reader.IsDBNull(6) ? null : reader.GetString(6),
+        RequestedByRole = reader.IsDBNull(7) ? null : reader.GetString(7),
+        RequestedCompletionDate = reader.IsDBNull(8) ? null : reader.GetString(8),
+        FollowUpDate = reader.IsDBNull(9) ? null : reader.GetString(9),
+        Comment = reader.IsDBNull(10) ? null : reader.GetString(10),
+        Status = reader.GetString(11),
+        OccurredAt = reader.GetString(12),
+        RecordedAt = reader.GetString(13),
+    };
+
+    // The Attorney Action Queue integration's data source: the single latest row per
+    // (case_id, related_event_id) thread, filtered to threads whose latest row is still Open. A
+    // window function keeps this a single query rather than N+1 per-thread lookups.
+    public async Task<List<ReminderRequestRecord>> GetOpenAttorneyRemindersAsync()
+    {
+        var list = new List<ReminderRequestRecord>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, case_id, related_event_id, event_type, requested_action, target_attorney_display,
+                   requested_by_display, requested_by_role, requested_completion_date, follow_up_date,
+                   comment, status, occurred_at, recorded_at
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY case_id, COALESCE(related_event_id, -1) ORDER BY id DESC
+                ) AS rn
+                FROM case_reminder_requests
+            )
+            WHERE rn = 1 AND status = 'Open'
+            """;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) list.Add(ReadReminderRequest(reader));
+        return list;
+    }
+
+    // Idempotent-append: if the thread for (caseId, request.RelatedEventId) is already Open, this
+    // appends a FollowUp row to it (carrying forward whatever fields aren't supplied) instead of
+    // opening a second thread - so an assistant nudging the same request repeatedly produces one
+    // updated Action Queue entry with a history, not duplicates. A closed or nonexistent thread
+    // starts fresh with a Requested row.
+    public async Task<ReminderRequestRecord> RequestOrFollowUpAttorneyReminderAsync(long caseId, RequestAttorneyReminderRequest request)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var now = DateTime.UtcNow.ToString("O");
+
+            var latestCmd = connection.CreateCommand();
+            latestCmd.Transaction = tx;
+            latestCmd.CommandText = """
+                SELECT requested_action, target_attorney_display, requested_completion_date, follow_up_date, status
+                FROM case_reminder_requests
+                WHERE case_id = @case_id AND related_event_id IS @related_event_id
+                ORDER BY id DESC LIMIT 1
+                """;
+            latestCmd.Parameters.AddWithValue("@case_id", caseId);
+            latestCmd.Parameters.AddWithValue("@related_event_id", request.RelatedEventId is { } relatedEventId ? relatedEventId : DBNull.Value);
+            string? priorAction = null, priorAttorney = null, priorCompletion = null, priorFollowUp = null, priorStatus = null;
+            await using (var reader = await latestCmd.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    priorAction = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    priorAttorney = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    priorCompletion = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    priorFollowUp = reader.IsDBNull(3) ? null : reader.GetString(3);
+                    priorStatus = reader.GetString(4);
+                }
+            }
+
+            var isFollowUp = priorStatus == "Open";
+            var requestedAction = !string.IsNullOrWhiteSpace(request.RequestedAction) ? request.RequestedAction!.Trim() : priorAction;
+            var targetAttorney = !string.IsNullOrWhiteSpace(request.TargetAttorneyDisplay) ? request.TargetAttorneyDisplay!.Trim() : priorAttorney;
+            var completionDate = !string.IsNullOrWhiteSpace(request.RequestedCompletionDate) ? request.RequestedCompletionDate : priorCompletion;
+            var followUpDate = !string.IsNullOrWhiteSpace(request.FollowUpDate) ? request.FollowUpDate : priorFollowUp;
+
+            if (!isFollowUp && string.IsNullOrWhiteSpace(requestedAction))
+                throw new ArgumentException("A requested action is required.");
+
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO case_reminder_requests
+                    (case_id,related_event_id,event_type,requested_action,target_attorney_display,
+                     requested_by_display,requested_by_role,requested_completion_date,follow_up_date,
+                     comment,status,occurred_at,recorded_at)
+                VALUES
+                    (@case_id,@related_event_id,@event_type,@requested_action,@target_attorney_display,
+                     @requested_by_display,@requested_by_role,@requested_completion_date,@follow_up_date,
+                     @comment,'Open',@occurred_at,@recorded_at);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@case_id", caseId);
+            insert.Parameters.AddWithValue("@related_event_id", request.RelatedEventId is { } insertEventId ? insertEventId : DBNull.Value);
+            insert.Parameters.AddWithValue("@event_type", isFollowUp ? "FollowUp" : "Requested");
+            insert.Parameters.AddWithValue("@requested_action", DbValue(requestedAction));
+            insert.Parameters.AddWithValue("@target_attorney_display", DbValue(targetAttorney));
+            insert.Parameters.AddWithValue("@requested_by_display", DbValue(_actor.AuditLabel));
+            insert.Parameters.AddWithValue("@requested_by_role", DbValue(_actor.Role));
+            insert.Parameters.AddWithValue("@requested_completion_date", DbValue(completionDate));
+            insert.Parameters.AddWithValue("@follow_up_date", DbValue(followUpDate));
+            insert.Parameters.AddWithValue("@comment", DbValue(request.Comment));
+            insert.Parameters.AddWithValue("@occurred_at", now);
+            insert.Parameters.AddWithValue("@recorded_at", now);
+            var id = Convert.ToInt64(await insert.ExecuteScalarAsync());
+
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Recorded attorney reminder for case {caseId} at {DateTime.Now:G}");
+            return new ReminderRequestRecord
+            {
+                Id = id, CaseId = caseId, RelatedEventId = request.RelatedEventId,
+                EventType = isFollowUp ? "FollowUp" : "Requested", RequestedAction = requestedAction,
+                TargetAttorneyDisplay = targetAttorney, RequestedByDisplay = _actor.AuditLabel,
+                RequestedByRole = _actor.Role, RequestedCompletionDate = completionDate,
+                FollowUpDate = followUpDate, Comment = request.Comment, Status = "Open",
+                OccurredAt = now, RecordedAt = now,
+            };
+        });
+    }
+
+    // Resolving clears the thread from the Action Queue projection; it does not complete or touch
+    // the underlying task/deadline that prompted the reminder (per the audit's design). A later
+    // RequestOrFollowUpAttorneyReminderAsync on the same (caseId, relatedEventId) starts a fresh
+    // thread rather than reopening this one.
+    public async Task<ReminderRequestRecord> ResolveReminderAsync(long caseId, ResolveReminderRequest request)
+    {
+        return await WithWriteAsync(async (connection, tx) =>
+        {
+            var latestCmd = connection.CreateCommand();
+            latestCmd.Transaction = tx;
+            latestCmd.CommandText = """
+                SELECT requested_action, target_attorney_display, requested_completion_date, follow_up_date, status
+                FROM case_reminder_requests
+                WHERE case_id = @case_id AND related_event_id IS @related_event_id
+                ORDER BY id DESC LIMIT 1
+                """;
+            latestCmd.Parameters.AddWithValue("@case_id", caseId);
+            latestCmd.Parameters.AddWithValue("@related_event_id", request.RelatedEventId is { } relatedEventId ? relatedEventId : DBNull.Value);
+            string? action = null, attorney = null, completion = null, followUp = null;
+            await using (var reader = await latestCmd.ExecuteReaderAsync())
+            {
+                if (!await reader.ReadAsync()) throw new InvalidOperationException("No reminder thread was found to resolve.");
+                action = reader.IsDBNull(0) ? null : reader.GetString(0);
+                attorney = reader.IsDBNull(1) ? null : reader.GetString(1);
+                completion = reader.IsDBNull(2) ? null : reader.GetString(2);
+                followUp = reader.IsDBNull(3) ? null : reader.GetString(3);
+                if (reader.GetString(4) != "Open") throw new InvalidOperationException("This reminder thread is already resolved.");
+            }
+
+            var now = DateTime.UtcNow.ToString("O");
+            var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO case_reminder_requests
+                    (case_id,related_event_id,event_type,requested_action,target_attorney_display,
+                     requested_by_display,requested_by_role,requested_completion_date,follow_up_date,
+                     comment,status,occurred_at,recorded_at)
+                VALUES
+                    (@case_id,@related_event_id,'Resolved',@requested_action,@target_attorney_display,
+                     @requested_by_display,@requested_by_role,@requested_completion_date,@follow_up_date,
+                     @comment,'Resolved',@occurred_at,@recorded_at);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("@case_id", caseId);
+            insert.Parameters.AddWithValue("@related_event_id", request.RelatedEventId is { } resolveInsertEventId ? resolveInsertEventId : DBNull.Value);
+            insert.Parameters.AddWithValue("@requested_action", DbValue(action));
+            insert.Parameters.AddWithValue("@target_attorney_display", DbValue(attorney));
+            insert.Parameters.AddWithValue("@requested_by_display", DbValue(_actor.AuditLabel));
+            insert.Parameters.AddWithValue("@requested_by_role", DbValue(_actor.Role));
+            insert.Parameters.AddWithValue("@requested_completion_date", DbValue(completion));
+            insert.Parameters.AddWithValue("@follow_up_date", DbValue(followUp));
+            insert.Parameters.AddWithValue("@comment", DbValue(request.Comment));
+            insert.Parameters.AddWithValue("@occurred_at", now);
+            insert.Parameters.AddWithValue("@recorded_at", now);
+            var id = Convert.ToInt64(await insert.ExecuteScalarAsync());
+
+            await SetAppSettingAsync(connection, tx, "last_save_result", $"Resolved attorney reminder for case {caseId} at {DateTime.Now:G}");
+            return new ReminderRequestRecord
+            {
+                Id = id, CaseId = caseId, RelatedEventId = request.RelatedEventId, EventType = "Resolved",
+                RequestedAction = action, TargetAttorneyDisplay = attorney, RequestedByDisplay = _actor.AuditLabel,
+                RequestedByRole = _actor.Role, RequestedCompletionDate = completion, FollowUpDate = followUp,
+                Comment = request.Comment, Status = "Resolved", OccurredAt = now, RecordedAt = now,
+            };
+        });
+    }
+
     // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker (see
     // PreFilingMilestoneRecord's doc comment in DomainModels.cs and PreFilingMilestoneGate in
     // PipelineHolderApprovalStores.cs). Updates in place, one row per (case_id, milestone) - unlike
@@ -6803,6 +7022,27 @@ public sealed partial class CasePlannerRepository
         // reviewer_display is the title reviewer for that round, distinct from recorded_by_display.
         await AddColumnIfMissingAsync(connection, "case_prefiling_review_events", "outcome", "TEXT");
         await AddColumnIfMissingAsync(connection, "case_prefiling_review_events", "reviewer_display", "TEXT");
+        // Legal Assistant Dashboard audit Phase 4 (docs/legal-assistant-dashboard-audit.md) - see
+        // ReminderRequestRecord's doc comment. Append-only, one thread per (case_id, related_event_id).
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS case_reminder_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER NOT NULL,
+                related_event_id INTEGER,
+                event_type TEXT NOT NULL,
+                requested_action TEXT,
+                target_attorney_display TEXT,
+                requested_by_display TEXT,
+                requested_by_role TEXT,
+                requested_completion_date TEXT,
+                follow_up_date TEXT,
+                comment TEXT,
+                status TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_case_reminder_requests_thread ON case_reminder_requests(case_id, related_event_id, id);
+            """);
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -10608,6 +10848,23 @@ public sealed partial class CasePlannerRepository
             outcome TEXT,
             reviewer_display TEXT
         );
+        CREATE TABLE IF NOT EXISTS case_reminder_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            related_event_id INTEGER,
+            event_type TEXT NOT NULL,
+            requested_action TEXT,
+            target_attorney_display TEXT,
+            requested_by_display TEXT,
+            requested_by_role TEXT,
+            requested_completion_date TEXT,
+            follow_up_date TEXT,
+            comment TEXT,
+            status TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_case_reminder_requests_thread ON case_reminder_requests(case_id, related_event_id, id);
         CREATE TABLE IF NOT EXISTS case_attorney_assignments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,

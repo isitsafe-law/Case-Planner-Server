@@ -1,6 +1,6 @@
 import type { ComponentProps, FormEvent, ReactNode } from 'react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './dashboard/types'
+import type { AttorneyDashboardFilters, AttorneyDashboardResponse, DiscoveryPosture, PipelineHandoffRecord, PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReminderRequestRecord, ReviewNoteRecord } from './dashboard/types'
 import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { GlobalCalendarTab, type CalendarEventPage, type CalendarEventQuery } from './dashboard/GlobalCalendarTab'
@@ -3884,6 +3884,15 @@ function App() {
         setMessage('Holder updated.')
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Unable to update the holder.')
+      }
+    },
+    onResolveReminder: async (caseId, relatedEventId) => {
+      try {
+        await api(`/api/cases/${caseId}/reminders/resolve`, { method: 'POST', body: JSON.stringify({ relatedEventId }) })
+        await refreshAttorneyDashboard()
+        setMessage('Reminder resolved.')
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Unable to resolve the reminder.')
       }
     },
   }
@@ -10540,17 +10549,23 @@ function App() {
               await refreshAll()
             } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to recalculate preparation dates.') }
           }}
-          onRemindAttorney={async () => {
-            if (!event || !caseRecord?.assignedAttorney) return
-            const requestedAction = window.prompt(`What should ${caseRecord.assignedAttorney} review or complete for this proceeding?`, `${event.eventType || 'Proceeding'} preparation review`)
-            if (!requestedAction?.trim()) return
-            const followUpDate = window.prompt('When should you follow up again? (YYYY-MM-DD)', '')
-            if (!followUpDate) return
+          onGetReminders={async () => {
+            try { return await api<ReminderRequestRecord[]>(`/api/cases/${event.caseId}/reminders`) }
+            catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to load attorney reminders.'); return [] }
+          }}
+          onRequestReminder={async (input) => {
             try {
-              await api(`/api/cases/${event.caseId}/waiting`, { method: 'POST', body: JSON.stringify({ rowVersion: caseRecord.rowVersion || null, waitingOn: caseRecord.assignedAttorney, waitingReason: `${requestedAction.trim()} — ${event.eventType || 'Proceeding'} on ${event.hearingDate || 'date not set'}`, waitingStartedDate: new Date().toISOString().slice(0, 10), expectedResponse: requestedAction.trim(), waitingFollowUpDate: followUpDate, waitingEscalationAction: 'Follow up through the case Action Queue' }) })
-              setMessage(`Follow-up recorded for ${caseRecord.assignedAttorney}.`)
+              await api(`/api/cases/${event.caseId}/reminders`, { method: 'POST', body: JSON.stringify(input) })
+              setMessage(`Follow-up recorded for ${caseRecord?.assignedAttorney}.`)
               await refreshAll()
             } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to record attorney follow-up.') }
+          }}
+          onResolveReminder={async (input) => {
+            try {
+              await api(`/api/cases/${event.caseId}/reminders/resolve`, { method: 'POST', body: JSON.stringify(input) })
+              setMessage('Reminder resolved.')
+              await refreshAll()
+            } catch (error) { setErrorMessage(error instanceof Error ? error.message : 'Unable to resolve the reminder.') }
           }}
           onProposeDateChange={async (proposedStartDate, proposedEndDate, note) => {
             try {

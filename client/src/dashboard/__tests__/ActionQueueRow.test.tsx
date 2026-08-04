@@ -211,4 +211,24 @@ describe('ActionQueueRow', () => {
       expect(button.tagName).toBe('BUTTON')
     }
   })
+
+  // Legal Assistant Dashboard audit Phase 4: a reminder-sourced row (reminderRequestId set) gets a
+  // Resolve control that isn't shown on ordinary computed rows.
+  it('shows Resolve reminder only for a reminder-sourced row, and passes the thread\'s related event id', async () => {
+    const handlers = makeHandlers({ onResolveReminder: vi.fn().mockResolvedValue(undefined) })
+    renderRow(makeItem({ reminderRequestId: 42, reminderRelatedEventId: 7 }), handlers)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resolve reminder' }))
+    expect(handlers.onResolveReminder).toHaveBeenCalledWith(1, 7)
+  })
+
+  it('does not show Resolve reminder for an ordinary computed row', () => {
+    renderRow(makeItem(), makeHandlers({ onResolveReminder: vi.fn() }))
+    expect(screen.queryByRole('button', { name: 'Resolve reminder' })).not.toBeInTheDocument()
+  })
+
+  it('does not show Resolve reminder when the handler is not supplied, even for a reminder-sourced row', () => {
+    renderRow(makeItem({ reminderRequestId: 42 }), makeHandlers())
+    expect(screen.queryByRole('button', { name: 'Resolve reminder' })).not.toBeInTheDocument()
+  })
 })

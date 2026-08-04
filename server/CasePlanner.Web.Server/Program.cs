@@ -284,6 +284,9 @@ builder.Services.AddSingleton<IReviewNoteStore>(services =>
 builder.Services.AddSingleton<SqlitePrefilingReviewStore>();
 builder.Services.AddSingleton<IPrefilingReviewStore>(services =>
     services.GetRequiredService<SqlitePrefilingReviewStore>());
+builder.Services.AddSingleton<SqliteReminderStore>();
+builder.Services.AddSingleton<IReminderStore>(services =>
+    services.GetRequiredService<SqliteReminderStore>());
 builder.Services.AddSingleton<SqliteExhibitStore>();
 builder.Services.AddSingleton<SqlServerExhibitStore>();
 builder.Services.AddSingleton<IExhibitStore>(services =>
@@ -764,6 +767,24 @@ app.MapPut("/api/prefiling-review/settings", async (SavePrefilingReviewSettingsR
     try { return Results.Ok(await review.SaveSettingsAsync(request, token)); }
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+
+app.MapGet("/api/cases/{caseId:long}/reminders", async (long caseId, IReminderStore reminders, CancellationToken token) =>
+    Results.Ok(await reminders.GetRequestsAsync(caseId, token)));
+app.MapPost("/api/cases/{caseId:long}/reminders", async (long caseId, RequestAttorneyReminderRequest request, IReminderStore reminders, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
+    try { return Results.Ok(await reminders.RequestOrFollowUpAsync(caseId, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/cases/{caseId:long}/reminders/resolve", async (long caseId, ResolveReminderRequest request, IReminderStore reminders, CaseAccessService access, CancellationToken token) =>
+{
+    if (!await access.CanWriteAsync(caseId, token)) return Results.Forbid();
+    try { return Results.Ok(await reminders.ResolveAsync(caseId, request, token)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
 app.MapGet("/api/dashboard/actionability-policy", async (CasePlannerRepository repository) => Results.Ok(await repository.GetDashboardActionabilityPolicyAsync()));
 app.MapPut("/api/dashboard/actionability-policy", async (SaveDashboardActionabilityPolicyRequest request, CasePlannerRepository repository) =>
 {

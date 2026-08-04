@@ -10,7 +10,8 @@ public static class AttorneyDashboardComposer
         IEnumerable<CaseRecord> caseSource,IEnumerable<DeadlineItem> deadlineSource,
         IEnumerable<HearingRecord> hearingSource,IEnumerable<DiscoveryPosture> postureSource,
         AttorneyDashboardFilters filters,DateOnly? asOf=null,DashboardActionabilityPolicy? policy=null,
-        IReadOnlyDictionary<long,decimal?>? lastOffersByCase=null)
+        IReadOnlyDictionary<long,decimal?>? lastOffersByCase=null,
+        IEnumerable<ReminderRequestRecord>? openReminders=null)
     {
         var today=asOf??DateOnly.FromDateTime(DateTime.Today);
         policy ??= new DashboardActionabilityPolicy();
@@ -93,6 +94,30 @@ public static class AttorneyDashboardComposer
             momentum.Add(new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),MomentumStatus=matter.Momentum??"Moving",DaysSinceMeaningfulActivity=matter.DaysSince??0,WaitingOn=c.WaitingOn,WaitingFollowUpDate=c.WaitingFollowUpDate});
             foreach(var condition in AttorneyDashboardEngine.EvaluateDiscoveryConditions(matter.Posture,today,policy.DiscoveryCutoffLookaheadDays))Increment(discovery,condition,c,matter.Posture);
             if(AttorneyDashboardEngine.IsTrialWatchEligible(c,today,policy.TrialWatchLookaheadDays))trials.Add(Trial(c,matter.Posture,today,lastOffersByCase?.GetValueOrDefault(c.Id)));
+        }
+
+        // Legal Assistant Dashboard audit Phase 4: an open reminder thread surfaces as its own
+        // queue entry (not a replacement for whatever AttorneyDashboardEngine already computed for
+        // the case) so the attorney has one place to see it, per the audit's "reused only as the
+        // destination/projection" requirement. Scoped to matched (post-filter, active-only) cases so
+        // the reminder respects the same filters/active-docket boundary as every other entry.
+        foreach(var reminder in openReminders??[])
+        {
+            var reminderMatter=matched.FirstOrDefault(m=>m.Case.Id==reminder.CaseId);
+            if(reminderMatter is null)continue;
+            var c=reminderMatter.Case;
+            var followUp=Date(reminder.FollowUpDate);
+            var overdue=followUp is null||followUp<=today;
+            actions.Add(new ActionQueueItem
+            {
+                CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),JobNumber=c.JobNumber,
+                CurrentPhase=reminderMatter.IsPreFiling?(c.PipelineStage??"Pipeline stage not set"):c.Stage,
+                ActionCategory="Act",PriorityLevel=overdue?1:3,
+                Reason=$"Legal Assistant follow-up: {reminder.RequestedAction}",
+                RecommendedNextAction="Complete the requested review, or resolve the reminder if it's already handled",
+                ReviewDate=reminder.FollowUpDate,CurrentHolder=c.CurrentHolder,MatterType=c.MatterType,
+                ReminderRequestId=reminder.Id,ReminderRelatedEventId=reminder.RelatedEventId,
+            });
         }
 
         actions=actions.OrderBy(a=>a.PriorityLevel).ThenBy(a=>Date(a.ReviewDate)??DateOnly.MaxValue).ThenByDescending(a=>a.DaysSinceMeaningfulActivity??0).ToList();

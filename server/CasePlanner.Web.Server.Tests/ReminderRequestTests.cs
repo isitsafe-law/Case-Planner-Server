@@ -126,4 +126,31 @@ public sealed class ReminderRequestTests : IAsyncLifetime
         var open = await _fixture.Repository.GetOpenAttorneyRemindersAsync();
         Assert.Equal(2, open.Count(r => r.CaseId == c.Id)); // event-scoped and case-level threads don't collide
     }
+
+    // GetOpenAttorneyRemindersAsync backs both the Attorney Action Queue integration and the new
+    // GET /api/reminders/open endpoint (Legal Assistant Dashboard audit Phase 6's division-wide
+    // "waiting-on-attorney requests" panel), so it needs to span every case, not just one.
+    [Fact]
+    public async Task GetOpenAttorneyRemindersAsync_SpansMultipleCases()
+    {
+        var caseA = await CreateCaseAsync();
+        var caseB = await _fixture.Repository.SaveCaseAsync(new CaseRecord
+        {
+            CaseName = "Second Reminder Test Case", County = "Pulaski", Status = "Active",
+            CaseStatus = "Active Litigation", Track = "Contested",
+        });
+
+        await _fixture.Repository.RequestOrFollowUpAttorneyReminderAsync(caseA.Id, new RequestAttorneyReminderRequest
+        {
+            RequestedAction = "Ask A", FollowUpDate = "2026-08-10",
+        });
+        await _fixture.Repository.RequestOrFollowUpAttorneyReminderAsync(caseB.Id, new RequestAttorneyReminderRequest
+        {
+            RequestedAction = "Ask B", FollowUpDate = "2026-08-11",
+        });
+
+        var open = await _fixture.Repository.GetOpenAttorneyRemindersAsync();
+        Assert.Contains(open, r => r.CaseId == caseA.Id);
+        Assert.Contains(open, r => r.CaseId == caseB.Id);
+    }
 }

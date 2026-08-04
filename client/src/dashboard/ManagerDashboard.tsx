@@ -3,7 +3,7 @@ import type { CaseRecord, DeadlineItem, Hearing } from '../App'
 import { Panel } from '../App'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
-import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
+import type { PreFilingMilestoneAgingSummary, PreFilingMilestoneRecord, ReminderRequestRecord, ReviewNoteRecord } from './types'
 import { ManagerCalendarTab, type CalendarHorizon } from './ManagerCalendarTab'
 import { DivisionPipelineTab } from './DivisionPipelineTab'
 import { ByAttorneyTab } from './ByAttorneyTab'
@@ -12,6 +12,30 @@ import { DATA_QUALITY_AREAS, METRIC_DEFINITIONS, type DataQualityReport } from '
 import { api } from '../App'
 import { ManagerDashboardVisuals, buildManagerHardDateBars, buildManagerTrialBars } from './ManagerDashboardVisuals'
 import { buildNeedsAttentionRows } from './NeedsAttentionTab'
+import { holderDistribution } from './FilingPipelinePanel'
+
+// Deliberately a narrow local shape rather than importing App.tsx's full ChecklistItem - same
+// precedent as LegalAssistantDashboard.tsx's AssistantWork/EventPreparationPage.tsx's
+// PreparationWork - only checklist tasks carry ownerRole (deadlines don't), so "assistant-owned
+// work" is checklist-only per that same established convention.
+type AssistantOwnedWorkItem = {
+  id: number
+  caseId: number
+  relatedEventId?: number | null
+  task?: string
+  dueDate?: string | null
+  status?: string | null
+  assignedStaffName?: string | null
+  ownerRole?: string
+}
+
+// Mirrors server ServiceQueueItem - the real ServiceStatusEngine output, replacing the ad hoc
+// raw-filingDate-age rule this dashboard used to compute serviceRiskCount with directly.
+type ManagerServiceQueueItem = { caseId: number; warningLevel: string }
+
+const openWorkStatus = (value?: string | null) => !['Done', 'Complete', 'Completed', 'N/A'].includes(value || '')
+const isOverdue = (dueDate?: string | null) => Boolean(dueDate) && new Date(`${dueDate!.slice(0, 10)}T00:00:00`) < new Date(new Date().toDateString())
+const SERVICE_RISK_WARNING_LEVELS = new Set(['missing', 'overdue', 'urgent', 'high', 'warning'])
 
 type ManagerDashboardTab = 'calendar' | 'pipeline' | 'byAttorney' | 'needsAttention'
 
@@ -47,6 +71,9 @@ export function ManagerDashboard({
   allCases,
   hearings,
   deadlines,
+  checklist,
+  serviceQueue,
+  openReminders,
   preFilingMilestones,
   preFilingMilestonesAging,
   reviewNotes,
@@ -56,6 +83,9 @@ export function ManagerDashboard({
   allCases: CaseRecord[]
   hearings: Hearing[]
   deadlines: DeadlineItem[]
+  checklist: AssistantOwnedWorkItem[]
+  serviceQueue: ManagerServiceQueueItem[]
+  openReminders: ReminderRequestRecord[]
   preFilingMilestones: PreFilingMilestoneRecord[]
   preFilingMilestonesAging: PreFilingMilestoneAgingSummary | null
   reviewNotes: ReviewNoteRecord[]
@@ -90,13 +120,32 @@ export function ManagerDashboard({
   const hardDateCount = hardDateBars.slice(0, 3).reduce((sum, bar) => sum + bar.count, 0)
   const juryTrialCount = trialBars.reduce((sum, bar) => sum + bar.count, 0)
   const pipelineStallCount = useMemo(() => (preFilingMilestonesAging?.cases ?? []).filter((row) => (row.daysSinceMarked ?? 0) > 60).length, [preFilingMilestonesAging])
-  const serviceRiskCount = useMemo(() => allCases.filter((record) => {
-    if (!isOpenForDivision(record) || record.servicePerfected || !record.serviceRequired || !record.filingDate) return false
-    const filing = new Date(`${record.filingDate.slice(0, 10)}T00:00:00`)
-    const age = Math.floor((Date.now() - filing.getTime()) / 86400000)
-    return age >= 90
-  }).length, [allCases])
+  // Replaces a former ad hoc rule keyed on raw filingDate age (ignored manual ServiceDeadline120
+  // overrides and ServiceDeadlineBasisDate, and duplicated its own 90-day threshold client-side).
+  // Now reuses the same ServiceStatusEngine bands already computed server-side and already used by
+  // the Legal Assistant Dashboard's own Service and Publication section - one shared definition of
+  // "at risk," not three (this dashboard, the assistant dashboard, and the engine) drifting apart.
+  const serviceRiskCount = useMemo(() => serviceQueue.filter((item) => SERVICE_RISK_WARNING_LEVELS.has(item.warningLevel)).length, [serviceQueue])
   const pendingEventChanges = useMemo(() => hearings.filter((event) => pendingEventChangeIds.has(event.id)), [hearings, pendingEventChangeIds])
+
+  // Legal Assistant Dashboard audit Phase 6 ("Manager additions"): compact assistant risk/coverage
+  // context, not a completion leaderboard - see each count's comment for what it represents.
+  const assistantWork = useMemo(() => checklist.filter((item) => item.ownerRole === 'LegalAssistant' && openWorkStatus(item.status)), [checklist])
+  const assistantOverdueWork = useMemo(() => assistantWork.filter((item) => isOverdue(item.dueDate)), [assistantWork])
+  // "Temporary coverage/unassigned work" - assistant-scoped tasks with nobody named as the owner,
+  // a staffing gap rather than a normal backlog item.
+  const unassignedAssistantWork = useMemo(() => assistantWork.filter((item) => !item.assignedStaffName), [assistantWork])
+  // "Event-preparation risks with an actual overdue/open condition" - linked prep work (checklist
+  // or deadline items carrying a RelatedEventId) that's actually overdue, not every open item tied
+  // to an event.
+  const eventPrepRiskCount = useMemo(
+    () => [...checklist, ...deadlines].filter((item) => item.relatedEventId != null && openWorkStatus(item.status) && isOverdue(item.dueDate)).length,
+    [checklist, deadlines],
+  )
+  const holderPipelineDistribution = useMemo(
+    () => holderDistribution(allCases.filter((record) => (record.caseStatus || 'Pipeline') === 'Pipeline')),
+    [allCases],
+  )
 
   function exportDataQuality() {
     if (!dataQuality) return
@@ -159,6 +208,34 @@ export function ManagerDashboard({
       </div>
 
       {pendingEventChanges.length > 0 && <section className="ui-table-panel pending-manager-approvals"><div className="panel-hd"><h3>Pending event-date approvals</h3><span className="count">{pendingEventChanges.length}</span></div><div className="assistant-list">{pendingEventChanges.slice(0, 6).map((event) => <button className="assistant-list-row" key={event.id} onClick={() => onOpenCase(event.caseId)}><span><strong>{event.title || event.eventType || 'Proceeding'}</strong><small>{event.hearingDate || 'Date not set'}</small></span><span>Review proposed date change</span></button>)}</div></section>}
+
+      {/* Legal Assistant Dashboard audit Phase 6: risk/coverage context, not a completion
+          leaderboard - counts and exception lists only, no per-assistant activity ranking. */}
+      <section className="ui-table-panel">
+        <div className="panel-hd"><h3>Legal Assistant Coverage</h3></div>
+        <div className="ui-tiles dashboard-kpi-strip">
+          <div className="metric-tile"><span className="metric-label">Waiting on Attorney</span><strong>{openReminders.length}</strong><small>Open assistant reminder requests</small></div>
+          <div className="metric-tile"><span className="metric-label">Assistant Work</span><strong>{assistantWork.length}</strong><small>{assistantOverdueWork.length} overdue</small></div>
+          <div className="metric-tile"><span className="metric-label">Unassigned Work</span><strong>{unassignedAssistantWork.length}</strong><small>Assistant-scoped, no owner named</small></div>
+          <div className="metric-tile"><span className="metric-label">Event Prep Risk</span><strong>{eventPrepRiskCount}</strong><small>Linked prep work overdue</small></div>
+        </div>
+        <div className="pipeline-holder-summary top-gap-small">
+          {holderPipelineDistribution.map(({ holder, count }) => (
+            <div key={holder} className="pipeline-holder-summary-item">
+              <span>{holder}</span>
+              <strong>{count}</strong>
+            </div>
+          ))}
+        </div>
+        {openReminders.length > 0 && <div className="assistant-list top-gap-small">
+          <p className="eyebrow">Waiting on attorney</p>
+          {openReminders.slice(0, 6).map((reminder) => <button className="assistant-list-row" key={reminder.id} onClick={() => onOpenCase(reminder.caseId)}><span><strong>{reminder.requestedAction || 'Follow-up requested'}</strong><small>{reminder.targetAttorneyDisplay || 'Attorney not set'}</small></span><span>{reminder.followUpDate ? `Follow up ${reminder.followUpDate}` : 'No follow-up date'}</span></button>)}
+        </div>}
+        {unassignedAssistantWork.length > 0 && <div className="assistant-list top-gap-small">
+          <p className="eyebrow">Unassigned assistant work</p>
+          {unassignedAssistantWork.slice(0, 6).map((item) => <button className="assistant-list-row" key={item.id} onClick={() => onOpenCase(item.caseId)}><span><strong>{item.task || 'Task'}</strong><small>{item.dueDate ? `Due ${item.dueDate}` : 'No due date'}</small></span><span>No owner named</span></button>)}
+        </div>}
+      </section>
       <div className="segmented-tabs">
         {MANAGER_DASHBOARD_TABS.map((tab) => (
           <button key={tab.key} className={tab.key === activeTab ? 'segment active' : 'segment'} onClick={() => setActiveTab(tab.key)}>

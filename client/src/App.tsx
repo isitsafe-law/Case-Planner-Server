@@ -2407,6 +2407,10 @@ function App() {
   const [queueChecklist, setQueueChecklist] = useState<ChecklistItem[]>([])
   const [queueDiscovery, setQueueDiscovery] = useState<DiscoveryItem[]>([])
   const [queueService, setQueueService] = useState<ServiceQueueItem[]>([])
+  const [queuePublicationEntries, setQueuePublicationEntries] = useState<PublicationEntry[]>([])
+  // Legal Assistant Dashboard audit Phase 6: division-wide open reminder threads, for the
+  // Division Overview "waiting-on-attorney requests" panel.
+  const [openReminders, setOpenReminders] = useState<ReminderRequestRecord[]>([])
   const [queueHearings, setQueueHearings] = useState<Hearing[]>([])
   const [pendingEventChangeIds, setPendingEventChangeIds] = useState<Set<number>>(new Set())
   // Manager/Administrator Dashboard Milestone 4: division-wide (no caseId query param), the same
@@ -2958,7 +2962,7 @@ function App() {
   async function loadInitial() {
     try {
       setErrorMessage('')
-      const [dashboardData, caseList, allCaseList, allAttorneyAssignments, diagnosticsData, dataQualityData, deadlinesData, checklistData, discoveryData, serviceData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
+      const [dashboardData, caseList, allCaseList, allAttorneyAssignments, diagnosticsData, dataQualityData, deadlinesData, checklistData, discoveryData, serviceData, publicationEntriesData, openRemindersData, hearingsData, pipelineHandoffsData, orgDefaultsData, templateTagsData, checklistTemplatesData, deadlineTemplatesData, issueTagsData, backupsData, referenceLibraryData, attorneysData, legalAssistantsData, circuitClerksData, assessorsData, collectorsData, newspapersData, preFilingMilestonesData, preFilingMilestonesAgingData, reviewNotesData] = await Promise.all([
         api<DashboardData>('/api/dashboard'),
         api<CaseRecord[]>(`/api/cases?search=${encodeURIComponent(caseSearch)}&status=${encodeURIComponent(statusFilter)}&caseStatus=${encodeURIComponent(caseStatusFilter)}&county=${encodeURIComponent(countyFilter)}&includeClosed=${includeClosed}`),
         api<CaseRecord[]>('/api/cases?includeClosed=true'),
@@ -2969,6 +2973,8 @@ function App() {
         api<ChecklistItem[]>('/api/work-queues/checklist'),
         api<DiscoveryItem[]>('/api/work-queues/discovery'),
         api<ServiceQueueItem[]>('/api/work-queues/service'),
+        api<PublicationEntry[]>('/api/work-queues/publication-entries').catch(() => []),
+        api<ReminderRequestRecord[]>('/api/reminders/open').catch(() => []),
         api<Hearing[]>('/api/work-queues/hearings'),
         api<PipelineHandoffRecord[]>('/api/work-queues/pipeline-handoffs'),
         api<OrgDefaults>('/api/org-defaults'),
@@ -3001,6 +3007,8 @@ function App() {
       setQueueChecklist(checklistData)
       setQueueDiscovery(discoveryData)
       setQueueService(serviceData)
+      setQueuePublicationEntries(publicationEntriesData)
+      setOpenReminders(openRemindersData)
       setQueueHearings(hearingsData)
       const pendingChanges = await Promise.all(hearingsData.map(async (event) => {
         try { return await api<{ id: number } | null>(`/api/hearings/${event.id}/change-request`) } catch { return null }
@@ -10517,6 +10525,8 @@ function App() {
           cases={legalAssistantCaseScope}
           work={[...queueDeadlines, ...queueChecklist]}
           events={queueHearings.map((event) => ({ ...event, pendingChange: pendingEventChangeIds.has(event.id) }))}
+          serviceQueue={queueService}
+          publicationEntries={queuePublicationEntries}
           onOpenCase={(caseId) => openCase(caseId, 'overview')}
           onOpenPreparation={(eventId) => { setSelectedPreparationEventId(eventId); setPage('eventPreparation') }}
           onAssignWork={(item, assignee) => void assignAssistantWork(item, assignee)}
@@ -10893,6 +10903,9 @@ function App() {
           allCases={allCases}
           hearings={queueHearings}
           deadlines={queueDeadlines}
+          checklist={queueChecklist}
+          serviceQueue={queueService}
+          openReminders={openReminders}
           preFilingMilestones={preFilingMilestones}
           preFilingMilestonesAging={preFilingMilestonesAging}
           reviewNotes={reviewNotes}

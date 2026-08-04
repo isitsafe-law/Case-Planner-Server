@@ -10,9 +10,35 @@ type AssistantCase = {
   pipelineStage?: string | null
   assignedAttorney?: string | null
   filingDate?: string | null
-  servicePerfected?: boolean
-  serviceDeadline120?: string | null
 }
+
+// Mirrors server ServiceQueueItem (Models/DomainModels.cs) - the real ServiceStatusEngine output
+// (graduated checkin/warning/high/urgent/overdue bands), replacing the ad hoc
+// caseStatus/servicePerfected boolean this section used to filter on directly.
+type AssistantServiceQueueItem = {
+  caseId: number
+  caseName: string
+  county?: string | null
+  serviceMethod?: string | null
+  warningLevel: string
+  warningText: string
+}
+
+// Mirrors server PublicationEntryRecord - surfaced here only to flag proof-filing exceptions
+// (ProofFiled=false), not to duplicate the case workspace's full publication editor.
+type AssistantPublicationEntry = {
+  id: number
+  caseId: number
+  publicationNumber: string
+  publicationDate?: string | null
+  newspaper?: string | null
+  proofFiled: boolean
+}
+
+// Priority order for the graduated ServiceStatusEngine bands - purely a display sort, not a new
+// threshold: the day-count logic that produces these labels lives entirely server-side.
+const SERVICE_WARNING_RANK: Record<string, number> = { missing: 0, overdue: 1, urgent: 2, high: 3, warning: 4, checkin: 5 }
+const SERVICE_EXCLUDED_WARNING_LEVELS = new Set(['none', 'resolved', 'normal'])
 
 type AssistantWork = {
   id: number
@@ -48,6 +74,8 @@ export type LegalAssistantDashboardProps = {
   cases: AssistantCase[]
   work: AssistantWork[]
   events: AssistantEvent[]
+  serviceQueue: AssistantServiceQueueItem[]
+  publicationEntries: AssistantPublicationEntry[]
   onOpenCase: (caseId: number) => void
   onOpenPreparation: (eventId: number) => void
   onAssignWork?: (item: AssistantWork, assignee: string | null) => void
@@ -57,7 +85,7 @@ const openStatus = (value?: string | null) => !['Done', 'Complete', 'Completed',
 const dateValue = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`) : null
 const dateLabel = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : 'No date'
 
-export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], workOwnerNames = [], cases, work, events, onOpenCase, onOpenPreparation, onAssignWork }: LegalAssistantDashboardProps) {
+export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames = [], workOwnerNames = [], cases, work, events, serviceQueue, publicationEntries, onOpenCase, onOpenPreparation, onAssignWork }: LegalAssistantDashboardProps) {
   const [selectedAttorney, setSelectedAttorney] = useState('All')
   const [horizonDays, setHorizonDays] = useState<number | 'all'>(180)
   const visibleAttorneyNames = supportedAttorneyNames.filter((name, index, list) => name && list.indexOf(name) === index)
@@ -71,7 +99,10 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
   const waitingAttorney = scopedCases.filter((item) => item.caseStatus === 'Pipeline' && ['Attorney', 'Deputy Chief Counsel', 'Chief Counsel'].includes(item.currentHolder || ''))
   const horizonEnd = horizonDays === 'all' ? null : new Date(today.getTime() + horizonDays * 86400000)
   const upcoming = events.filter((item) => { const date = dateValue(item.endDate || item.hearingDate); return supportedCaseIds.has(item.caseId) && date && date >= today && (!horizonEnd || date <= horizonEnd) }).sort((a, b) => (a.hearingDate || '').localeCompare(b.hearingDate || '')).slice(0, 8)
-  const service = scopedCases.filter((item) => item.caseStatus === 'Filed / Service Pending' && !item.servicePerfected)
+  const service = serviceQueue
+    .filter((item) => supportedCaseIds.has(item.caseId) && !SERVICE_EXCLUDED_WARNING_LEVELS.has(item.warningLevel))
+    .sort((a, b) => (SERVICE_WARNING_RANK[a.warningLevel] ?? 99) - (SERVICE_WARNING_RANK[b.warningLevel] ?? 99))
+  const proofOutstanding = publicationEntries.filter((item) => supportedCaseIds.has(item.caseId) && !item.proofFiled)
   const ownerOptions = workOwnerNames.filter((name, index, list) => name && list.indexOf(name) === index)
 
   function renderOwnerControl(item: AssistantWork) {
@@ -99,7 +130,7 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
         <div className="metric-tile"><span className="metric-label">Waiting on Attorney</span><strong>{waitingAttorney.length}</strong><small>Pipeline review or direction</small></div>
         <div className="metric-tile"><span className="metric-label">Upcoming Proceedings</span><strong>{upcoming.length}</strong><small>Next 180 days shown</small></div>
         <div className="metric-tile"><span className="metric-label">Preparation Needs Attention</span><strong>{overdue.length}</strong><small>Overdue tracked work</small></div>
-        <div className="metric-tile"><span className="metric-label">Service Follow-Up</span><strong>{service.length}</strong><small>Filed matters not perfected</small></div>
+        <div className="metric-tile"><span className="metric-label">Service Follow-Up</span><strong>{service.length + proofOutstanding.length}</strong><small>Service or publication proof needing review</small></div>
       </div>
 
       <div className="dashboard-card-grid assistant-dashboard-grid">
@@ -148,10 +179,14 @@ export function LegalAssistantDashboard({ assistantName, supportedAttorneyNames 
         </section>
 
         <section className="ui-table-panel">
-          <div className="panel-hd"><h3>Service and Publication</h3><span className="count">{service.length}</span></div>
+          <div className="panel-hd"><h3>Service and Publication</h3><span className="count">{service.length + proofOutstanding.length}</span></div>
           <div className="assistant-list">
-            {service.slice(0, 8).map((item) => <button className="assistant-list-row" key={item.id} onClick={() => onOpenCase(item.id)}><span><strong>{item.caseName}</strong><small>{item.county || 'County not set'}</small></span><span><strong>Service pending</strong><small>{item.serviceDeadline120 ? `Review by ${dateLabel(item.serviceDeadline120)}` : 'Review date not set'}</small></span></button>)}
+            {service.slice(0, 8).map((item) => <button className="assistant-list-row" key={item.caseId} onClick={() => onOpenCase(item.caseId)}><span><strong>{item.caseName}</strong><small>{item.county || 'County not set'}{item.serviceMethod ? ` · ${item.serviceMethod}` : ''}</small></span><span><strong>{item.warningLevel === 'missing' ? 'Deadline not computed' : 'Service pending'}</strong><small>{item.warningText}</small></span></button>)}
             {service.length === 0 && <p className="helper-text">No service follow-up is currently due.</p>}
+            {proofOutstanding.length > 0 && <>
+              <p className="eyebrow top-gap-small">Publication proof outstanding</p>
+              {proofOutstanding.slice(0, 8).map((item) => <button className="assistant-list-row" key={`pub-${item.id}`} onClick={() => onOpenCase(item.caseId)}><span><strong>{cases.find((candidate) => candidate.id === item.caseId)?.caseName || `Case ${item.caseId}`}</strong><small>{item.newspaper || 'Newspaper not set'} · Publication #{item.publicationNumber}</small></span><span><strong>Proof not yet filed</strong><small>{item.publicationDate ? `Published ${dateLabel(item.publicationDate)}` : 'Publication date not set'}</small></span></button>)}
+            </>}
           </div>
         </section>
       </div>

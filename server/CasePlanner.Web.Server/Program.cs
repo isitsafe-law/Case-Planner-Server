@@ -784,6 +784,16 @@ app.MapPost("/api/cases/{caseId:long}/reminders/resolve", async (long caseId, Re
     catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+// Legal Assistant Dashboard audit Phase 6: division-wide open-reminder view for Division
+// Overview's "waiting-on-attorney requests" panel - the same GetOpenAsync already used to feed a
+// single case's worth of reminders into the Attorney Action Queue (AttorneyDashboardComposer),
+// exposed directly here since Division Overview needs the raw list, not a per-case queue entry.
+app.MapGet("/api/reminders/open", async (IReminderStore reminders, CaseAccessService access, CancellationToken token) =>
+{
+    var items = await reminders.GetOpenAsync(token);
+    var visible = await access.GetVisibleCaseIdsAsync(token);
+    return Results.Ok(visible is null ? items : items.Where(x => visible.Contains(x.CaseId)));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 
 app.MapGet("/api/dashboard/actionability-policy", async (CasePlannerRepository repository) => Results.Ok(await repository.GetDashboardActionabilityPolicyAsync()));
 app.MapPut("/api/dashboard/actionability-policy", async (SaveDashboardActionabilityPolicyRequest request, CasePlannerRepository repository) =>
@@ -1389,6 +1399,14 @@ app.MapPost("/api/document-exports/{id:long}/qa", async (long id,DocumentExportR
 app.MapGet("/api/work-queues/deadlines",async(IDeadlineStore deadlines,CaseAccessService access,CancellationToken token)=>
 {
     var items=await deadlines.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+// Legal Assistant Dashboard audit Phase 5: cross-case bulk fetch so the assistant dashboard's
+// Service and Publication section can flag publication proof exceptions across every scoped case
+// in one request, same shape as pipeline-handoffs above - the per-case
+// GET /api/cases/{id}/publication-service stays for the case workspace's own editor.
+app.MapGet("/api/work-queues/publication-entries",async(IPublicationEntryStore publications,CaseAccessService access,CancellationToken token)=>
+{
+    var items=await publications.GetAsync(null,token);var visible=await access.GetVisibleCaseIdsAsync(token);return Results.Ok(visible is null?items:items.Where(x=>visible.Contains(x.CaseId)));
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 // Cross-case bulk fetch backing Report C (Cycle-Time)'s Time-in-Phase/Time-in-Holder sections -
 // unlike GET /api/cases/{id}/pipeline-handoffs above (which stays scoped to one case for the

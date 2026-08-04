@@ -1,14 +1,16 @@
-import type { FilingPipelineView, PreFilingTractRow } from './types'
+import type { FilingPipelineView } from './types'
 import { EmptyState } from './EmptyState'
 import { HOLDER_STEPS, OTHER_HOLDER, holderStepIndex } from '../ui/HolderPipelineStepper'
 
 export type HolderDistributionEntry = { holder: string; count: number }
 
-// Client-side aggregation over the already-loaded pipeline rows (see HolderPipelineStepper for the
-// same 4-step-plus-Other vocabulary used by the per-case stepper). Anything that isn't one of the 4
-// linear holders - including a blank/unassigned currentHolder or a stray legacy value - is counted
-// under Other, keeping this strip to exactly 5 buckets.
-export function holderDistribution(rows: PreFilingTractRow[]): HolderDistributionEntry[] {
+// Client-side aggregation over already-loaded rows (see HolderPipelineStepper for the same 4-step-
+// plus-Other vocabulary used by the per-case stepper). Anything that isn't one of the 4 linear
+// holders - including a blank/unassigned currentHolder or a stray legacy value - is counted under
+// Other, keeping this strip to exactly 5 buckets. Takes only the one field it needs (rather than
+// the full PreFilingTractRow shape) so Division Overview can reuse it directly over plain
+// CaseRecord rows without an adapter - same bucket definitions, one implementation.
+export function holderDistribution(rows: { currentHolder?: string | null }[]): HolderDistributionEntry[] {
   const counts = new Map<string, number>()
   ;[...HOLDER_STEPS, OTHER_HOLDER].forEach((holder) => counts.set(holder, 0))
   rows.forEach((row) => {

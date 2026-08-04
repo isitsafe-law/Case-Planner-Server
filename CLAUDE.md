@@ -69,7 +69,7 @@ Use a fresh target database. Details in `docs/sql-server-migration.md`.
 ### Provider-neutral dual persistence — the central pattern
 
 Nearly every domain area (cases, deadlines, checklists, discovery, notes, hearings, witnesses, risk
-analysis, document generation, settlement authority, etc.) follows the same shape:
+analysis, document generation, etc.) follows the same shape:
 
 - A store/service interface (e.g. `ICaseCatalogStore`, `IDeadlineStore`).
 - A SQLite implementation (the active runtime store) plus a `SqlServer*` implementation (pilot-only,
@@ -121,8 +121,8 @@ Microsoft Entra auth is scaffolded (`Security/`, `EntraOptions`, `EntraClaims`,
 `CaseAccessService`/`CaseAccessEvaluator` implement per-user case assignment; `IsUnrestricted` covers
 Administrators plus any user flagged `is_manager` or with `manager_tier` Chief Counsel/Deputy Chief
 Counsel — a broad rule affecting every assignment-aware endpoint (case list, workspaces, exports,
-dashboards). The one deliberate exception is the Settlement Authority decide action, gated to Chief
-Counsel exclusively with no admin override.
+dashboards). There is no per-action role exception left in the codebase (the former Settlement
+Authority workflow, which used to be Chief-Counsel-exclusive, was removed entirely — see below).
 
 ### Document generation
 
@@ -139,8 +139,10 @@ no Word automation/COM, no third-party templating engine. The unified document p
 These are product/compliance constraints, not style preferences — see README's "Current guardrails" and
 "Current IT review summary" for the authoritative list. The load-bearing ones for day-to-day coding:
 
-- No cloud or external API calls, no email/calendar integration, no Microsoft Word/Excel automation, no
-  production database access from this environment.
+- No cloud or external API calls, no Microsoft Word/Excel automation, no production database access from
+  this environment. Outlook/calendar integration is a real long-term goal (not yet scoped or approved for
+  implementation) — don't build it opportunistically, but don't treat it as permanently off-limits either.
+  Confirm scope with the user before starting any calendar-integration work.
 - Blank dates stay blank; `1900-01-01` is treated as blank — don't "fix" either as a bug.
 - Don't enable `Database:ActiveProvider=SqlServer` or SQL Server pilot writes for ordinary users; SQLite
   is the deliberately guarded active provider until cutover is complete.

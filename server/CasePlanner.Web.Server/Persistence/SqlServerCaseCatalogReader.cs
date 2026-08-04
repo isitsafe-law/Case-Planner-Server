@@ -154,8 +154,8 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         await audit.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        // Same "audit write happens as its own call, after the transaction has already committed"
-        // convention as SqlServerSettlementAuthorityRequestStore's actions.
+        // Audit write happens as its own call, after the transaction has already committed - same
+        // convention used throughout the SQL Server pilot stores for post-commit activity_log writes.
         if (overrideApplied)
         {
             await activity.RecordAsync(model.Id, "FilingGateOverridden", model.FilingGateOverrideReason, null, cancellationToken, "CaseStatus", "Pipeline", model.CaseStatus);
@@ -218,7 +218,6 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         ["fap_number"] = Null(model.FapNumber), ["parcel_number"] = Null(model.ParcelNumber),
         ["case_style"] = Null(model.CaseStyle), ["opposing_counsel_contact"] = Null(model.OpposingCounselContact),
         ["case_folder_path"] = Null(model.CaseFolderPath),
-        ["settlement_authorized_ceiling"] = model.SettlementAuthorizedCeiling,
         // Pre-filing sign-off/Settlement Authority final implementation, item 4: only ever written
         // on INSERT (see the UPDATE-branch exclusion filter below, mirroring created_at's own
         // exclusion) - immutable after a case is first created, by construction.
@@ -255,12 +254,14 @@ public sealed class SqlServerCaseCatalogReader(IDatabaseConnectionFactory connec
         }
     }
 
+    // `track` used to be an input here (Settlement -> "Settlement Pending"), but CaseStatus is now
+    // the directly-set source of truth for that value - see CasePlannerRepository.cs's
+    // MapConsolidatedCaseStatus for the SQLite-side mirror of this same change.
     private static string MapStatus(CaseRecord model)
     {
         if (model.Status == "Triage") return "Triage";
         if (model.Status is "Closed" or "Complete" || model.Stage == "Resolved") return "Resolved / Closed";
         if (model.Status == "Pipeline" || string.IsNullOrWhiteSpace(model.CaseNumber) && !string.IsNullOrWhiteSpace(model.PipelineStage)) return "Pipeline";
-        if (model.Track == "Settlement") return "Settlement Pending";
         if (model.Stage == "Trial Track") return "Trial Preparation";
         if (model.Stage == "Service") return "Filed / Service Pending";
         return "Active Litigation";

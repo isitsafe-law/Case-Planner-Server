@@ -9,7 +9,8 @@ public static class AttorneyDashboardComposer
     public static AttorneyDashboardResponse Compose(
         IEnumerable<CaseRecord> caseSource,IEnumerable<DeadlineItem> deadlineSource,
         IEnumerable<HearingRecord> hearingSource,IEnumerable<DiscoveryPosture> postureSource,
-        AttorneyDashboardFilters filters,DateOnly? asOf=null,DashboardActionabilityPolicy? policy=null)
+        AttorneyDashboardFilters filters,DateOnly? asOf=null,DashboardActionabilityPolicy? policy=null,
+        IReadOnlyDictionary<long,decimal?>? lastOffersByCase=null)
     {
         var today=asOf??DateOnly.FromDateTime(DateTime.Today);
         policy ??= new DashboardActionabilityPolicy();
@@ -28,7 +29,7 @@ public static class AttorneyDashboardComposer
             var pipeline=string.Equals(c.CaseStatus,"Pipeline",StringComparison.OrdinalIgnoreCase)
                 ||string.Equals(c.MatterType,"PreFilingTract",StringComparison.OrdinalIgnoreCase);
             var days=AttorneyDashboardEngine.DaysSinceMeaningfulActivity(c,today);
-            return new Evaluated(c,pipeline,days,pipeline?null:AttorneyDashboardEngine.EvaluateMomentumStatus(c,today,days,policy.MomentumStaleDays),pipeline?null:postures.GetValueOrDefault(c.Id));
+            return new Evaluated(c,pipeline,days,pipeline?null:AttorneyDashboardEngine.EvaluateMomentumStatus(c,today,days,AttorneyDashboardEngine.MomentumStaleDays),pipeline?null:postures.GetValueOrDefault(c.Id));
         }).ToList();
 
         bool Matches(Evaluated matter)
@@ -79,7 +80,7 @@ public static class AttorneyDashboardComposer
                     PipelineStage=c.PipelineStage,DateSentToCurrentHolder=c.DateSentToCurrentHolder,Priority=c.Priority,
                     NextReviewDate=c.NextReviewDate,CurrentIssue=c.CurrentIssue,LastFollowUpDate=c.WaitingFollowUpDate,
                     LastUpdated=c.UpdatedAt,FlagReason=bucket=="Waiting"
-                        ?AttorneyDashboardEngine.WaitingMonitorReason(c,today,matter.DaysSince,policy.PipelineStalledDays)
+                        ?AttorneyDashboardEngine.WaitingMonitorReason(c,today,matter.DaysSince,AttorneyDashboardEngine.PipelineStalledDays)
                         :AttorneyDashboardEngine.MyDeskFlagReason(c)
                 };
                 pipeline.Add(row);if(bucket=="MyDesk")myDesk.Add(row);else waiting.Add(row);
@@ -91,7 +92,7 @@ public static class AttorneyDashboardComposer
             if(action is not null)actions.Add(action);
             momentum.Add(new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),MomentumStatus=matter.Momentum??"Moving",DaysSinceMeaningfulActivity=matter.DaysSince??0,WaitingOn=c.WaitingOn,WaitingFollowUpDate=c.WaitingFollowUpDate});
             foreach(var condition in AttorneyDashboardEngine.EvaluateDiscoveryConditions(matter.Posture,today,policy.DiscoveryCutoffLookaheadDays))Increment(discovery,condition,c,matter.Posture);
-            if(AttorneyDashboardEngine.IsTrialWatchEligible(c,today,policy.TrialWatchLookaheadDays))trials.Add(Trial(c,matter.Posture,today));
+            if(AttorneyDashboardEngine.IsTrialWatchEligible(c,today,policy.TrialWatchLookaheadDays))trials.Add(Trial(c,matter.Posture,today,lastOffersByCase?.GetValueOrDefault(c.Id)));
         }
 
         actions=actions.OrderBy(a=>a.PriorityLevel).ThenBy(a=>Date(a.ReviewDate)??DateOnly.MaxValue).ThenByDescending(a=>a.DaysSinceMeaningfulActivity??0).ToList();
@@ -131,17 +132,18 @@ public static class AttorneyDashboardComposer
         list.Add(new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),Strategy=posture?.Strategy??"Strategy not selected",NextDecision=posture?.NextDecision,NextReviewDate=posture?.NextReviewDate});
     }
 
-    private static TrialWatchEntry Trial(CaseRecord c,DiscoveryPosture? posture,DateOnly today)=>
+    private static TrialWatchEntry Trial(CaseRecord c,DiscoveryPosture? posture,DateOnly today,decimal? lastOfferAmount)=>
         new(){CaseId=c.Id,CaseName=c.CaseName,CaseNumber=Blank(c.CaseNumber),TrialDate=c.TrialDate,
             DaysUntilTrial=Date(c.TrialDate) is { } trial?trial.DayNumber-today.DayNumber:null,Deposit=c.DepositAmount,
-            // Milestone 3 (Settlement Authority workflow): the ceiling most recently granted by
-            // Chief Counsel, if any (see CaseRecord.SettlementAuthorizedCeiling). This is the real,
-            // live trial-watch path - both CasePlannerRepository (SQLite) and SqlServerWorkspaceQuery
-            // route the Attorney Dashboard through AttorneyDashboardComposer.Compose, which calls
-            // this method; CasePlannerRepository.BuildTrialWatchEntry, by contrast, sits behind
-            // unreachable code (see GetAttorneyDashboardAsync's early return) and is fixed
-            // separately only for consistency, not because anything still calls it.
-            SettlementAuthority=c.SettlementAuthorizedCeiling,
+            // This is the real, live trial-watch path - both CasePlannerRepository (SQLite) and
+            // SqlServerWorkspaceQuery route the Attorney Dashboard through
+            // AttorneyDashboardComposer.Compose, which calls this method;
+            // CasePlannerRepository.BuildTrialWatchEntry, by contrast, sits behind unreachable code
+            // (see GetAttorneyDashboardAsync's early return) and is fixed separately only for
+            // consistency, not because anything still calls it. LastOffer is the latest Risk
+            // Analysis offer/counteroffer amount for this case - replaces the removed Settlement
+            // Authority ceiling this used to show.
+            LastOffer=lastOfferAmount,
             FeeComparisonNote=AttorneyDashboardEngine.BuildFeeComparisonNote(c.DepositAmount,null,null),
             DiscoveryStatus=posture is null?"Strategy not selected":posture.IsComplete?"Discovery complete":posture.Strategy,
             NextTrialDecision=string.IsNullOrWhiteSpace(c.NextAction)?"Confirm final valuation position and settlement recommendation":c.NextAction};

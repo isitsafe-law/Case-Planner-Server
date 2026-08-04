@@ -35,4 +35,17 @@ public sealed class AttorneyDashboardComposerTests
         Assert.Single(result.FilingPipeline.AllPipeline);
         Assert.Single(result.MomentumReview);
     }
+
+    [Fact]
+    public void Compose_TrialWatchEntryShowsLatestOfferInsteadOfRemovedSettlementAuthority()
+    {
+        var cases=new[]
+        {
+            new CaseRecord{Id=1,CaseName="Trial Track Matter",Status="Active",CaseStatus="Trial Preparation",MatterType="FiledCase",TrialTrack=true,LastMeaningfulActivityDate="2026-07-01"},
+        };
+        var lastOffersByCase=new Dictionary<long,decimal?>{[1]=185000m};
+        var result=AttorneyDashboardComposer.Compose(cases,[],[],[],new(),new DateOnly(2026,7,16),lastOffersByCase: lastOffersByCase);
+        var entry=Assert.Single(result.TrialWatch);
+        Assert.Equal(185000m,entry.LastOffer);
+    }
 }

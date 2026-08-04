@@ -14,7 +14,7 @@ import { PipelineHandoffDialog } from './dashboard/PipelineHandoffDialog'
 import { RecordDecisionDialog } from './dashboard/RecordDecisionDialog'
 import { TriageWizard } from './TriageWizard'
 import { EditHistoryList } from './EditHistoryList'
-import { ACTIVITY_TYPE_GROUPS, activityTypeLabel } from './dashboard/RecordDecisionDialog'
+import { activityTypeLabel } from './dashboard/RecordDecisionDialog'
 import { TrialWatchTable } from './dashboard/TrialWatchTable'
 import { DashboardDueDate, DashboardWorkActions } from './dashboard/DashboardWorkActions'
 import { UpcomingTrialsReport } from './reporting/UpcomingTrialsReport'
@@ -29,7 +29,6 @@ import { LoadingSkeleton } from './dashboard/LoadingSkeleton'
 import { ErrorState } from './dashboard/ErrorState'
 import { getApiAccessToken } from './auth'
 import { StatusChip, type StatusTone } from './ui/StatusChip'
-import { HolderPipelineStepper, HOLDER_STEPS, type HolderStep } from './ui/HolderPipelineStepper'
 import { StatusSelect } from './ui/StatusSelect'
 import { TypeChip } from './ui/TypeChip'
 import { EmptyState as UiEmptyState } from './ui/EmptyState'
@@ -57,7 +56,7 @@ type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'actionability' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'actionability' | 'developer'
 
 export type CaseRecord = {
   id: number
@@ -298,20 +297,6 @@ type CaseDefendant = {
   notes?: string | null
 }
 
-// Pre-suit intake review history (see HolderPipelineStepper's HOLDER_STEPS chain) - append-only
-// per-holder review log, pure fact/history rather than a gate (Manager Dashboard sign-off
-// consolidation, item 1). Every Approve/Return-for-Revision action is a NEW row, so "current status
-// per role" is computed client-side from this list (most recent row per role, or Pending if none).
-type PipelineHolderApproval = {
-  id: number
-  caseId: number
-  holderRole: string
-  status: string
-  note?: string | null
-  setAt: string
-  setByDisplayName?: string | null
-}
-
 type DiscoveryItem = {
   id: number
   caseId: number
@@ -443,8 +428,6 @@ const serviceMethods = ['Certified Mail', 'Process Server', 'Warning Order'] as 
 const partyRoleOptions = ['Defendant', 'Unknown Heirs', 'Lienholder', 'Tenant', 'Other'] as const
 
 const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
-
-const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement', 'Correspondence', 'Pleadings', 'Motions', 'Other'] as const
 
 type ServiceLogEntry = {
   id: number
@@ -687,7 +670,6 @@ type WorkspaceResponse = {
   caseLegalAssistants: CaseLegalAssistant[]
   caseAttorneyAssignments: CaseAttorneyAssignment[]
   caseDefendants: CaseDefendant[]
-  pipelineHolderApprovals: PipelineHolderApproval[]
   caseIssueTags: CaseIssueTag[]
   availableIssueTags: IssueTag[]
   caseNotes: CaseNote[]
@@ -839,21 +821,10 @@ type DataQualityReport = {
   issues: DataQualityIssue[]
 }
 type DashboardActionabilityPolicy = {
-  momentumStaleDays: number
-  pipelineStalledDays: number
   discoveryCutoffLookaheadDays: number
   trialPreparationLookaheadDays: number
   trialWatchLookaheadDays: number
   updatedAt?: string | null
-}
-type DocumentTemplateCompletenessReport = {
-  templateKey: string
-  title: string
-  version: number
-  storagePath: string
-  audit: { discoveredTags: string[]; knownTags: string[]; unknownTags: string[]; blankValues: string[] }
-  runtimeInputTags: string[]
-  passed: boolean
 }
 type IssueTagUsage = { tagName: string; templateTitles: string[] }
 
@@ -1616,7 +1587,6 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'documentDefaults', label: 'Document Defaults' },
   { key: 'checklistTemplates', label: 'Work-Item Templates' },
   { key: 'deadlineTemplates', label: 'Deadline Rules' },
-  { key: 'documentPlatformTemplates', label: 'Document Templates' },
   { key: 'issueTags', label: 'Issue Tags' },
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
@@ -1633,7 +1603,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Appearance', sections: ['appearance'] },
   { label: 'Case Workflow', sections: ['documentDefaults', 'referenceLibrary'] },
   { label: 'Work Planning', sections: ['checklistTemplates', 'deadlineTemplates'] },
-  { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
+  { label: 'Issue Tags', sections: ['issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
   { label: 'Staff', sections: ['staff', 'notifications', 'actionability'] },
   { label: 'County & Publication Reference', sections: ['countyReference'] },
@@ -1666,12 +1636,11 @@ const modalKindLabels: Record<ModalKind, string> = {
 }
 
 // Section nav for the sectioned case editor drawer - order matches the visual section order below.
-type CaseEditorSectionKey = 'identity' | 'people' | 'dates' | 'preFilingSignOff' | 'financial' | 'service' | 'notes'
+type CaseEditorSectionKey = 'identity' | 'people' | 'dates' | 'financial' | 'service' | 'notes'
 const caseEditorSections: { key: CaseEditorSectionKey; label: string }[] = [
   { key: 'identity', label: 'Identity' },
   { key: 'people', label: 'People' },
   { key: 'dates', label: 'Dates' },
-  { key: 'preFilingSignOff', label: 'Pre-Filing Sign-Off' },
   { key: 'financial', label: 'Financial & Property' },
   { key: 'service', label: 'Service' },
   { key: 'notes', label: 'Notes' },
@@ -2378,7 +2347,6 @@ function App() {
     identity: null,
     people: null,
     dates: null,
-    preFilingSignOff: null,
     financial: null,
     service: null,
     notes: null,
@@ -2474,23 +2442,6 @@ function App() {
   const [platformGenerationHistory, setPlatformGenerationHistory] = useState<DocumentGenerationHistoryItem[]>([])
   const [platformBusy, setPlatformBusy] = useState(false)
   const [platformTemplates, setPlatformTemplates] = useState<DocumentTemplateAdminSummary[]>([])
-  const [selectedPlatformTemplateKey, setSelectedPlatformTemplateKey] = useState<string | null>(null)
-  const [platformUploadDraft, setPlatformUploadDraft] = useState({ templateKey: '', title: '', description: '', category: '' })
-  const [platformUploadFile, setPlatformUploadFile] = useState<File | null>(null)
-  const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
-  const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
-  const [platformCompleteness, setPlatformCompleteness] = useState<DocumentTemplateCompletenessReport | null>(null)
-  const [platformCompletenessByKey, setPlatformCompletenessByKey] = useState<Record<string, DocumentTemplateCompletenessReport>>({})
-  // Forces the Advanced disclosure below to mount fresh (see the CollapsiblePanel `key` at its
-  // render site): incremented whenever navigation should open it automatically (the Issue Tags
-  // "Used By" link), matched against platformAdvancedAutoOpenKey to decide defaultOpen for that
-  // one mount. A plain click on "Advanced…" in the table does not touch either of these, so it
-  // always mounts collapsed - the disclosure's resting state.
-  const [platformAdvancedNonce, setPlatformAdvancedNonce] = useState(0)
-  const [platformAdvancedAutoOpenKey, setPlatformAdvancedAutoOpenKey] = useState<string | null>(null)
-  const [newSectionDraft, setNewSectionDraft] = useState({ sectionKey: '', label: '', description: '', issueTagName: '' })
-  const [newOverlapDraft, setNewOverlapDraft] = useState({ sectionAKey: '', sectionBKey: '', note: '' })
-  const [newRuntimeInputDraft, setNewRuntimeInputDraft] = useState({ fieldKey: '', label: '', fieldType: 'text', isRequired: true })
   const [issueTagUsage, setIssueTagUsage] = useState<IssueTagUsage[]>([])
   const [newIssueTagDraft, setNewIssueTagDraft] = useState({ name: '', description: '', category: '' })
   const [issueTagEditDraft, setIssueTagEditDraft] = useState<{ id: number; name: string; description: string; category: string } | null>(null)
@@ -2543,12 +2494,6 @@ function App() {
     }
     return Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name)
   }, [caseDefendants])
-  const [pipelineHolderApprovals, setPipelineHolderApprovals] = useState<PipelineHolderApproval[]>([])
-  // Which gated-holder action (Approve or Return for Revision) is currently expanded for a note
-  // and a Confirm/Cancel pair - same "inline confirming state" shape as answerFiledConfirming
-  // above, rather than firing the request immediately on click.
-  const [pipelineApprovalPending, setPipelineApprovalPending] = useState<{ role: string; status: 'Approved' | 'Returned' } | null>(null)
-  const [pipelineApprovalNoteDraft, setPipelineApprovalNoteDraft] = useState('')
   // Per-row version of answerFiledConfirming above - tracks which defendant row's confirm dialog
   // is open (keyed by the row's id; unsaved rows, which have id 0, use a negative -(index+1) key
   // instead so multiple blank draft rows can't collide on the same key).
@@ -2563,8 +2508,6 @@ function App() {
   const [narrativeGenerating, setNarrativeGenerating] = useState(false)
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([])
   const [activityLogLoadedForCase, setActivityLogLoadedForCase] = useState<number | null>(null)
-  const [editingActivityId, setEditingActivityId] = useState<number | null>(null)
-  const [activityEditDraft, setActivityEditDraft] = useState({ activityType: 'Other', occurredAt: '', notes: '', reason: '' })
   const [caseRecordDecisionOpen, setCaseRecordDecisionOpen] = useState(false)
   const [discoveryPosture, setDiscoveryPosture] = useState<DiscoveryPosture | null>(null)
   const [discoveryPostureLoadedForCase, setDiscoveryPostureLoadedForCase] = useState<number | null>(null)
@@ -2581,7 +2524,7 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(defaultNotificationPreferences)
   const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false)
-  const [actionabilityPolicy, setActionabilityPolicy] = useState<DashboardActionabilityPolicy>({ momentumStaleDays: 60, pipelineStalledDays: 60, discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })
+  const [actionabilityPolicy, setActionabilityPolicy] = useState<DashboardActionabilityPolicy>({ discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })
   const [actionabilityPolicySaving, setActionabilityPolicySaving] = useState(false)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmOptions | null>(null)
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null)
@@ -3072,10 +3015,10 @@ function App() {
     }
   }
 
-  // Auto-apply handlers (stage chips, track/county selects, include-closed toggle) pass the
-  // just-changed value explicitly rather than reading state, since the corresponding setState
-  // call hasn't re-rendered yet when this runs in the same event handler.
-  async function loadCasesWithOverride(overrides: Partial<{ search: string; stage: string; track: string; county: string; includeClosed: boolean; status: string; caseStatus: string }>) {
+  // Auto-apply handlers (stage chips, county select, include-closed toggle) pass the just-changed
+  // value explicitly rather than reading state, since the corresponding setState call hasn't
+  // re-rendered yet when this runs in the same event handler.
+  async function loadCasesWithOverride(overrides: Partial<{ search: string; stage: string; county: string; includeClosed: boolean; status: string; caseStatus: string }>) {
     try {
       setErrorMessage('')
       const search = overrides.search ?? caseSearch
@@ -3139,9 +3082,6 @@ function App() {
       setCaseAttorneyAssignments(data.caseAttorneyAssignments ?? [])
       setCaseDefendants(data.caseDefendants ?? [])
       setDefendantAnswerConfirmingKey(null)
-      setPipelineHolderApprovals(data.pipelineHolderApprovals ?? [])
-      setPipelineApprovalPending(null)
-      setPipelineApprovalNoteDraft('')
       setNoteDraft({ id: 0, caseId, title: '', body: '', createdAt: '', updatedAt: '' })
       setHearingDraft({ id: 0, caseId, title: '', hearingDate: '', location: '', description: '', createdAt: '', updatedAt: '' })
       setSelectedTagId(0)
@@ -3165,10 +3105,9 @@ function App() {
 
   // refreshAll deliberately does NOT reload the Recent Activity feed - it's lazy-loaded once per
   // case (see the activityLogLoadedForCase-guarded effect above) and stays cached across
-  // refreshAll calls, which is why even the pre-existing Holder stepper/pipeline-approval actions
-  // (setCurrentHolderFromStepper, recordPipelineHolderApproval - both just call refreshAll) don't
-  // actually make new activity entries show up immediately on an already-open Overview tab. Confirmed
-  // live: marking a pre-filing milestone with only refreshAll left the feed showing stale entries.
+  // refreshAll calls, so actions that only call refreshAll don't make new activity entries show
+  // up immediately on an already-open Overview tab. Confirmed live: marking a pre-filing milestone
+  // with only refreshAll left the feed showing stale entries.
   // PreFilingMilestonesPanel's mark/unmark explicitly needs the feed to update right away (see its
   // spec), so it gets its own direct re-fetch, matching submitCaseRecordDecision's existing
   // fetch-then-setActivityLog precedent, rather than silently inheriting that gap.
@@ -4009,10 +3948,6 @@ function App() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to record the decision.')
     }
-  }
-
-  async function saveActivityEdit() {
-    setEditingActivityId(null)
   }
 
   function applyBulkDeferPreset(preset: '7' | '14' | '30' | 'custom') {
@@ -5129,49 +5064,6 @@ function App() {
     }
   }
 
-  // Most recent pipeline_holder_approvals row for a given gated role, or 'Pending' when none
-  // exists yet - "no row" already means pending, so Pending is never itself stored server-side.
-  function pipelineApprovalStatusFor(role: string): 'Approved' | 'Returned' | 'Pending' {
-    const rows = pipelineHolderApprovals.filter((row) => row.holderRole === role)
-    if (rows.length === 0) return 'Pending'
-    const latest = rows.reduce((a, b) => (b.id > a.id ? b : a))
-    return latest.status === 'Approved' ? 'Approved' : 'Returned'
-  }
-
-  function nextHolderStep(role: string | null | undefined): HolderStep | undefined {
-    const index = HOLDER_STEPS.indexOf((role || '') as HolderStep)
-    return index >= 0 ? HOLDER_STEPS[index + 1] : undefined
-  }
-
-  function previousHolderStep(role: string | null | undefined): HolderStep | undefined {
-    const index = HOLDER_STEPS.indexOf((role || '') as HolderStep)
-    return index > 0 ? HOLDER_STEPS[index - 1] : undefined
-  }
-
-  // Approve / Return for Revision now use the unified pre-filing review workflow. One server
-  // transaction records the history event, compatibility approval row, handoff, and active
-  // holder/stage update. Chief Counsel approval moves the case to the external Director-signature
-  // prerequisite; it does not create an in-system Director reviewer.
-  async function recordPipelineHolderApproval(role: string, status: 'Approved' | 'Returned', note: string) {
-    const caseId = selectedCaseId ?? caseDraft.id
-    if (!caseId) return
-    try {
-      setErrorMessage('')
-      const action = status === 'Returned'
-        ? 'ReturnForRevision'
-        : role === 'Chief Counsel' ? 'ChiefCounselApprove' : 'Advance'
-      await api(`/api/cases/${caseId}/prefiling-review`, {
-        method: 'POST',
-        body: JSON.stringify({ action, note: note.trim() || undefined }),
-      })
-      const advanceTo = status === 'Approved' ? nextHolderStep(role) : undefined
-      await refreshAll(caseId)
-      setMessage(status === 'Approved' ? (advanceTo ? `Approved and sent to ${advanceTo}.` : 'Approved.') : 'Returned for revision to the submitting holder.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to record the pipeline review.')
-    }
-  }
-
   async function addIssueTag() {
     const caseId = selectedCaseId ?? caseDraft.id
     if (!caseId || !selectedTagId) return
@@ -5294,28 +5186,6 @@ function App() {
     }
   }
 
-  // Build-plan step 5: Document Templates admin (upload, section/overlap/runtime-input
-  // configuration, version activation) and Issue Tags admin (create/rename/retire, usage lookup).
-  async function loadPlatformTemplates() {
-    try {
-      setErrorMessage('')
-      const templates = await api<DocumentTemplateAdminSummary[]>('/api/document-platform/templates')
-      setPlatformTemplates(templates)
-      if (selectedPlatformTemplateKey) {
-        const refreshed = templates.find((t) => t.template.templateKey === selectedPlatformTemplateKey)
-        if (refreshed) selectPlatformTemplate(refreshed)
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to load document templates.')
-    }
-  }
-
-  function selectPlatformTemplate(summary: DocumentTemplateAdminSummary) {
-    setSelectedPlatformTemplateKey(summary.template.templateKey)
-    setPlatformConfigDraft({ sections: summary.sections, overlaps: summary.overlaps, runtimeInputs: summary.runtimeInputs })
-    setPlatformCompleteness(null)
-  }
-
   async function assignAssistantWork(item: { id: number; caseId: number; task?: string; title?: string; assignedStaffName?: string | null }, assignee: string | null) {
     const previousOwner = item.assignedStaffName || 'Unassigned'
     if (item.task) {
@@ -5331,185 +5201,6 @@ function App() {
       await persistDeadline({ ...existing, assignedStaffName: assignee }, 'Assistant work owner updated.', false)
       await api('/api/cases/' + item.caseId + '/activity', { method: 'POST', body: JSON.stringify({ activityType: 'WorkOwnerChanged', notes: 'Deadline "' + (item.title || 'Untitled') + '" reassigned from ' + previousOwner + ' to ' + (assignee || 'Unassigned') + '.', fieldChanged: 'AssignedStaffName', previousValue: previousOwner, newValue: assignee || 'Unassigned' }) })
     }
-  }
-
-  async function auditPlatformTemplate(templateKey: string) {
-    try {
-      setErrorMessage('')
-      setPlatformCompleteness(await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${templateKey}/completeness`))
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit template merge tags.')
-    }
-  }
-
-  async function auditAllPlatformTemplates() {
-    try {
-      setErrorMessage('')
-      const reports = await Promise.all(platformTemplates.map(async (template) => {
-        const report = await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${template.template.templateKey}/completeness`)
-        return [template.template.templateKey, report] as const
-      }))
-      setPlatformCompletenessByKey(Object.fromEntries(reports))
-      const unknownCount = reports.filter(([, report]) => report.audit.unknownTags.length > 0).length
-      setMessage(unknownCount === 0 ? 'All active document templates passed the merge-tag audit.' : `${unknownCount} active template(s) need merge-tag review.`)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit all document templates.')
-    }
-  }
-
-  // Issue Tags' "Used By" column links a template title to its Advanced disclosure on the
-  // Document Templates settings screen. Titles (not keys) are what GetIssueTagUsageAsync returns,
-  // so this reloads the template catalog and matches by title - fine for an occasional admin
-  // click, and it means the Issue Tags screen never has to know a template's key.
-  async function navigateToTemplateAdvanced(templateTitle: string) {
-    try {
-      setErrorMessage('')
-      const templates = await api<DocumentTemplateAdminSummary[]>('/api/document-platform/templates')
-      setPlatformTemplates(templates)
-      const match = templates.find((t) => t.template.title.toLowerCase() === templateTitle.toLowerCase())
-      setPage('settings')
-      setSettingsSection('documentPlatformTemplates')
-      if (match) {
-        selectPlatformTemplate(match)
-        setPlatformAdvancedAutoOpenKey(match.template.templateKey)
-        setPlatformAdvancedNonce((n) => n + 1)
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to load document templates.')
-    }
-  }
-
-  async function uploadPlatformTemplate() {
-    if (!platformUploadFile) {
-      setErrorMessage('Choose a .docx file to upload.')
-      return
-    }
-    try {
-      setErrorMessage('')
-      const form = new FormData()
-      form.set('templateKey', platformUploadDraft.templateKey)
-      form.set('title', platformUploadDraft.title)
-      form.set('description', platformUploadDraft.description)
-      form.set('category', platformUploadDraft.category)
-      form.set('file', platformUploadFile)
-      const accessToken = await getApiAccessToken()
-      const headers = new Headers()
-      if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-      const response = await fetch('/api/document-platform/templates/upload', { method: 'POST', body: form, headers })
-      if (!response.ok) {
-        const parsed = await response.json().catch(() => null) as ApiError | null
-        throw new Error(parsed?.error ?? 'Unable to upload template.')
-      }
-      setMessage('Template uploaded.')
-      setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
-      setPlatformUploadFile(null)
-      setPlatformUploadKeyLocked(false)
-      await loadPlatformTemplates()
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to upload template.')
-    }
-  }
-
-  function startUploadNewVersion(summary: DocumentTemplateAdminSummary) {
-    setPlatformUploadDraft({
-      templateKey: summary.template.templateKey,
-      title: summary.template.title,
-      description: summary.template.description || '',
-      category: summary.template.category,
-    })
-    setPlatformUploadFile(null)
-    setPlatformUploadKeyLocked(true)
-  }
-
-  function startNewPlatformTemplateUpload() {
-    setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
-    setPlatformUploadFile(null)
-    setPlatformUploadKeyLocked(false)
-  }
-
-  async function savePlatformConfiguration() {
-    if (!selectedPlatformTemplateKey) return
-    try {
-      setErrorMessage('')
-      await api(`/api/document-platform/templates/${selectedPlatformTemplateKey}/configuration`, {
-        method: 'PUT',
-        body: JSON.stringify(platformConfigDraft),
-      })
-      setMessage('Configuration saved.')
-      await loadPlatformTemplates()
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to save configuration.')
-    }
-  }
-
-  async function activatePlatformVersion(templateKey: string, version: number) {
-    try {
-      setErrorMessage('')
-      await api(`/api/document-platform/templates/${templateKey}/versions/${version}/activate`, { method: 'POST' })
-      setMessage(`Version ${version} activated.`)
-      await loadPlatformTemplates()
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to activate version.')
-    }
-  }
-
-  async function deletePlatformTemplate(templateKey: string, templateTitle: string) {
-    if (!(await confirmAction({ title: 'Delete template?', message: `"${templateTitle}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
-    try {
-      setErrorMessage('')
-      await api(`/api/document-platform/templates/${templateKey}`, { method: 'DELETE' })
-      setMessage('Template deleted.')
-      if (selectedPlatformTemplateKey === templateKey) setSelectedPlatformTemplateKey(null)
-      await loadPlatformTemplates()
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete template.')
-    }
-  }
-
-  function addSectionDraft() {
-    if (!newSectionDraft.sectionKey.trim() || !newSectionDraft.label.trim()) return
-    setPlatformConfigDraft((current) => ({
-      ...current,
-      sections: [...current.sections, {
-        sectionKey: newSectionDraft.sectionKey.trim(),
-        label: newSectionDraft.label.trim(),
-        description: newSectionDraft.description || null,
-        issueTagName: newSectionDraft.issueTagName || null,
-        sortOrder: current.sections.length,
-      }],
-    }))
-    setNewSectionDraft({ sectionKey: '', label: '', description: '', issueTagName: '' })
-  }
-
-  function removeSectionDraft(sectionKey: string) {
-    setPlatformConfigDraft((current) => ({
-      ...current,
-      sections: current.sections.filter((s) => s.sectionKey !== sectionKey),
-      overlaps: current.overlaps.filter((o) => o.sectionAKey !== sectionKey && o.sectionBKey !== sectionKey),
-    }))
-  }
-
-  function addOverlapDraft() {
-    if (!newOverlapDraft.sectionAKey || !newOverlapDraft.sectionBKey || newOverlapDraft.sectionAKey === newOverlapDraft.sectionBKey) return
-    setPlatformConfigDraft((current) => ({ ...current, overlaps: [...current.overlaps, { ...newOverlapDraft, note: newOverlapDraft.note || null }] }))
-    setNewOverlapDraft({ sectionAKey: '', sectionBKey: '', note: '' })
-  }
-
-  function removeOverlapDraft(index: number) {
-    setPlatformConfigDraft((current) => ({ ...current, overlaps: current.overlaps.filter((_, i) => i !== index) }))
-  }
-
-  function addRuntimeInputDraft() {
-    if (!newRuntimeInputDraft.fieldKey.trim() || !newRuntimeInputDraft.label.trim()) return
-    setPlatformConfigDraft((current) => ({
-      ...current,
-      runtimeInputs: [...current.runtimeInputs, { ...newRuntimeInputDraft, fieldKey: newRuntimeInputDraft.fieldKey.trim(), sortOrder: current.runtimeInputs.length }],
-    }))
-    setNewRuntimeInputDraft({ fieldKey: '', label: '', fieldType: 'text', isRequired: true })
-  }
-
-  function removeRuntimeInputDraft(fieldKey: string) {
-    setPlatformConfigDraft((current) => ({ ...current, runtimeInputs: current.runtimeInputs.filter((i) => i.fieldKey !== fieldKey) }))
   }
 
   async function loadIssueTagUsage() {
@@ -7741,82 +7432,6 @@ function App() {
               )}
             </div>
           </div>
-          {false && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
-            <div className="workspace-holder-row top-gap-small">
-              <span className="workspace-holder-row-label">Holder</span>
-              <HolderPipelineStepper currentHolder={selectedCase.currentHolder || 'Legal Assistant'} readOnly />
-            </div>
-          )}
-          {/* Pipeline review history (office pilot): each gated role's most recent review status, plus
-              the Approve / Return for Revision actions for whoever currently holds the file. Pure
-              record-keeping - advancing or returning the holder is never blocked on this (Manager
-              Dashboard sign-off consolidation, item 1). Only shown during the Pipeline phase - same
-              scope as the stepper above - and stops mattering once the case files. */}
-          {false && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
-            <div className="workspace-holder-row top-gap-small">
-              <span className="workspace-holder-row-label">Review Status</span>
-              <span className="chip-row">
-                {HOLDER_STEPS.map((step) => {
-                  const status = pipelineApprovalStatusFor(step)
-                  const tone = status === 'Approved' ? 'success' : status === 'Returned' ? 'warn' : 'neutral'
-                  return <span key={step} className={`pill pill-${tone}`}>{step}: {status}</span>
-                })}
-              </span>
-            </div>
-          )}
-          {false && pipelineApprovalPending !== null && !isNewCase && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && HOLDER_STEPS.includes((selectedCase.currentHolder || '') as HolderStep) && (
-            <div className="workspace-holder-row top-gap-small">
-              {pipelineApprovalPending === null ? (
-                <span className="button-row compact-actions">
-                  <button
-                    className="primary"
-                    type="button"
-                    onClick={() => { setPipelineApprovalNoteDraft(''); setPipelineApprovalPending({ role: selectedCase.currentHolder as string, status: 'Approved' }) }}
-                  >
-                    {nextHolderStep(selectedCase.currentHolder) ? `Approve & Send to ${nextHolderStep(selectedCase.currentHolder)}…` : 'Approve…'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setPipelineApprovalNoteDraft(''); setPipelineApprovalPending({ role: selectedCase.currentHolder as string, status: 'Returned' }) }}
-                  >
-                    Return for Revision…
-                  </button>
-                </span>
-              ) : (
-                <div className="form-grid compact-actions">
-                  <label className="full-span">
-                    <span>{pipelineApprovalPending!.status === 'Approved' ? 'Note (optional)' : 'Reason for returning (recommended)'}</span>
-                    <textarea
-                      rows={2}
-                      value={pipelineApprovalNoteDraft}
-                      onChange={(event) => setPipelineApprovalNoteDraft(event.target.value)}
-                      placeholder={pipelineApprovalPending!.status === 'Approved' ? 'Optional note…' : 'What needs to change before this can move forward?'}
-                    />
-                  </label>
-                  <span className="button-row compact-actions full-span">
-                    <span className="helper-text">
-                      {pipelineApprovalPending!.status === 'Approved'
-                        ? (nextHolderStep(pipelineApprovalPending!.role) ? `Confirm approval and send to ${nextHolderStep(pipelineApprovalPending!.role)}?` : 'Confirm approval?')
-                        : `Confirm returning to ${previousHolderStep(pipelineApprovalPending!.role) || 'the prior holder'} for revision?`}
-                    </span>
-                    <button
-                      className="primary"
-                      type="button"
-                      onClick={() => {
-                        const pending = pipelineApprovalPending
-                        const noteToSend = pipelineApprovalNoteDraft
-                        setPipelineApprovalPending(null)
-                        if (pending) void recordPipelineHolderApproval(pending.role, pending.status, noteToSend)
-                      }}
-                    >
-                      Confirm
-                    </button>
-                    <button type="button" onClick={() => setPipelineApprovalPending(null)}>Cancel</button>
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
           {/* Test-build feedback item: so a manager or anyone else opening someone else's case can
               immediately see who the attorney and legal assistant(s) are without hunting for it -
               small, non-prominent line, similar weight to the Holder row's label above. Omits the
@@ -7995,59 +7610,24 @@ function App() {
                   <div className="command-list">
                     {activityLog.slice(0, 10).map((entry) => (
                       <div key={entry.id} className="command-list-row-compact">
-                        {editingActivityId === entry.id ? (
-                          <form
-                            className="inline-quick-form"
-                            onSubmit={(event) => { event.preventDefault(); void saveActivityEdit() }}
-                          >
-                            <label>
-                              What happened
-                              <select value={activityEditDraft.activityType} onChange={(event) => setActivityEditDraft({ ...activityEditDraft, activityType: event.target.value })}>
-                                {!ACTIVITY_TYPE_GROUPS.some((g) => g.types.includes(activityEditDraft.activityType)) && (
-                                  <option value={activityEditDraft.activityType}>{activityTypeLabel(activityEditDraft.activityType)}</option>
-                                )}
-                                {ACTIVITY_TYPE_GROUPS.map((group) => (
-                                  <optgroup key={group.label} label={group.label}>
-                                    {group.types.map((t) => <option key={t} value={t}>{activityTypeLabel(t)}</option>)}
-                                  </optgroup>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Occurred on
-                              <input type="date" value={activityEditDraft.occurredAt} onChange={(event) => setActivityEditDraft({ ...activityEditDraft, occurredAt: event.target.value })} required />
-                            </label>
-                            <label>
-                              Notes
-                              <input value={activityEditDraft.notes} onChange={(event) => setActivityEditDraft({ ...activityEditDraft, notes: event.target.value })} />
-                            </label>
-                            <label>
-                              Reason for change
-                              <input value={activityEditDraft.reason} onChange={(event) => setActivityEditDraft({ ...activityEditDraft, reason: event.target.value })} placeholder="Why this entry is being corrected" required />
-                            </label>
-                            <button className="primary" type="submit">Save</button>
-                            <button type="button" onClick={() => setEditingActivityId(null)}>Cancel</button>
-                          </form>
-                        ) : (
-                          <div className={entry.activityType === 'CaseNoteAdded' ? 'activity-audit-row activity-navigable' : 'activity-audit-row'} onClick={entry.activityType === 'CaseNoteAdded' ? () => setCaseTab('notes') : undefined} title={entry.activityType === 'CaseNoteAdded' ? 'Open related case note' : 'System audit entry; not editable'}>
-                            <strong>
-                              {activityTypeLabel(entry.activityType)}
-                              {entry.history.length > 0 && <span className="flag-text muted"> (edited)</span>}
-                            </strong>
-                            <div className="flag-text muted">{displayDateTime(entry.occurredAt)}{entry.notes ? ` | ${entry.notes}` : ''}</div>
-                            {entry.history.length > 0 && (
-                              <EditHistoryList
-                                rows={entry.history.map((h) => ({
-                                  id: h.id,
-                                  previous: `${activityTypeLabel(h.previousType ?? '')} ${h.previousOccurredAt ? displayDate(h.previousOccurredAt) : ''}${h.previousNotes ? ` | ${h.previousNotes}` : ''}`.trim(),
-                                  next: `${activityTypeLabel(h.newType ?? '')} ${h.newOccurredAt ? displayDate(h.newOccurredAt) : ''}${h.newNotes ? ` | ${h.newNotes}` : ''}`.trim(),
-                                  reason: h.reason,
-                                  createdAt: h.createdAt,
-                                }))}
-                              />
-                            )}
-                          </div>
-                        )}
+                        <div className={entry.activityType === 'CaseNoteAdded' ? 'activity-audit-row activity-navigable' : 'activity-audit-row'} onClick={entry.activityType === 'CaseNoteAdded' ? () => setCaseTab('notes') : undefined} title={entry.activityType === 'CaseNoteAdded' ? 'Open related case note' : 'System audit entry; not editable'}>
+                          <strong>
+                            {activityTypeLabel(entry.activityType)}
+                            {entry.history.length > 0 && <span className="flag-text muted"> (edited)</span>}
+                          </strong>
+                          <div className="flag-text muted">{displayDateTime(entry.occurredAt)}{entry.notes ? ` | ${entry.notes}` : ''}</div>
+                          {entry.history.length > 0 && (
+                            <EditHistoryList
+                              rows={entry.history.map((h) => ({
+                                id: h.id,
+                                previous: `${activityTypeLabel(h.previousType ?? '')} ${h.previousOccurredAt ? displayDate(h.previousOccurredAt) : ''}${h.previousNotes ? ` | ${h.previousNotes}` : ''}`.trim(),
+                                next: `${activityTypeLabel(h.newType ?? '')} ${h.newOccurredAt ? displayDate(h.newOccurredAt) : ''}${h.newNotes ? ` | ${h.newNotes}` : ''}`.trim(),
+                                reason: h.reason,
+                                createdAt: h.createdAt,
+                              }))}
+                            />
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -8632,7 +8212,6 @@ function App() {
               <span className="helper-text">Case utilities</span>
               <button className="compact-action-button" onClick={() => void generateDocument('summary')}>Generate Case Summary</button>
               <button className="compact-action-button" onClick={() => void generateDocument('memo')}>Generate Case Review</button>
-              <button className="compact-action-button" onClick={() => { setPage('settings'); setSettingsSection('documentPlatformTemplates') }}>Manage Document Templates</button>
               <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
             </div>
 
@@ -10281,41 +9860,6 @@ function App() {
                 Uses modalMode !== 'create' rather than renderCaseWorkspace's own isNewCase (out of
                 scope here - this Drawer is rendered outside that function, alongside App's other
                 modals), matching the same "an existing, persisted case" meaning. */}
-            {/* Legacy fallback retained in source only for migration context; routine pre-filing review
-                is rendered in the Pipeline workflow on Overview, never in this editor. */}
-            {false && modalMode !== 'create' && (selectedCase.caseStatus || 'Pipeline') === 'Pipeline' && (
-              <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.preFilingSignOff = node }}>
-                <h4 className="form-section-heading">Pre-Filing Sign-Off</h4>
-                <PreFilingMilestonesPanel
-                  caseId={selectedCase.id}
-                  // Deliberately loadInitial() + refreshCaseActivityLog(), NOT refreshAll(). This
-                  // panel lives inside the still-open case editor, and refreshAll's loadWorkspace
-                  // call does setCaseDraft(data.case) as a side effect - confirmed live that this
-                  // silently threw away whatever else the user had pending in this same draft (e.g.
-                  // a Case Status change they hadn't saved yet) the instant they marked a milestone.
-                  // loadInitial() alone still refreshes the cross-case data a marked milestone can
-                  // affect (the global pre-filing aging summary, dashboard counts, etc.) without
-                  // touching caseDraft; the milestone list itself is refetched inside the panel.
-                  onMutated={async () => {
-                    await loadInitial()
-                    await refreshCaseActivityLog(selectedCase.id)
-                  }}
-                />
-                {/* Alongside the milestone grid, not interleaved into it (final implementation, item
-                    2) - the two have different shapes (ordered checklist vs. unstructured log) and
-                    merging them visually would misrepresent the milestones as depending on review,
-                    which they don't. */}
-                <h5 className="form-section-heading top-gap">Review Notes</h5>
-                <ReviewNotesLog
-                  caseId={selectedCase.id}
-                  onAdded={async () => {
-                    await loadInitial()
-                    await refreshCaseActivityLog(selectedCase.id)
-                  }}
-                />
-              </section>
-            )}
-
             <section className="form-section" ref={(node) => { caseEditorSectionRefs.current.financial = node }}>
               <h4 className="form-section-heading">Financial & Property</h4>
               <div className="form-section-grid">
@@ -12250,199 +11794,6 @@ function App() {
             </Panel>
           )}
 
-          {settingsSection === 'documentPlatformTemplates' && (
-            <Panel title="Document Templates">
-              <div className="settings-subpanel">
-                <p className="helper-text">Edit the document in Word, then upload it — merge fields and optional section blocks are read from the file automatically. Advanced configuration (issue-tag links, generation-time prompts) is available per template below.</p>
-              </div>
-              <div className="button-row compact-actions">
-                <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
-                <button className="compact-action-button" onClick={() => void auditAllPlatformTemplates()} disabled={platformTemplates.length === 0}>Audit All Active Templates</button>
-                <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
-              </div>
-
-              <h4 className="top-gap">{platformUploadKeyLocked ? `Upload New Version of "${platformUploadDraft.title}"` : 'Upload a New Template'}</h4>
-              <div className="form-grid top-gap-small">
-                <label><span>Title</span><input value={platformUploadDraft.title} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, title: e.target.value })} /></label>
-                <label><span>Category</span><select value={platformUploadDraft.category} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, category: e.target.value })}><option value="">Select category…</option>{documentTemplateCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
-                <label className="full-span"><span>Description (optional)</span><input value={platformUploadDraft.description} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, description: e.target.value })} /></label>
-                <label className="full-span"><span>File (.docx)</span><input type="file" accept=".docx" onChange={(e) => setPlatformUploadFile(e.target.files?.[0] ?? null)} /></label>
-                <div className="full-span button-row compact-actions">
-                  <button className="primary" onClick={() => void uploadPlatformTemplate()}>{platformUploadKeyLocked ? 'Upload New Version' : 'Upload Template'}</button>
-                  {platformUploadKeyLocked && <button type="button" onClick={startNewPlatformTemplateUpload}>Cancel (upload a different template instead)</button>}
-                </div>
-              </div>
-
-              <h4 className="top-gap">Templates</h4>
-              <div className="table-wrap top-gap-small">
-                <table className="compact-table">
-                  <thead><tr><th>Title</th><th>Category</th><th>Active Version</th><th>Type</th><th>Actions</th></tr></thead>
-                  <tbody>
-                    {platformTemplates.map((t) => (
-                      <tr key={t.template.templateKey}>
-                        <td>{t.template.title}</td>
-                        <td>{t.template.category}</td>
-                        <td>{t.activeVersion ? `v${t.activeVersion.version}` : '—'}</td>
-                        <td>{t.template.isBuiltin ? <span className="pill pill-neutral">Built-in</span> : <span className="pill pill-success">Custom</span>}</td>
-                        <td>
-                          <div className="button-row compact-actions row-actions">
-                            <button className="primary" onClick={() => startUploadNewVersion(t)}>Upload New Version</button>
-                            <button onClick={() => selectPlatformTemplate(t)}>Advanced…</button>
-                            {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey, t.template.title)}>Delete</button>}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {platformTemplates.length === 0 && <tr><td colSpan={5} className="helper-text">Click "Load Templates" to see the catalog.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-
-              {Object.keys(platformCompletenessByKey).length > 0 && (
-                <div className="inline-message top-gap-small">
-                  <p><strong>Catalog audit:</strong> {Object.values(platformCompletenessByKey).filter((report) => report.passed).length} of {Object.keys(platformCompletenessByKey).length} active template(s) have no unknown merge tags.</p>
-                  <p className="helper-text">Blank values are reported inside each template's audit; they are valid fields that may simply be empty for a particular case.</p>
-                </div>
-              )}
-
-              {selectedPlatformTemplateKey && (() => {
-                const selected = platformTemplates.find((t) => t.template.templateKey === selectedPlatformTemplateKey)
-                if (!selected) return null
-                return (
-                  <div className="top-gap">
-                    <CollapsiblePanel
-                      key={`advanced-${selected.template.templateKey}-${platformAdvancedNonce}`}
-                      title={`Advanced configuration — ${selected.template.title}`}
-                      defaultOpen={platformAdvancedAutoOpenKey === selected.template.templateKey}
-                    >
-                    <div className="inline-message warn"><p>Technical settings; most templates never need changes here. Sections and merge fields are detected automatically on upload.</p></div>
-                    <p className="helper-text">Template key: <code>{selected.template.templateKey}</code></p>
-                    <div className="button-row compact-actions top-gap-small">
-                      <button onClick={() => void auditPlatformTemplate(selected.template.templateKey)}>Audit Merge Tags</button>
-                      {platformCompleteness?.templateKey === selected.template.templateKey && <span className={platformCompleteness.passed ? 'pill pill-success' : 'pill pill-warning'}>{platformCompleteness.passed ? 'No unknown tags' : `${platformCompleteness.audit.unknownTags.length} unknown tag(s)`}</span>}
-                    </div>
-                    {platformCompleteness?.templateKey === selected.template.templateKey && (
-                      <div className={`inline-message ${platformCompleteness.passed ? 'success' : 'warn'}`}>
-                        <p><strong>Merge-tag audit for v{platformCompleteness.version}:</strong> {platformCompleteness.audit.discoveredTags.length} discovered, {platformCompleteness.audit.knownTags.length} known, {platformCompleteness.runtimeInputTags.length} runtime input(s).</p>
-                        {platformCompleteness.audit.unknownTags.length > 0 && <p>Unknown: {platformCompleteness.audit.unknownTags.join(', ')}</p>}
-                        {platformCompleteness.audit.blankValues.length > 0 && <p>Valid tags with no current value: {platformCompleteness.audit.blankValues.join(', ')}. These will appear as <code>MISSING</code> during generation when the case or runtime input does not supply a value.</p>}
-                        {platformCompleteness.audit.unknownTags.length === 0 && platformCompleteness.audit.blankValues.length === 0 && <p>All discovered tags resolve to a registered field or declared runtime input.</p>}
-                      </div>
-                    )}
-                    <p className="helper-text">A <strong>section</strong> is a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> block in the .docx; new versions detect these automatically, but you can rename a section's label or link it to an issue tag here (linking pre-checks it on the case Documents tab when the case carries that tag). A <strong>runtime input</strong> makes an existing <code>{'{{FieldKey}}'}</code> token prompt the attorney for a value at generation time instead of pulling it from the case record. An <strong>overlap warning</strong> just flags two sections that cover similar ground — it never blocks generation.</p>
-                    {selected.lintIssues.length > 0 && (
-                      <div className="inline-message warn">{selected.lintIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>
-                    )}
-
-                    <h5>Versions</h5>
-                    <p className="helper-text">The active version is used for new drafts. Older versions remain available for audit and can be reactivated; generated documents retain the version used at generation time.</p>
-                    <div className="button-row compact-actions">
-                      {selected.versions.map((v) => (
-                        <span key={v.id} className="button-row compact-actions">
-                          <button className={v.isActive ? 'primary' : ''} disabled={v.isActive}
-                            onClick={() => void activatePlatformVersion(selected.template.templateKey, v.version)}>
-                            {v.isActive ? `v${v.version} Active` : `Activate v${v.version}`}
-                          </button>
-                          <span className="helper-text">{displayDateTime(v.createdAt)}{v.createdBy ? ` · ${v.createdBy}` : ''}{v.unknownTokens.length > 0 ? ` · ${v.unknownTokens.length} unknown tag(s)` : ''}</span>
-                        </span>
-                      ))}
-                    </div>
-
-                    <h5 className="top-gap-small">Sections</h5>
-                    <p className="helper-text">Each row must match a {'{{#Key}}'} / {'{{/Key}}'} pair in the uploaded .docx. Tying a section to an issue tag pre-checks it on the case Documents tab when that case carries the tag.</p>
-                    <div className="table-wrap">
-                      <table className="compact-table">
-                        <thead><tr><th>Key</th><th>Label</th><th>Issue Tag</th><th>Actions</th></tr></thead>
-                        <tbody>
-                          {platformConfigDraft.sections.map((s) => (
-                            <tr key={s.sectionKey}>
-                              <td>{s.sectionKey}</td><td>{s.label}</td><td>{s.issueTagName || '—'}</td>
-                              <td><button onClick={() => removeSectionDraft(s.sectionKey)}>Remove</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="form-grid top-gap-small">
-                      <label><span>Section Key</span><input value={newSectionDraft.sectionKey} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, sectionKey: e.target.value })} placeholder="matches {{#Key}} in the .docx" /></label>
-                      <label><span>Label</span><input value={newSectionDraft.label} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, label: e.target.value })} /></label>
-                      <label><span>Issue Tag (optional)</span>
-                        <select value={newSectionDraft.issueTagName} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, issueTagName: e.target.value })}>
-                          <option value="">None</option>
-                          {allIssueTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
-                        </select>
-                      </label>
-                      <label className="full-span"><span>Description</span><input value={newSectionDraft.description} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, description: e.target.value })} /></label>
-                      <div className="full-span"><button onClick={addSectionDraft}>Add Section</button></div>
-                    </div>
-
-                    <h5 className="top-gap-small">Overlap Warnings</h5>
-                    <p className="helper-text">When two sections both fire, the case checklist shows a warning so the attorney can drop one rather than filing duplicated questions.</p>
-                    <div className="table-wrap">
-                      <table className="compact-table">
-                        <thead><tr><th>Section A</th><th>Section B</th><th>Note</th><th>Actions</th></tr></thead>
-                        <tbody>
-                          {platformConfigDraft.overlaps.map((o, i) => (
-                            <tr key={`${o.sectionAKey}-${o.sectionBKey}`}>
-                              <td>{o.sectionAKey}</td><td>{o.sectionBKey}</td><td>{o.note}</td>
-                              <td><button onClick={() => removeOverlapDraft(i)}>Remove</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="form-grid top-gap-small">
-                      <label><span>Section A</span>
-                        <select value={newOverlapDraft.sectionAKey} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, sectionAKey: e.target.value })}>
-                          <option value="">Select...</option>
-                          {platformConfigDraft.sections.map((s) => <option key={s.sectionKey} value={s.sectionKey}>{s.label}</option>)}
-                        </select>
-                      </label>
-                      <label><span>Section B</span>
-                        <select value={newOverlapDraft.sectionBKey} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, sectionBKey: e.target.value })}>
-                          <option value="">Select...</option>
-                          {platformConfigDraft.sections.map((s) => <option key={s.sectionKey} value={s.sectionKey}>{s.label}</option>)}
-                        </select>
-                      </label>
-                      <label className="full-span"><span>Note</span><input value={newOverlapDraft.note} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, note: e.target.value })} /></label>
-                      <div className="full-span"><button onClick={addOverlapDraft}>Add Overlap</button></div>
-                    </div>
-
-                    <h5 className="top-gap-small">Runtime Inputs</h5>
-                    <p className="helper-text">Fields prompted for at generation time rather than resolved from the case (e.g. opposing counsel, a hearing date).</p>
-                    <div className="table-wrap">
-                      <table className="compact-table">
-                        <thead><tr><th>Field Key</th><th>Label</th><th>Type</th><th>Required</th><th>Actions</th></tr></thead>
-                        <tbody>
-                          {platformConfigDraft.runtimeInputs.map((i) => (
-                            <tr key={i.fieldKey}>
-                              <td>{i.fieldKey}</td><td>{i.label}</td><td>{i.fieldType}</td><td>{i.isRequired ? 'Yes' : 'No'}</td>
-                              <td><button onClick={() => removeRuntimeInputDraft(i.fieldKey)}>Remove</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="form-grid top-gap-small">
-                      <label><span>Field Key</span><input value={newRuntimeInputDraft.fieldKey} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, fieldKey: e.target.value })} placeholder="e.g. OpposingCounsel" /></label>
-                      <label><span>Label</span><input value={newRuntimeInputDraft.label} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, label: e.target.value })} /></label>
-                      <label><span>Type</span>
-                        <select value={newRuntimeInputDraft.fieldType} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, fieldType: e.target.value })}>
-                          <option value="text">Text</option><option value="date">Date</option><option value="number">Number</option><option value="textarea">Textarea</option>
-                        </select>
-                      </label>
-                      <label className="toggle-inline"><span>Required</span><input type="checkbox" checked={newRuntimeInputDraft.isRequired} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, isRequired: e.target.checked })} /></label>
-                      <div className="full-span"><button onClick={addRuntimeInputDraft}>Add Runtime Input</button></div>
-                    </div>
-
-                    <button className="primary top-gap" onClick={() => void savePlatformConfiguration()}>Save Configuration</button>
-                    </CollapsiblePanel>
-                  </div>
-                )
-              })()}
-            </Panel>
-          )}
-
           {settingsSection === 'issueTags' && (
             <Panel title="Issue Tags">
               <p className="helper-text">Tags describe the issues a case involves (e.g. Timber, Access). Tagging a case automatically pre-checks that issue's questions when generating discovery documents.</p>
@@ -12473,14 +11824,7 @@ function App() {
                               <td><select value={issueTagEditDraft.category} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, category: e.target.value })}>{issueTagCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></td>
                               <td><input value={issueTagEditDraft.description} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, description: e.target.value })} /></td>
                               <td>
-                                {usage && usage.templateTitles.length > 0
-                                  ? usage.templateTitles.map((title, idx) => (
-                                      <span key={title}>
-                                        {idx > 0 && ', '}
-                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
-                                      </span>
-                                    ))
-                                  : '—'}
+                                {usage && usage.templateTitles.length > 0 ? usage.templateTitles.join(', ') : '—'}
                               </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">
@@ -12495,14 +11839,7 @@ function App() {
                               <td>{tag.category}</td>
                               <td>{tag.description}</td>
                               <td>
-                                {usage && usage.templateTitles.length > 0
-                                  ? usage.templateTitles.map((title, idx) => (
-                                      <span key={title}>
-                                        {idx > 0 && ', '}
-                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
-                                      </span>
-                                    ))
-                                  : '—'}
+                                {usage && usage.templateTitles.length > 0 ? usage.templateTitles.join(', ') : '—'}
                               </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">
@@ -12947,16 +12284,15 @@ function App() {
           {settingsSection === 'actionability' && (
             <Panel title="Dashboard Actionability">
               <p className="helper-text">These are shared SQLite-preview defaults for when dashboard signals appear. The settings change attention timing, not the underlying legal or operational dates. Overdue court, service, and hard-deadline items remain visible.</p>
+              <p className="helper-text">Momentum staleness (60 days) and pipeline-stall detection (60 days) used to be adjustable here; they are now fixed constants (see the Needs Attention tab) to keep this screen focused on the look-ahead windows below.</p>
               <div className="form-grid top-gap-small">
-                <label><span>Stale review after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.momentumStaleDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, momentumStaleDays: Number(event.target.value) }))} /><small>Default: 60. Applies when there is no waiting follow-up date.</small></label>
-                <label><span>Pipeline stall after (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.pipelineStalledDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, pipelineStalledDays: Number(event.target.value) }))} /><small>Default: 60. Used for pipeline monitoring flags.</small></label>
                 <label><span>Discovery cutoff look-ahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.discoveryCutoffLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, discoveryCutoffLookaheadDays: Number(event.target.value) }))} /><small>Default: 45. Shows an incomplete discovery plan when its recorded cutoff is within this many days. It does not create the cutoff.</small></label>
                 <label><span>Trial preparation look-ahead (days)</span><input type="number" min={1} max={365} value={actionabilityPolicy.trialPreparationLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialPreparationLookaheadDays: Number(event.target.value) }))} /><small>Default: 60. Shows jury-trial cases in the active preparation window; it does not change the jury-trial date or automatically create tasks.</small></label>
                 <label><span>Trial watch look-ahead (days)</span><input type="number" min={1} max={730} value={actionabilityPolicy.trialWatchLookaheadDays} onChange={(event) => setActionabilityPolicy((current) => ({ ...current, trialWatchLookaheadDays: Number(event.target.value) }))} /><small>Default: 180. Shows trial-track cases earlier for staffing and scheduling. It is an awareness view, not a task generator.</small></label>
               </div>
               <div className="button-row compact-actions top-gap-small">
                 <button className="primary" disabled={actionabilityPolicySaving} onClick={() => void saveActionabilityPolicy()}>{actionabilityPolicySaving ? 'Saving…' : 'Save defaults'}</button>
-                <button disabled={actionabilityPolicySaving} onClick={() => setActionabilityPolicy({ momentumStaleDays: 60, pipelineStalledDays: 60, discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })}>Reset form</button>
+                <button disabled={actionabilityPolicySaving} onClick={() => setActionabilityPolicy({ discoveryCutoffLookaheadDays: 45, trialPreparationLookaheadDays: 60, trialWatchLookaheadDays: 180 })}>Reset form</button>
               </div>
               <p className="helper-text top-gap-small">Attorney-specific preferences will be layered on after Entra identity is enabled. Until then, these are shared local defaults.</p>
             </Panel>

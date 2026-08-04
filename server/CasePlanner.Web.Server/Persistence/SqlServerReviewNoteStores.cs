@@ -9,9 +9,8 @@ namespace CasePlanner.Web.Server.Persistence;
 // dbo.case_review_notes (063_case_review_notes.sql) is append-only - no row_version, no update, no
 // delete - so this needs only EnsureCaseExistsAsync/AuditAsync (via SqlServerLitigationStoreBase),
 // plus a SqlServerActivityStore dependency to write the user-facing activity_log entry after each
-// note, the same composition SqlServerSettlementAuthorityRequestStore already uses. There is no live
-// SQL Server sandbox available here to exercise this against a real pilot instance - same caveat
-// already noted for the rest of the dormant multi-user foundation.
+// note. There is no live SQL Server sandbox available here to exercise this against a real pilot
+// instance - same caveat already noted for the rest of the dormant multi-user foundation.
 public sealed class SqlServerReviewNoteStore(
     IDatabaseConnectionFactory connections,
     IHttpContextAccessor accessor,
@@ -81,8 +80,8 @@ public sealed class SqlServerReviewNoteStore(
             await transaction.CommitAsync(token);
         }
 
-        // Same convention as SqlServerSettlementAuthorityRequestStore's actions - the user-facing
-        // activity_log write happens as its own call, after the main insert has already committed.
+        // Audit write happens as its own call, after the main insert has already committed - same
+        // convention used throughout the SQL Server pilot stores.
         await activity.RecordAsync(caseId, "ReviewNoteAdded",
             string.IsNullOrWhiteSpace(request.Comment) ? request.Decision.Trim() : $"{request.Decision.Trim()} — {request.Comment.Trim()}",
             null, token);

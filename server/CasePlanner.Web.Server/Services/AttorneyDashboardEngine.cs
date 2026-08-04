@@ -191,7 +191,7 @@ public static class AttorneyDashboardEngine
 
         var signals = new List<Signal>();
         var daysSince = DaysSinceMeaningfulActivity(c, today);
-        var momentum = EvaluateMomentumStatus(c, today, daysSince, policy.MomentumStaleDays);
+        var momentum = EvaluateMomentumStatus(c, today, daysSince, MomentumStaleDays);
 
         AddOverdueDeadlineSignal(signals, openDeadlines, today);
         AddCourtEventSignal(signals, c, hearings, today, policy.TrialPreparationLookaheadDays);
@@ -201,7 +201,7 @@ public static class AttorneyDashboardEngine
             AddDiscoveryCutoffSignal(signals, posture, today, policy.DiscoveryCutoffLookaheadDays);
             AddDiscoveryOtherSignals(signals, posture, today);
         }
-        AddMomentumSignal(signals, c, momentum, daysSince, today, policy.MomentumStaleDays);
+        AddMomentumSignal(signals, c, momentum, daysSince, today, MomentumStaleDays);
         AddMissingReviewSignal(signals, c, momentum);
         AddTrialPrepSignal(signals, c, today, policy.TrialPreparationLookaheadDays);
 

@@ -30,7 +30,6 @@ public interface IActivityStore
     Task<List<ActivityLogEntry>> GetAsync(long? caseId, CancellationToken token = default);
     Task<long?> GetCaseIdAsync(long activityId, CancellationToken token = default);
     Task<ActivityLogEntry> RecordAsync(long caseId, RecordActivityRequest request, CancellationToken token = default);
-    Task<ActivityLogEntry> UpdateAsync(long activityId, UpdateActivityRequest request, CancellationToken token = default);
 }
 
 public sealed class SqliteDiscoveryPostureStore(CasePlannerRepository repository) : IDiscoveryPostureStore
@@ -54,8 +53,6 @@ public sealed class SqliteActivityStore(CasePlannerRepository repository) : IAct
     public Task<long?> GetCaseIdAsync(long activityId, CancellationToken token = default) => repository.GetChildCaseIdAsync("activity", activityId);
     public Task<ActivityLogEntry> RecordAsync(long caseId, RecordActivityRequest request, CancellationToken token = default) =>
         repository.RecordActivityAsync(caseId, request.ActivityType, request.Notes, request.OccurredAt, request.FieldChanged, request.PreviousValue, request.NewValue);
-    public Task<ActivityLogEntry> UpdateAsync(long activityId, UpdateActivityRequest request, CancellationToken token = default) =>
-        repository.UpdateActivityEntryAsync(activityId, request);
 }
 
 public sealed class SqlServerDiscoveryPostureStore(
@@ -287,6 +284,4 @@ public sealed class SqlServerActivityService(SqlServerActivityStore store) : IAc
     public Task<long?> GetCaseIdAsync(long activityId,CancellationToken token=default)=>store.GetCaseIdAsync(activityId,token);
     public Task<ActivityLogEntry> RecordAsync(long caseId,RecordActivityRequest request,CancellationToken token=default)=>
         store.RecordAsync(caseId,request.ActivityType,request.Notes,request.OccurredAt,token,request.FieldChanged,request.PreviousValue,request.NewValue);
-    public Task<ActivityLogEntry> UpdateAsync(long activityId,UpdateActivityRequest request,CancellationToken token=default)=>
-        store.UpdateAsync(activityId,request,request.RowVersion,token);
 }

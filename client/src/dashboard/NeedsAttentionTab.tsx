@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { CaseRecord } from '../App'
 import { Btn } from '../ui/Btn'
 import { downloadCsv } from '../ui/csvExport'
@@ -6,6 +6,9 @@ import { EmptyState } from './EmptyState'
 import { computePreFilingStallInfo } from './preFilingStallDetection'
 import type { PreFilingMilestoneRecord, ReviewNoteRecord } from './types'
 
+// Fixed, not admin-adjustable (the old Settings > Dashboard Actionability controls for these two
+// were removed as unused-in-practice complexity). 60 was the long-standing default before removal;
+// revisit this constant directly in source if it turns out to need tuning.
 export const DEFAULT_ACTIVITY_THRESHOLD_DAYS = 60
 export const DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS = 60
 
@@ -222,38 +225,22 @@ export function NeedsAttentionTab({
   reviewNotes: ReviewNoteRecord[]
   onOpenCase: (caseId: number) => void
 }) {
-  const [activityThresholdDays, setActivityThresholdDays] = useState(DEFAULT_ACTIVITY_THRESHOLD_DAYS)
-  const [preFilingStallThresholdDays, setPreFilingStallThresholdDays] = useState(DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS)
-
-  useEffect(() => {
-    let cancelled = false
-    void fetch('/api/dashboard/actionability-policy')
-      .then((response) => response.ok ? response.json() as Promise<{ momentumStaleDays?: number; pipelineStalledDays?: number }> : Promise.reject(new Error('Unable to load saved actionability policy.')))
-      .then((settings) => {
-        if (cancelled) return
-        if (Number.isFinite(settings.momentumStaleDays)) setActivityThresholdDays(Math.max(1, settings.momentumStaleDays || DEFAULT_ACTIVITY_THRESHOLD_DAYS))
-        if (Number.isFinite(settings.pipelineStalledDays)) setPreFilingStallThresholdDays(Math.max(1, settings.pipelineStalledDays || DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS))
-      })
-      .catch(() => { /* defaults remain usable if an older server is running */ })
-    return () => { cancelled = true }
-  }, [])
-
   const rows = useMemo(
     () => buildNeedsAttentionRows(
       allCases, preFilingMilestones, reviewNotes,
-      activityThresholdDays, preFilingStallThresholdDays,
+      DEFAULT_ACTIVITY_THRESHOLD_DAYS, DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS,
     ),
-    [allCases, preFilingMilestones, reviewNotes, activityThresholdDays, preFilingStallThresholdDays],
+    [allCases, preFilingMilestones, reviewNotes],
   )
 
   return (
     <div>
       <div className="inline-quick-form" style={{ marginBottom: '0.85rem' }}>
-        <span className="helper-text">Shared policy: pipeline stall after {preFilingStallThresholdDays} days · no meaningful activity after {activityThresholdDays} days</span>
+        <span className="helper-text">Pre-filing stall after {DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS} days without an advancing sign-off · no recorded activity after {DEFAULT_ACTIVITY_THRESHOLD_DAYS} days</span>
         <Btn onClick={() => exportCsv(rows)} disabled={rows.length === 0}>Export CSV</Btn>
       </div>
       <p className="helper-text" style={{ marginBottom: '0.6rem' }}>
-        These values come from Settings → Dashboard Actionability. Change the shared defaults there; overdue legal and operational conditions remain visible.
+        These are fixed thresholds meant to catch matters that may be quietly falling behind: a Pipeline tract whose pre-filing sign-off hasn't moved in {DEFAULT_PRE_FILING_STALL_THRESHOLD_DAYS} days, or any case with no logged activity in over {DEFAULT_ACTIVITY_THRESHOLD_DAYS} days. Overdue legal and operational conditions (service risk, etc.) remain visible below regardless of these thresholds.
       </p>
 
       {rows.length === 0 ? (

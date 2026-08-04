@@ -5,7 +5,7 @@ export const ACTIVITY_TYPE_GROUPS: { label: string; types: string[] }[] = [
   { label: 'Filing & Service', types: ['ComplaintFiled', 'AnswerFiled', 'ServiceCompleted', 'PublicationCompleted'] },
   { label: 'Discovery', types: ['DiscoveryServed', 'DiscoveryResponsesReceived', 'DiscoveryResponsesReviewed', 'DepositionHeld'] },
   { label: 'Valuation', types: ['AppraisalReceived', 'AppraisalReviewed'] },
-  { label: 'Negotiation & Settlement', types: ['NegotiationPositionChanged', 'SettlementAuthorityRequested', 'SettlementAuthorityReceived'] },
+  { label: 'Negotiation & Settlement', types: ['NegotiationPositionChanged'] },
   { label: 'Motions & Mediation', types: ['MotionFiled', 'MotionDecided', 'MediationScheduled', 'MediationHeld'] },
   { label: 'Trial Prep', types: ['TrialPrepMilestoneCompleted'] },
 ]

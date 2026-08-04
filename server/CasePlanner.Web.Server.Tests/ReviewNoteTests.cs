@@ -3,8 +3,8 @@ using CasePlanner.Web.Server.Models;
 namespace CasePlanner.Web.Server.Tests;
 
 // Pre-filing sign-off/Settlement Authority final implementation, item 2 coverage: the unstructured,
-// append-only review-note log. Mirrors SettlementAuthorityRequestTests's structure - a fresh
-// RepositoryTestFixture per test, plain assertions against the real SQLite repository (no mocking).
+// append-only review-note log. A fresh RepositoryTestFixture per test, plain assertions against the
+// real SQLite repository (no mocking).
 public class ReviewNoteTests : IAsyncLifetime
 {
     private RepositoryTestFixture _fixture = null!;

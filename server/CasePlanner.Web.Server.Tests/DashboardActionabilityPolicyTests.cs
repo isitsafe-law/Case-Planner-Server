@@ -15,24 +15,19 @@ public sealed class DashboardActionabilityPolicyTests : IAsyncLifetime
     {
         var defaults = await _fixture.Repository.GetDashboardActionabilityPolicyAsync();
 
-        Assert.Equal(60, defaults.MomentumStaleDays);
-        Assert.Equal(60, defaults.PipelineStalledDays);
         Assert.Equal(45, defaults.DiscoveryCutoffLookaheadDays);
         Assert.Equal(60, defaults.TrialPreparationLookaheadDays);
         Assert.Equal(180, defaults.TrialWatchLookaheadDays);
 
         var saved = await _fixture.Repository.SaveDashboardActionabilityPolicyAsync(new SaveDashboardActionabilityPolicyRequest
         {
-            MomentumStaleDays = 30,
-            PipelineStalledDays = 45,
             DiscoveryCutoffLookaheadDays = 21,
             TrialPreparationLookaheadDays = 90,
             TrialWatchLookaheadDays = 240,
         });
 
         var reloaded = await _fixture.Repository.GetDashboardActionabilityPolicyAsync();
-        Assert.Equal(30, saved.MomentumStaleDays);
-        Assert.Equal(45, reloaded.PipelineStalledDays);
+        Assert.Equal(21, saved.DiscoveryCutoffLookaheadDays);
         Assert.Equal(21, reloaded.DiscoveryCutoffLookaheadDays);
         Assert.Equal(90, reloaded.TrialPreparationLookaheadDays);
         Assert.Equal(240, reloaded.TrialWatchLookaheadDays);
@@ -43,12 +38,17 @@ public sealed class DashboardActionabilityPolicyTests : IAsyncLifetime
     {
         await Assert.ThrowsAsync<ArgumentException>(() => _fixture.Repository.SaveDashboardActionabilityPolicyAsync(new SaveDashboardActionabilityPolicyRequest
         {
-            MomentumStaleDays = 0,
-            PipelineStalledDays = 60,
-            DiscoveryCutoffLookaheadDays = 45,
+            DiscoveryCutoffLookaheadDays = 0,
             TrialPreparationLookaheadDays = 60,
             TrialWatchLookaheadDays = 180,
         }));
+    }
+
+    [Fact]
+    public void MomentumAndPipelineStallThresholdsAreFixedConstants()
+    {
+        Assert.Equal(60, AttorneyDashboardEngine.MomentumStaleDays);
+        Assert.Equal(60, AttorneyDashboardEngine.PipelineStalledDays);
     }
 
     [Theory]

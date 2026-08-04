@@ -6,10 +6,10 @@ namespace CasePlanner.Web.Server.Persistence;
 // Manager/Administrator Dashboard Milestone 4 correction: replaces part of Milestone 2's Filing
 // Approval gate with a plain record of ARDOT's real, out-of-band pre-filing sign-off process. See
 // PreFilingMilestoneRecord's doc comment (DomainModels.cs) for the full rationale. Same
-// provider-switched shape as ICircuitClerkStore/ISettlementAuthorityRequestStore: a plain
-// interface, implemented once per provider, selected in Program.cs's DI registration by active
-// database provider. Unlike PipelineHolderApprovalRecord (append-only), this updates in place - one
-// row per (CaseId, Milestone), upserted on every mark/unmark.
+// provider-switched shape as ICircuitClerkStore: a plain interface, implemented once per provider,
+// selected in Program.cs's DI registration by active database provider. Unlike
+// PipelineHolderApprovalRecord (append-only), this updates in place - one row per (CaseId,
+// Milestone), upserted on every mark/unmark.
 public interface IPreFilingMilestoneStore
 {
     string Provider { get; }

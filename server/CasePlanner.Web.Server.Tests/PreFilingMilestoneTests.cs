@@ -8,9 +8,9 @@ namespace CasePlanner.Web.Server.Tests;
 // tracker (case_prefiling_milestones / PreFilingMilestoneGate) that replaces part of Milestone 2's
 // Filing Approval gate, plus PipelinePromotionGate.EnsureFilingReady - the corrected check basis
 // for a case leaving CaseStatus="Pipeline" - and its override path (open to any actor since Manager
-// Dashboard sign-off consolidation item 3, not just managers). Mirrors SettlementAuthorityRequestTests's
-// structure - a fresh RepositoryTestFixture per test, plain assertions against the real SQLite
-// repository (no mocking). Exercises CasePlannerRepository's methods directly (the same surface
+// Dashboard sign-off consolidation item 3, not just managers). A fresh RepositoryTestFixture per
+// test, plain assertions against the real SQLite repository (no mocking). Exercises
+// CasePlannerRepository's methods directly (the same surface
 // SqlitePreFilingMilestoneStore just delegates to).
 public class PreFilingMilestoneTests : IAsyncLifetime
 {

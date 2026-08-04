@@ -120,7 +120,6 @@ export type TrialWatchEntry = {
   ownerAppraisal: number | null
   ownerDemand: number | null
   lastOffer: number | null
-  settlementAuthority: number | null
   feeComparisonNote: string | null
   discoveryStatus: string
   witnessReadiness: string | null
@@ -263,7 +262,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
 ]
 
 // Manager/Administrator Dashboard Milestone 4. Mirrors server/CasePlanner.Web.Server/Models/
-// DomainModels.cs's PreFilingMilestoneRecord and SettlementAuthorityRequestRecord field-for-field.
+// DomainModels.cs's PreFilingMilestoneRecord field-for-field.
 
 export type PreFilingMilestone =
   | 'PleadingsPackageSent'
@@ -312,37 +311,6 @@ export type CreateReviewNoteRequest = {
   decision: string
   comment?: string
   occurredDate?: string
-}
-
-export type SettlementAuthorityRequestStatus = 'Pending' | 'Approved' | 'Denied' | 'InfoRequested'
-
-export type SettlementAuthorityRequestRecord = {
-  id: number
-  caseId: number
-  requestedAmount: number
-  requestingAttorney?: string | null
-  requestNotes?: string | null
-  status: SettlementAuthorityRequestStatus
-  grantedAmount?: number | null
-  requestedAt: string
-  requestedByUserId?: string | null
-  requestedByDisplay?: string | null
-  // "Recorded" fields - when and by whom the system entry was made.
-  decidedAt?: string | null
-  decidedByUserId?: string | null
-  decidedByDisplay?: string | null
-  decidedByRole?: string | null
-  decisionComment?: string | null
-  // "Granted" fields (Manager Dashboard sign-off consolidation, item 4) - only meaningful when
-  // status is 'Approved'. Distinct from the recorded fields above: the grant may have happened
-  // outside the system (e.g. verbally or by email) and be entered here after the fact by someone
-  // else, so who/when granted can legitimately differ from who/when recorded.
-  grantedBy?: string | null
-  grantedByRole?: string | null
-  grantedDate?: string | null
-  // Optional pointer to supporting correspondence/paperwork - free text, any outcome.
-  documentReference?: string | null
-  rowVersion?: string | null
 }
 
 // Fixed, stable four-milestone order for the pre-filing sign-off tracker. The server's

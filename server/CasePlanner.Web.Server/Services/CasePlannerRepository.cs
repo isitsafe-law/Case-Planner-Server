@@ -785,7 +785,8 @@ public sealed partial class CasePlannerRepository
             var dashboardHearings=(await GetHearingsAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
             var dashboardPostures=(await GetDiscoveryPosturesAsync(null)).Where(x=>IsAllowed(x.CaseId)).ToList();
             var actionabilityPolicy = await GetDashboardActionabilityPolicyAsync();
-            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters,policy: actionabilityPolicy);
+            var lastOffersByCase = await GetLatestOfferAmountsByCaseAsync();
+            return AttorneyDashboardComposer.Compose(dashboardCases,dashboardDeadlines,dashboardHearings,dashboardPostures,filters,policy: actionabilityPolicy,lastOffersByCase: lastOffersByCase);
         }
 #pragma warning disable CS0162
         bool Allowed(long caseId) => allowedCaseIds is null || allowedCaseIds.Contains(caseId);
@@ -924,7 +925,11 @@ public sealed partial class CasePlannerRepository
 
             if (AttorneyDashboardEngine.IsTrialWatchEligible(c, today, AttorneyDashboardEngine.DefaultTrialWatchDays))
             {
-                trialWatch.Add(BuildTrialWatchEntry(c, m.Posture, today));
+                var lastOfferAmount = (await GetOfferLogAsync(c.Id))
+                    .Where(o => o.OfferDate != null)
+                    .OrderByDescending(o => o.OfferDate)
+                    .FirstOrDefault()?.Amount;
+                trialWatch.Add(BuildTrialWatchEntry(c, m.Posture, today, lastOfferAmount));
             }
         }
 
@@ -1010,7 +1015,7 @@ public sealed partial class CasePlannerRepository
         });
     }
 
-    private static TrialWatchEntry BuildTrialWatchEntry(CaseRecord c, DiscoveryPosture? posture, DateOnly today)
+    private static TrialWatchEntry BuildTrialWatchEntry(CaseRecord c, DiscoveryPosture? posture, DateOnly today, decimal? lastOfferAmount)
     {
         int? daysUntilTrial = DateOnly.TryParse(c.TrialDate, out var trial) ? trial.DayNumber - today.DayNumber : null;
         var discoveryStatus = posture is null
@@ -1026,8 +1031,10 @@ public sealed partial class CasePlannerRepository
             Deposit = c.DepositAmount,
             OwnerAppraisal = null,
             OwnerDemand = null,
-            LastOffer = null,
-            SettlementAuthority = c.SettlementAuthorizedCeiling,
+            // Latest offer/counteroffer amount from the Risk Analysis tab's negotiation ledger (the
+            // Settlement Authority workflow this used to show was removed as redundant with that
+            // same ledger).
+            LastOffer = lastOfferAmount,
             FeeComparisonNote = AttorneyDashboardEngine.BuildFeeComparisonNote(c.DepositAmount, null, null),
             DiscoveryStatus = discoveryStatus,
             WitnessReadiness = null,
@@ -1364,8 +1371,8 @@ public sealed partial class CasePlannerRepository
             return applied;
         });
 
-        // Same "audit write happens as its own call, after the transaction has already committed"
-        // convention as CreateSettlementAuthorityRequestAsync/DecideSettlementAuthorityRequestAsync.
+        // Audit write happens as its own call, after the transaction has already committed - same
+        // convention used throughout this file for post-commit activity_log writes.
         if (overrideApplied)
         {
             await RecordActivityAsync(model.Id, "FilingGateOverridden", filingGateOverrideReason, null, "CaseStatus", "Pipeline", model.CaseStatus);
@@ -2471,12 +2478,12 @@ public sealed partial class CasePlannerRepository
     {
         "ComplaintFiled", "AnswerFiled", "ServiceCompleted", "PublicationCompleted", "DiscoveryServed",
         "DiscoveryResponsesReceived", "DiscoveryResponsesReviewed", "DepositionHeld", "AppraisalReceived",
-        "AppraisalReviewed", "NegotiationPositionChanged", "SettlementAuthorityRequested",
-        "SettlementAuthorityReceived", "MotionFiled", "MotionDecided", "MediationScheduled", "MediationHeld",
-        "TrialPrepMilestoneCompleted", "AttorneyStrategyDecisionRecorded",
-        // Manager/Administrator Dashboard Milestone 3: the two non-approval outcomes of a
-        // Settlement Authority decision - alongside SettlementAuthorityRequested/Received above,
-        // these are meaningful case events too.
+        "AppraisalReviewed", "NegotiationPositionChanged", "MotionFiled", "MotionDecided",
+        "MediationScheduled", "MediationHeld", "TrialPrepMilestoneCompleted", "AttorneyStrategyDecisionRecorded",
+        // The Settlement Authority workflow that used to write these four types was removed; they
+        // remain classified as meaningful only so pre-existing historical activity_log rows keep
+        // computing last_meaningful_activity_date/momentum correctly.
+        "SettlementAuthorityRequested", "SettlementAuthorityReceived",
         "SettlementAuthorityDenied", "SettlementAuthorityInfoRequested",
         // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker
         // (case_prefiling_milestones) and the manager-override path on the filing gate itself
@@ -2621,99 +2628,6 @@ public sealed partial class CasePlannerRepository
         }
 
         return list;
-    }
-
-    // Edits an activity entry with the same no-silent-overwrite contract as deadline date
-    // changes: the prior values, new values, reason, and timestamp are preserved in
-    // activity_log_history before the entry is updated. Editing a meaningful entry's date (or
-    // changing its type) honestly moves the momentum clock: last_meaningful_activity_date is
-    // recomputed from the full log afterward rather than patched incrementally.
-    public async Task<ActivityLogEntry> UpdateActivityEntryAsync(long activityId, UpdateActivityRequest request)
-    {
-        return await WithWriteAsync(async (connection, tx) =>
-        {
-            var readCmd = connection.CreateCommand();
-            readCmd.Transaction = tx;
-            readCmd.CommandText = "SELECT case_id, activity_type, occurred_at, notes FROM activity_log WHERE id=@id";
-            readCmd.Parameters.AddWithValue("@id", activityId);
-            long caseId;
-            string previousType;
-            string previousOccurredAt;
-            string? previousNotes;
-            await using (var reader = await readCmd.ExecuteReaderAsync())
-            {
-                if (!await reader.ReadAsync())
-                {
-                    throw new InvalidOperationException("Activity entry not found.");
-                }
-
-                caseId = reader.GetInt64(0);
-                previousType = reader.IsDBNull(1) ? "Other" : reader.GetString(1);
-                previousOccurredAt = reader.IsDBNull(2) ? "" : reader.GetString(2);
-                previousNotes = reader.IsDBNull(3) ? null : reader.GetString(3);
-            }
-
-            var newType = string.IsNullOrWhiteSpace(request.ActivityType) ? "Other" : request.ActivityType;
-            var newOccurredAt = string.IsNullOrWhiteSpace(request.OccurredAt) ? previousOccurredAt : request.OccurredAt;
-            var newNotes = BlankToNull(request.Notes);
-            var changed = newType != previousType || newOccurredAt != previousOccurredAt || newNotes != previousNotes;
-            var now = DateTime.UtcNow.ToString("O");
-
-            if (changed)
-            {
-                var historyCmd = connection.CreateCommand();
-                historyCmd.Transaction = tx;
-                historyCmd.CommandText = """
-                    INSERT INTO activity_log_history (activity_id, previous_type, new_type, previous_occurred_at, new_occurred_at, previous_notes, new_notes, reason, created_at, edited_by_user_id, edited_by_display)
-                    VALUES (@activity_id, @previous_type, @new_type, @previous_occurred_at, @new_occurred_at, @previous_notes, @new_notes, @reason, @now, @edited_by_user_id, @edited_by_display)
-                    """;
-                historyCmd.Parameters.AddWithValue("@activity_id", activityId);
-                historyCmd.Parameters.AddWithValue("@previous_type", previousType);
-                historyCmd.Parameters.AddWithValue("@new_type", newType);
-                historyCmd.Parameters.AddWithValue("@previous_occurred_at", previousOccurredAt);
-                historyCmd.Parameters.AddWithValue("@new_occurred_at", newOccurredAt);
-                historyCmd.Parameters.AddWithValue("@previous_notes", DbValue(previousNotes));
-                historyCmd.Parameters.AddWithValue("@new_notes", DbValue(newNotes));
-                historyCmd.Parameters.AddWithValue("@reason", DbValue(request.Reason));
-                historyCmd.Parameters.AddWithValue("@now",now);
-                historyCmd.Parameters.AddWithValue("@edited_by_user_id",(object?)_actor.UserId?.ToString("D")??DBNull.Value);
-                historyCmd.Parameters.AddWithValue("@edited_by_display",_actor.AuditLabel);
-                await historyCmd.ExecuteNonQueryAsync();
-
-                var updateCmd = connection.CreateCommand();
-                updateCmd.Transaction = tx;
-                updateCmd.CommandText = "UPDATE activity_log SET activity_type=@type, is_meaningful=@is_meaningful, occurred_at=@occurred_at, notes=@notes WHERE id=@id";
-                updateCmd.Parameters.AddWithValue("@type", newType);
-                updateCmd.Parameters.AddWithValue("@is_meaningful", MeaningfulActivityTypes.Contains(newType) ? 1 : 0);
-                updateCmd.Parameters.AddWithValue("@occurred_at", newOccurredAt);
-                updateCmd.Parameters.AddWithValue("@notes", DbValue(newNotes));
-                updateCmd.Parameters.AddWithValue("@id", activityId);
-                await updateCmd.ExecuteNonQueryAsync();
-
-                var recomputeCmd = connection.CreateCommand();
-                recomputeCmd.Transaction = tx;
-                recomputeCmd.CommandText = """
-                    UPDATE cases SET last_meaningful_activity_date =
-                        (SELECT MAX(occurred_at) FROM activity_log WHERE case_id=@case_id AND is_meaningful=1)
-                    WHERE id=@case_id
-                    """;
-                recomputeCmd.Parameters.AddWithValue("@case_id", caseId);
-                await recomputeCmd.ExecuteNonQueryAsync();
-
-                await SetAppSettingAsync(connection, tx, "last_save_result", $"Edited activity entry {activityId} at {DateTime.Now:G}");
-            }
-
-            return new ActivityLogEntry
-            {
-                Id = activityId,
-                CaseId = caseId,
-                ActivityType = newType,
-                IsMeaningful = MeaningfulActivityTypes.Contains(newType),
-                OccurredAt = newOccurredAt,
-                Notes = newNotes,
-                CreatedAt = now,ActorUserId=_actor.UserId?.ToString("D"),ActorDisplay=_actor.AuditLabel,
-            };
-        });
     }
 
     // --- Attorney Dashboard: quick-action single-field patches ---
@@ -4369,252 +4283,10 @@ public sealed partial class CasePlannerRepository
         });
     }
 
-    // Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - pure
-    // record-keeping since Manager Dashboard sign-off consolidation item 4 (see DecideAsync's doc
-    // comment). Unlike pipeline_holder_approvals above (append-only), settlement_authority_requests
-    // updates in place - one row per request, mutated by DecideSettlementAuthorityRequestAsync when
-    // an outcome is recorded. The full decision history lives in activity_log (RecordActivityAsync
-    // below), not here.
-    public async Task<List<SettlementAuthorityRequestRecord>> GetSettlementAuthorityRequestsAsync(long? caseId)
-    {
-        var list = new List<SettlementAuthorityRequestRecord>();
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-        var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-            SELECT id, case_id, requested_amount, requesting_attorney, request_notes, status,
-                   granted_amount, requested_at, requested_by_user_id, requested_by_display,
-                   decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment,
-                   granted_by, granted_by_role, granted_date, document_reference
-            FROM settlement_authority_requests
-            WHERE (@caseId IS NULL OR case_id = @caseId)
-            ORDER BY id DESC
-            """;
-        cmd.Parameters.AddWithValue("@caseId", caseId is null ? DBNull.Value : caseId);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            list.Add(ReadSettlementAuthorityRequest(reader));
-        }
-
-        return list;
-    }
-
-    private static SettlementAuthorityRequestRecord ReadSettlementAuthorityRequest(SqliteDataReader reader) => new()
-    {
-        Id = reader.GetInt64(0),
-        CaseId = reader.GetInt64(1),
-        RequestedAmount = reader.IsDBNull(2) ? 0m : reader.GetDecimal(2),
-        RequestingAttorney = reader.IsDBNull(3) ? null : reader.GetString(3),
-        RequestNotes = reader.IsDBNull(4) ? null : reader.GetString(4),
-        Status = reader.IsDBNull(5) ? "Pending" : reader.GetString(5),
-        GrantedAmount = reader.IsDBNull(6) ? (decimal?)null : reader.GetDecimal(6),
-        RequestedAt = reader.IsDBNull(7) ? "" : reader.GetString(7),
-        RequestedByUserId = reader.IsDBNull(8) ? null : reader.GetString(8),
-        RequestedByDisplay = reader.IsDBNull(9) ? null : reader.GetString(9),
-        DecidedAt = reader.IsDBNull(10) ? null : reader.GetString(10),
-        DecidedByUserId = reader.IsDBNull(11) ? null : reader.GetString(11),
-        DecidedByDisplay = reader.IsDBNull(12) ? null : reader.GetString(12),
-        DecidedByRole = reader.IsDBNull(13) ? null : reader.GetString(13),
-        DecisionComment = reader.IsDBNull(14) ? null : reader.GetString(14),
-        GrantedBy = reader.IsDBNull(15) ? null : reader.GetString(15),
-        GrantedByRole = reader.IsDBNull(16) ? null : reader.GetString(16),
-        GrantedDate = reader.IsDBNull(17) ? null : reader.GetString(17),
-        DocumentReference = reader.IsDBNull(18) ? null : reader.GetString(18),
-    };
-
-    // Rejects (InvalidOperationException, caught as 400 at the endpoint) when the case already has
-    // an open thread (status Pending/InfoRequested) - only one open request may exist per case at a
-    // time. No special role gate here: any user with normal case write access can submit one
-    // (enforced one level up, at the endpoint's access.CanWriteAsync check), matching how any
-    // attorney would actually ask for authority.
-    public async Task<SettlementAuthorityRequestRecord> CreateSettlementAuthorityRequestAsync(long caseId, CreateSettlementAuthorityRequest request)
-    {
-        var created = await WithWriteAsync(async (connection, tx) =>
-        {
-            var openCmd = connection.CreateCommand();
-            openCmd.Transaction = tx;
-            openCmd.CommandText = "SELECT COUNT(*) FROM settlement_authority_requests WHERE case_id=@case_id AND status IN ('Pending','InfoRequested')";
-            openCmd.Parameters.AddWithValue("@case_id", caseId);
-            var openCount = Convert.ToInt64(await openCmd.ExecuteScalarAsync());
-            if (openCount > 0)
-                throw new InvalidOperationException($"Case {caseId} already has an open Settlement Authority request. Decide it before submitting another.");
-
-            var now = DateTime.UtcNow.ToString("O");
-            var cmd = connection.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO settlement_authority_requests
-                    (case_id, requested_amount, requesting_attorney, request_notes, status, requested_at, requested_by_user_id, requested_by_display)
-                VALUES
-                    (@case_id, @requested_amount, @requesting_attorney, @request_notes, 'Pending', @requested_at, @requested_by_user_id, @requested_by_display);
-                SELECT last_insert_rowid();
-                """;
-            cmd.Parameters.AddWithValue("@case_id", caseId);
-            cmd.Parameters.AddWithValue("@requested_amount", request.RequestedAmount);
-            cmd.Parameters.AddWithValue("@requesting_attorney", DbValue(request.RequestingAttorney));
-            cmd.Parameters.AddWithValue("@request_notes", DbValue(request.RequestNotes));
-            cmd.Parameters.AddWithValue("@requested_at", now);
-            cmd.Parameters.AddWithValue("@requested_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@requested_by_display", _actor.AuditLabel);
-            var id = Convert.ToInt64(await cmd.ExecuteScalarAsync());
-
-            return new SettlementAuthorityRequestRecord
-            {
-                Id = id,
-                CaseId = caseId,
-                RequestedAmount = request.RequestedAmount,
-                RequestingAttorney = string.IsNullOrWhiteSpace(request.RequestingAttorney) ? null : request.RequestingAttorney,
-                RequestNotes = string.IsNullOrWhiteSpace(request.RequestNotes) ? null : request.RequestNotes,
-                Status = "Pending",
-                RequestedAt = now,
-                RequestedByUserId = _actor.UserId?.ToString("D"),
-                RequestedByDisplay = _actor.AuditLabel,
-            };
-        });
-
-        // Same convention as every other quick-action write in this file (e.g. SetHolderAsync's
-        // RecordActivityAsync call) - the audit write happens as its own call, after the main
-        // transaction has already committed, not nested inside it.
-        await RecordActivityAsync(caseId, "SettlementAuthorityRequested", request.RequestNotes, null);
-        return created;
-    }
-
-    // Validates Action/Comment up front (ArgumentException) before ever touching the database, then
-    // requires the request to currently be Pending/InfoRequested (InvalidOperationException - can't
-    // re-decide an already-resolved request). On Approved, also updates the case's
-    // SettlementAuthorizedCeiling in the same transaction as the request row, and records the
-    // separate real-world GrantedBy/GrantedByRole/GrantedDate facts alongside the
-    // who-recorded-it/when-recorded DecidedBy*/DecidedAt fields (Manager Dashboard sign-off
-    // consolidation, item 4 - see SettlementAuthorityRequestRecord's doc comment). No routing,
-    // threshold, or escalation logic here or anywhere else in this method; recording any of the
-    // three outcomes is a plain write, gated only at the endpoint by ordinary case-write access. The
-    // activity_log entry is written afterward, once the transaction has committed (see
-    // CreateSettlementAuthorityRequestAsync above for why).
-    public async Task<SettlementAuthorityRequestRecord> DecideSettlementAuthorityRequestAsync(long requestId, DecideSettlementAuthorityRequest decision)
-    {
-        if (decision.Action is not ("Approved" or "Denied" or "InfoRequested"))
-            throw new ArgumentException("Action must be \"Approved\", \"Denied\", or \"InfoRequested\".");
-        if (string.IsNullOrWhiteSpace(decision.Comment))
-            throw new ArgumentException("A comment is required to decide a Settlement Authority request.");
-
-        long caseId = 0;
-        decimal? previousCeiling = null;
-        decimal? grantedAmount = null;
-
-        var updated = await WithWriteAsync(async (connection, tx) =>
-        {
-            var lookupCmd = connection.CreateCommand();
-            lookupCmd.Transaction = tx;
-            lookupCmd.CommandText = "SELECT case_id, status, requested_amount FROM settlement_authority_requests WHERE id=@id";
-            lookupCmd.Parameters.AddWithValue("@id", requestId);
-            string currentStatus;
-            decimal requestedAmount;
-            await using (var reader = await lookupCmd.ExecuteReaderAsync())
-            {
-                if (!await reader.ReadAsync())
-                    throw new InvalidOperationException($"Settlement Authority request {requestId} was not found.");
-                caseId = reader.GetInt64(0);
-                currentStatus = reader.IsDBNull(1) ? "Pending" : reader.GetString(1);
-                requestedAmount = reader.IsDBNull(2) ? 0m : reader.GetDecimal(2);
-            }
-
-            if (currentStatus is not ("Pending" or "InfoRequested"))
-                throw new InvalidOperationException($"Settlement Authority request {requestId} has already been decided (status \"{currentStatus}\") and cannot be decided again.");
-
-            var caseCmd = connection.CreateCommand();
-            caseCmd.Transaction = tx;
-            caseCmd.CommandText = "SELECT settlement_authorized_ceiling FROM cases WHERE id=@case_id";
-            caseCmd.Parameters.AddWithValue("@case_id", caseId);
-            var priorValue = await caseCmd.ExecuteScalarAsync();
-            previousCeiling = priorValue is null or DBNull ? null : Convert.ToDecimal(priorValue);
-
-            string? grantedBy = null;
-            string? grantedByRole = null;
-            string? grantedDate = null;
-            if (decision.Action == "Approved")
-            {
-                grantedAmount = decision.GrantedAmount ?? requestedAmount;
-                grantedBy = string.IsNullOrWhiteSpace(decision.GrantedBy) ? null : decision.GrantedBy.Trim();
-                grantedByRole = string.IsNullOrWhiteSpace(decision.GrantedByRole) ? null : decision.GrantedByRole.Trim();
-                grantedDate = string.IsNullOrWhiteSpace(decision.GrantedDate) ? DateTime.UtcNow.ToString("yyyy-MM-dd") : decision.GrantedDate;
-            }
-            var documentReference = string.IsNullOrWhiteSpace(decision.DocumentReference) ? null : decision.DocumentReference.Trim();
-
-            var now = DateTime.UtcNow.ToString("O");
-            var updateCmd = connection.CreateCommand();
-            updateCmd.Transaction = tx;
-            updateCmd.CommandText = """
-                UPDATE settlement_authority_requests SET
-                    status=@status,
-                    granted_amount=@granted_amount,
-                    decided_at=@decided_at,
-                    decided_by_user_id=@decided_by_user_id,
-                    decided_by_display=@decided_by_display,
-                    decided_by_role=@decided_by_role,
-                    decision_comment=@decision_comment,
-                    granted_by=@granted_by,
-                    granted_by_role=@granted_by_role,
-                    granted_date=@granted_date,
-                    document_reference=@document_reference
-                WHERE id=@id
-                """;
-            updateCmd.Parameters.AddWithValue("@status", decision.Action);
-            updateCmd.Parameters.AddWithValue("@granted_amount", grantedAmount.HasValue ? grantedAmount.Value : DBNull.Value);
-            updateCmd.Parameters.AddWithValue("@decided_at", now);
-            updateCmd.Parameters.AddWithValue("@decided_by_user_id", (object?)_actor.UserId?.ToString("D") ?? DBNull.Value);
-            updateCmd.Parameters.AddWithValue("@decided_by_display", _actor.AuditLabel);
-            updateCmd.Parameters.AddWithValue("@decided_by_role", DbValue(_actor.Role));
-            updateCmd.Parameters.AddWithValue("@decision_comment", decision.Comment);
-            updateCmd.Parameters.AddWithValue("@granted_by", DbValue(grantedBy));
-            updateCmd.Parameters.AddWithValue("@granted_by_role", DbValue(grantedByRole));
-            updateCmd.Parameters.AddWithValue("@granted_date", DbValue(grantedDate));
-            updateCmd.Parameters.AddWithValue("@document_reference", DbValue(documentReference));
-            updateCmd.Parameters.AddWithValue("@id", requestId);
-            await updateCmd.ExecuteNonQueryAsync();
-
-            if (decision.Action == "Approved")
-            {
-                var ceilingCmd = connection.CreateCommand();
-                ceilingCmd.Transaction = tx;
-                ceilingCmd.CommandText = "UPDATE cases SET settlement_authorized_ceiling=@ceiling, updated_at=@updated_at WHERE id=@case_id";
-                ceilingCmd.Parameters.AddWithValue("@ceiling", grantedAmount!.Value);
-                ceilingCmd.Parameters.AddWithValue("@updated_at", now);
-                ceilingCmd.Parameters.AddWithValue("@case_id", caseId);
-                await ceilingCmd.ExecuteNonQueryAsync();
-            }
-
-            var readBackCmd = connection.CreateCommand();
-            readBackCmd.Transaction = tx;
-            readBackCmd.CommandText = """
-                SELECT id, case_id, requested_amount, requesting_attorney, request_notes, status,
-                       granted_amount, requested_at, requested_by_user_id, requested_by_display,
-                       decided_at, decided_by_user_id, decided_by_display, decided_by_role, decision_comment,
-                       granted_by, granted_by_role, granted_date, document_reference
-                FROM settlement_authority_requests WHERE id=@id
-                """;
-            readBackCmd.Parameters.AddWithValue("@id", requestId);
-            await using var readBackReader = await readBackCmd.ExecuteReaderAsync();
-            await readBackReader.ReadAsync();
-            return ReadSettlementAuthorityRequest(readBackReader);
-        });
-
-        var previousLabel = previousCeiling.HasValue ? previousCeiling.Value.ToString("F2") : "none";
-        var (activityType, newValueLabel) = decision.Action switch
-        {
-            "Approved" => ("SettlementAuthorityReceived", grantedAmount!.Value.ToString("F2")),
-            "Denied" => ("SettlementAuthorityDenied", "Denied"),
-            _ => ("SettlementAuthorityInfoRequested", "InfoRequested"),
-        };
-        await RecordActivityAsync(caseId, activityType, decision.Comment, null, "SettlementAuthorizedCeiling", previousLabel, newValueLabel);
-
-        return updated;
-    }
-
     // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker (see
     // PreFilingMilestoneRecord's doc comment in DomainModels.cs and PreFilingMilestoneGate in
-    // PipelineHolderApprovalStores.cs). Updates in place, one row per (case_id, milestone) - like
-    // settlement_authority_requests above, not like pipeline_holder_approvals.
+    // PipelineHolderApprovalStores.cs). Updates in place, one row per (case_id, milestone) - unlike
+    // pipeline_holder_approvals, which is append-only.
     public async Task<List<PreFilingMilestoneRecord>> GetPreFilingMilestonesAsync(long? caseId)
     {
         var list = new List<PreFilingMilestoneRecord>();
@@ -4741,9 +4413,8 @@ public sealed partial class CasePlannerRepository
             return ReadPreFilingMilestone(readBackReader);
         });
 
-        // Same convention as every other quick-action write in this file (e.g.
-        // CreateSettlementAuthorityRequestAsync's RecordActivityAsync call) - the audit write
-        // happens as its own call, after the main transaction has already committed.
+        // Same convention as every other quick-action write in this file - the audit write happens
+        // as its own call, after the main transaction has already committed.
         await RecordActivityAsync(caseId, "PreFilingMilestoneMarked", request.Note, null, milestone, "Unmarked", request.OccurredDate);
         return saved;
     }
@@ -6128,6 +5799,32 @@ public sealed partial class CasePlannerRepository
         return list;
     }
 
+    // Latest (most recent offer_date) amount per case across the whole offer log, for the Attorney
+    // Dashboard's Trial Watch panel - replaces the removed Settlement Authority ceiling there.
+    // Fetched in bulk (no case_id filter) rather than once per trial-watch-eligible case, since the
+    // table is small and this avoids an N+1 query per dashboard load.
+    public async Task<Dictionary<long, decimal?>> GetLatestOfferAmountsByCaseAsync()
+    {
+        var latestByCase = new Dictionary<long, (string? Date, decimal? Amount)>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT case_id, offer_date, amount FROM risk_analysis_offer_log";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var caseId = reader.GetInt64(0);
+            var offerDate = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var amount = reader.IsDBNull(2) ? (decimal?)null : reader.GetDecimal(2);
+            if (!latestByCase.TryGetValue(caseId, out var current) || string.CompareOrdinal(offerDate ?? "", current.Date ?? "") > 0)
+            {
+                latestByCase[caseId] = (offerDate, amount);
+            }
+        }
+
+        return latestByCase.ToDictionary(kv => kv.Key, kv => kv.Value.Amount);
+    }
+
     public async Task<RiskAnalysisOfferLogEntry> SaveOfferLogEntryAsync(RiskAnalysisOfferLogEntry model)
     {
         return await WithWriteAsync(async (connection, tx) =>
@@ -6845,7 +6542,6 @@ public sealed partial class CasePlannerRepository
         await AddColumnIfMissingAsync(connection, "cases", "stage", "TEXT");
         await AddColumnIfMissingAsync(connection, "cases", "case_type", "TEXT DEFAULT 'Standard'");
         await AddColumnIfMissingAsync(connection, "cases", "track", "TEXT DEFAULT 'Contested'");
-        await AddColumnIfMissingAsync(connection, "checklist_templates", "track", "TEXT DEFAULT 'Any'");
         // Template ownership marker (see SeedChecklistTemplatesAsync/SeedDeadlineTemplatesAsync):
         // 0 = stock seed content, safe to refresh on a version bump; 1 = a firm has touched it
         // (created, edited, or edited/deleted a child item) through the Template Editor and it is
@@ -6992,11 +6688,9 @@ public sealed partial class CasePlannerRepository
         // Staged service-party consolidation: new rows may reference the canonical defendant,
         // while legacy free-text party names remain intact for historical records.
         await AddColumnIfMissingAsync(connection, "service_log_entries", "case_defendant_id", "INTEGER");
-        // Manager/Administrator Dashboard Milestone 3 (Settlement Authority workflow): the ceiling
-        // Chief Counsel has most recently granted - same nullable-decimal AddColumnIfMissingAsync
-        // convention as additional_deposit_amount/attorney_fees_amount above (REAL, not TEXT -
-        // SQLite's dynamic typing means this is a documentation nicety rather than an enforced
-        // rule, but it matches every sibling nullable-decimal case column instead of standing out).
+        // Retired: backed the removed Settlement Authority workflow. Left in schema (unmapped to
+        // any CaseRecord property) rather than dropped, so existing rows/ordinal-position readers
+        // elsewhere aren't disturbed - see CaseRecordDataMapper.cs's comment at this ordinal.
         await AddColumnIfMissingAsync(connection, "cases", "settlement_authorized_ceiling", "REAL");
         // Pre-filing sign-off/Settlement Authority final implementation, item 4: true (the SQLite
         // DEFAULT backfills every existing row) unless a case was created by the CSV/Excel import
@@ -7007,15 +6701,11 @@ public sealed partial class CasePlannerRepository
         // system entry was made) and "decided_by_display" (who operated the UI to record it).
         // granted_by/granted_by_role name whoever actually granted the authority (often outside
         // the system, e.g. by email) and granted_date is that real-world, backdatable date -
-        // document_reference is an optional pointer to supporting correspondence/paperwork.
         // Pre-filing sign-off/Settlement Authority final implementation, item 1: shared by every
         // row a single bulk-mark action touches, so the activity trail shows they came from one
-        // action - null for a single-case mark.
+        // action - null for a single-case mark. (The Bulk Mark Milestones feature this served has
+        // since been removed too; batch_id is kept only for historical rows.)
         await AddColumnIfMissingAsync(connection, "case_prefiling_milestones", "batch_id", "TEXT");
-        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by", "TEXT");
-        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_by_role", "TEXT");
-        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "granted_date", "TEXT");
-        await AddColumnIfMissingAsync(connection, "settlement_authority_requests", "document_reference", "TEXT");
         await MigrateLegacyStageNamesAsync(connection);
         await MigrateStageTrackUnificationV1Async(connection);
         await MigrateRiskAnalysesToSingleRecordAsync(connection);
@@ -7901,7 +7591,7 @@ public sealed partial class CasePlannerRepository
         var result = new List<WorkTemplateCandidate>();
         var today = DateOnly.FromDateTime(DateTime.Today);
         var workflowStatus = string.IsNullOrWhiteSpace(ws.Case.CaseStatus)
-            ? MapConsolidatedCaseStatus(ws.Case.Status, ws.Case.Stage, ws.Case.Track, ws.Case.CaseNumber, ws.Case.PipelineStage)
+            ? MapConsolidatedCaseStatus(ws.Case.Status, ws.Case.Stage, ws.Case.CaseNumber, ws.Case.PipelineStage)
             : ws.Case.CaseStatus;
         foreach (var template in await GetChecklistTemplatesAsync())
         {
@@ -9222,10 +8912,8 @@ public sealed partial class CasePlannerRepository
     {
         var caseCmd = connection.CreateCommand();
         caseCmd.Transaction = tx;
-        caseCmd.CommandText = "SELECT COALESCE(stage,''), COALESCE(track,'Contested'), COALESCE(status,''), COALESCE(case_status,'') FROM cases WHERE id=@id";
+        caseCmd.CommandText = "SELECT COALESCE(stage,''), COALESCE(status,''), COALESCE(case_status,'') FROM cases WHERE id=@id";
         caseCmd.Parameters.AddWithValue("@id", caseId);
-        string stage;
-        string track;
         string workflowStatus;
         await using (var caseReader = await caseCmd.ExecuteReaderAsync())
         {
@@ -9234,18 +8922,16 @@ public sealed partial class CasePlannerRepository
                 return 0;
             }
 
-            // Triage cases skip template generation - their stage/track aren't confirmed yet
-            // (same gate as GenerateDeadlinesForCaseAsync).
-            if (caseReader.GetString(2) is "Triage" or "Pipeline" || caseReader.GetString(3) is "Triage" or "Pipeline")
+            // Triage cases skip template generation - their stage isn't confirmed yet (same gate as
+            // GenerateDeadlinesForCaseAsync).
+            if (caseReader.GetString(1) is "Triage" or "Pipeline" || caseReader.GetString(2) is "Triage" or "Pipeline")
             {
                 return 0;
             }
 
-            stage = caseReader.GetString(0);
-            track = caseReader.GetString(1);
-            workflowStatus = string.IsNullOrWhiteSpace(caseReader.GetString(3))
-                ? MapConsolidatedCaseStatus(caseReader.GetString(2), stage, track)
-                : caseReader.GetString(3);
+            workflowStatus = string.IsNullOrWhiteSpace(caseReader.GetString(2))
+                ? MapConsolidatedCaseStatus(caseReader.GetString(1), caseReader.GetString(0))
+                : caseReader.GetString(2);
         }
 
         var tags = new List<string>();
@@ -9711,7 +9397,7 @@ public sealed partial class CasePlannerRepository
         if (string.IsNullOrWhiteSpace(model.Status)) model.Status = "Pipeline";
         if (string.IsNullOrWhiteSpace(model.CaseStatus) || model.CaseStatus == "Pipeline" && model.Status != "Pipeline")
         {
-            model.CaseStatus = MapConsolidatedCaseStatus(model.Status, model.Stage, model.Track, model.CaseNumber, model.PipelineStage);
+            model.CaseStatus = MapConsolidatedCaseStatus(model.Status, model.Stage, model.CaseNumber, model.PipelineStage);
         }
         // Auto-fill and persist the 120-day service deadline from the filing date (or an explicit
         // basis date, if set) the first time it's missing, so it's a real stored value rather than
@@ -9782,7 +9468,6 @@ public sealed partial class CasePlannerRepository
                     answer_filed, answer_filed_date,
                     attorney_fees_awarded, attorney_fees_amount, judge, division,
                     fap_number, parcel_number, case_style, opposing_counsel_contact, case_folder_path,
-                    settlement_authorized_ceiling,
                     originated_in_system,
                     created_at, updated_at
                 ) VALUES (
@@ -9806,7 +9491,6 @@ public sealed partial class CasePlannerRepository
                     @answer_filed, @answer_filed_date,
                     @attorney_fees_awarded, @attorney_fees_amount, @judge, @division,
                     @fap_number, @parcel_number, @case_style, @opposing_counsel_contact, @case_folder_path,
-                    @settlement_authorized_ceiling,
                     @originated_in_system,
                     @created_at, @updated_at
                 );
@@ -9900,7 +9584,6 @@ public sealed partial class CasePlannerRepository
                     case_style=@case_style,
                     opposing_counsel_contact=@opposing_counsel_contact,
                     case_folder_path=@case_folder_path,
-                    settlement_authorized_ceiling=@settlement_authorized_ceiling,
                     updated_at=@updated_at
                 WHERE id=@id;
                 SELECT @id;
@@ -9919,12 +9602,15 @@ public sealed partial class CasePlannerRepository
         return overrideApplied;
     }
 
-    private static string MapConsolidatedCaseStatus(string? status, string? stage, string? track, string? caseNumber = null, string? pipelineStage = null)
+    // `track` used to be an input here (Settlement -> "Settlement Pending"), but CaseStatus is now
+    // the directly-set source of truth for that value (the client sends it explicitly on every save
+    // - see App.tsx's serializeCaseDraft). This function only runs as a fallback for a case whose
+    // CaseStatus was never populated (a legacy row, or a direct API write that omitted it).
+    private static string MapConsolidatedCaseStatus(string? status, string? stage, string? caseNumber = null, string? pipelineStage = null)
     {
         if (status == "Triage") return "Triage";
         if (status is "Closed" or "Complete" || stage == "Resolved") return "Resolved / Closed";
         if (status == "Pipeline" || (string.IsNullOrWhiteSpace(caseNumber) && !string.IsNullOrWhiteSpace(pipelineStage))) return "Pipeline";
-        if (track == "Settlement") return "Settlement Pending";
         if (stage == "Trial Track") return "Trial Preparation";
         if (stage == "Service") return "Filed / Service Pending";
         return "Active Litigation";
@@ -10015,7 +9701,6 @@ public sealed partial class CasePlannerRepository
         cmd.Parameters.AddWithValue("@case_style", DbValue(model.CaseStyle));
         cmd.Parameters.AddWithValue("@opposing_counsel_contact", DbValue(model.OpposingCounselContact));
         cmd.Parameters.AddWithValue("@case_folder_path", DbValue(model.CaseFolderPath));
-        cmd.Parameters.AddWithValue("@settlement_authorized_ceiling", model.SettlementAuthorizedCeiling.HasValue ? model.SettlementAuthorizedCeiling.Value : DBNull.Value);
         // Only referenced by the INSERT branch's SQL text above (like created_at/updated_at below,
         // but unlike those two, also excluded from the UPDATE branch's SET clause) - immutable after
         // a case is first created (pre-filing sign-off/Settlement Authority final implementation,
@@ -10454,18 +10139,14 @@ public sealed partial class CasePlannerRepository
 
     public async Task<DashboardActionabilityPolicy> SaveDashboardActionabilityPolicyAsync(SaveDashboardActionabilityPolicyRequest request)
     {
-        if (request.MomentumStaleDays < 1 || request.PipelineStalledDays < 1 || request.DiscoveryCutoffLookaheadDays < 1
-            || request.TrialPreparationLookaheadDays < 1 || request.TrialWatchLookaheadDays < 1)
+        if (request.DiscoveryCutoffLookaheadDays < 1 || request.TrialPreparationLookaheadDays < 1 || request.TrialWatchLookaheadDays < 1)
             throw new ArgumentException("Actionability thresholds must be at least 1 day.");
-        if (request.MomentumStaleDays > 365 || request.PipelineStalledDays > 365 || request.DiscoveryCutoffLookaheadDays > 365
-            || request.TrialPreparationLookaheadDays > 365 || request.TrialWatchLookaheadDays > 730)
+        if (request.DiscoveryCutoffLookaheadDays > 365 || request.TrialPreparationLookaheadDays > 365 || request.TrialWatchLookaheadDays > 730)
             throw new ArgumentException("Actionability thresholds exceed the supported range.");
         return await WithWriteAsync(async (connection, tx) =>
         {
             var policy = new DashboardActionabilityPolicy
             {
-                MomentumStaleDays = request.MomentumStaleDays,
-                PipelineStalledDays = request.PipelineStalledDays,
                 DiscoveryCutoffLookaheadDays = request.DiscoveryCutoffLookaheadDays,
                 TrialPreparationLookaheadDays = request.TrialPreparationLookaheadDays,
                 TrialWatchLookaheadDays = request.TrialWatchLookaheadDays,
@@ -10652,7 +10333,6 @@ public sealed partial class CasePlannerRepository
             title TEXT NOT NULL,
             severity TEXT NOT NULL DEFAULT 'normal',
             case_type TEXT NOT NULL DEFAULT 'Any',
-            track TEXT NOT NULL DEFAULT 'Any',
             active INTEGER DEFAULT 1,
             created_at TEXT,
             updated_at TEXT
@@ -10726,7 +10406,6 @@ public sealed partial class CasePlannerRepository
             version INTEGER NOT NULL,
             category TEXT NOT NULL,
             issue_tag_name TEXT,
-            track TEXT NOT NULL DEFAULT 'Any',
             wording TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
             sort_order INTEGER NOT NULL DEFAULT 0,
@@ -10964,7 +10643,6 @@ public sealed partial class CasePlannerRepository
             stage TEXT,
             issue_tag_name TEXT,
             case_type TEXT NOT NULL DEFAULT 'Any',
-            track TEXT NOT NULL DEFAULT 'Any',
             active INTEGER DEFAULT 1,
             created_at TEXT,
             updated_at TEXT
@@ -11149,27 +10827,6 @@ public sealed partial class CasePlannerRepository
             notes TEXT,
             is_active INTEGER NOT NULL DEFAULT 1
         );
-        CREATE TABLE IF NOT EXISTS settlement_authority_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            case_id INTEGER NOT NULL,
-            requested_amount REAL NOT NULL,
-            requesting_attorney TEXT,
-            request_notes TEXT,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            granted_amount REAL,
-            requested_at TEXT NOT NULL,
-            requested_by_user_id TEXT,
-            requested_by_display TEXT,
-            decided_at TEXT,
-            decided_by_user_id TEXT,
-            decided_by_display TEXT,
-            decided_by_role TEXT,
-            decision_comment TEXT,
-            granted_by TEXT,
-            granted_by_role TEXT,
-            granted_date TEXT,
-            document_reference TEXT
-        );
         CREATE TABLE IF NOT EXISTS case_prefiling_milestones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             case_id INTEGER NOT NULL,
@@ -11201,7 +10858,6 @@ public sealed partial class CasePlannerRepository
         CREATE INDEX IF NOT EXISTS idx_activity_log_case_id ON activity_log(case_id);
         CREATE INDEX IF NOT EXISTS idx_activity_log_history_activity_id ON activity_log_history(activity_id);
         CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read_created ON notifications(recipient_user_id, is_read, created_at);
-        CREATE INDEX IF NOT EXISTS idx_settlement_authority_requests_case_id ON settlement_authority_requests(case_id);
         CREATE INDEX IF NOT EXISTS idx_case_prefiling_milestones_case_id ON case_prefiling_milestones(case_id);
         CREATE INDEX IF NOT EXISTS idx_case_review_notes_case_id ON case_review_notes(case_id);
         CREATE INDEX IF NOT EXISTS idx_newspapers_county ON newspapers(county);

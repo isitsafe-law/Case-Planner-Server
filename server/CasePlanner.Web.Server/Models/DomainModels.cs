@@ -114,13 +114,6 @@ public sealed class CaseRecord
     public string? PropertyDescription { get; set; }
     public decimal? AdditionalDepositAmount { get; set; }
     public string? AdditionalDepositDate { get; set; }
-    // Manager/Administrator Dashboard Milestone 3 (Settlement Authority workflow): the ceiling
-    // Chief Counsel has most recently granted via an approved SettlementAuthorityRequestRecord
-    // (see ISettlementAuthorityRequestStore.DecideAsync). Null until a request is ever approved for
-    // this case; a later approval simply overwrites it - there is no history of prior ceilings
-    // here, that lives in activity_log's FieldChanged="SettlementAuthorizedCeiling" entries. Feeds
-    // TrialWatchEntry.SettlementAuthority, previously a dead hardcoded-null placeholder.
-    public decimal? SettlementAuthorizedCeiling { get; set; }
     // Pre-filing sign-off/Settlement Authority final implementation, item 4: true for every
     // in-system-originated case (the default); set false ONLY at the moment a brand-new row is
     // created by the CSV/Excel import path (ImportCasesCsvAsync/ImportCasesXlsxAsync and their SQL
@@ -279,15 +272,6 @@ public sealed class ActivityLogHistoryEntry
     public string? CreatedAt { get; set; }
     public string? EditedByUserId { get; set; }
     public string? EditedByDisplay { get; set; }
-}
-
-public sealed class UpdateActivityRequest
-{
-    public string? RowVersion { get; set; }
-    public string ActivityType { get; set; } = "Other";
-    public string OccurredAt { get; set; } = "";
-    public string? Notes { get; set; }
-    public string Reason { get; set; } = "";
 }
 
 public sealed class DeadlineItem
@@ -565,9 +549,9 @@ public sealed class PipelineHolderApprovalRecord
 // signature - the Director is NOT a user of this system and never logs in. This table does not
 // gate, route, or collect those approvals - it RECORDS that the out-of-band sign-offs occurred, one
 // row per (CaseId, Milestone), so the division can see what each Pipeline tract is waiting on.
-// Unlike PipelineHolderApprovalRecord (append-only), this updates in place - the same shape
-// settlement_authority_requests uses - so marking or unmarking the same milestone again just
-// updates this one row rather than inserting a new one. See PreFilingMilestoneGate
+// Unlike PipelineHolderApprovalRecord (append-only), this updates in place - so marking or
+// unmarking the same milestone again just updates this one row rather than inserting a new one.
+// See PreFilingMilestoneGate
 // (PipelineHolderApprovalStores.cs) for the four-milestone strict sequential-order enforcement, and
 // PipelinePromotionGate's legacy compatibility helpers; DirectorSignatureReceived is preserved
 // for history but no longer gates a case leaving Pipeline because it has no active UI control.
@@ -677,8 +661,7 @@ public sealed class ReviewNoteRecord
     // PreFilingMilestoneRecord.OccurredDate.
     public string OccurredDate { get; set; } = "";
     // Automatic - when this row was entered into the system, and by whom/what role, distinct from
-    // ReviewerName/ReviewerRole (the actual reviewer) the same way SettlementAuthorityRequestRecord
-    // separates "recorded" from "granted".
+    // ReviewerName/ReviewerRole (the actual reviewer, who may not be the one recording it).
     public string? CreatedAt { get; set; }
     public string? CreatedByUserId { get; set; }
     public string? CreatedByDisplay { get; set; }
@@ -765,8 +748,6 @@ public sealed class SavePrefilingReviewSettingsRequest : PrefilingReviewSettings
 
 public class DashboardActionabilityPolicy
 {
-    public int MomentumStaleDays { get; set; } = 60;
-    public int PipelineStalledDays { get; set; } = 60;
     public int DiscoveryCutoffLookaheadDays { get; set; } = 45;
     public int TrialPreparationLookaheadDays { get; set; } = 60;
     public int TrialWatchLookaheadDays { get; set; } = 180;
@@ -1169,7 +1150,6 @@ public sealed class TrialWatchEntry
     public decimal? OwnerAppraisal { get; set; }
     public decimal? OwnerDemand { get; set; }
     public decimal? LastOffer { get; set; }
-    public decimal? SettlementAuthority { get; set; }
     // Present only when the statutory fee-comparison point is actually in play for this case
     // (trial-watch eligible per AttorneyDashboardEngine.IsTrialWatchEligible) - never a generic
     // valuation-gap warning. See the neutral wording rule in the dashboard brief.
@@ -1369,104 +1349,6 @@ public sealed class NewspaperRecord
     public string? Notes { get; set; }
     // Soft-disable, matching the Attorneys/Legal Assistants convention - no hard delete endpoint.
     public bool IsActive { get; set; } = true;
-}
-
-// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow - a request for
-// authority to settle up to a given amount. Manager Dashboard sign-off consolidation, item 4: pure
-// record-keeping now (no amount threshold, no routing, no escalation, no role gate on who may
-// record an outcome - see DecideSettlementAuthorityRequestAsync's doc comment). Updates in place
-// (like DiscoveryPosture), not append-only (unlike PipelineHolderApprovalRecord) - only one open
-// thread (Status Pending/InfoRequested) may exist per case at a time, enforced by
-// ISettlementAuthorityRequestStore.CreateAsync. The full decision history (who decided what, when,
-// with what comment) lives in activity_log, not here - this row is just the current/most-recent
-// state for quick display.
-public sealed class SettlementAuthorityRequestRecord
-{
-    public long Id { get; set; }
-    public long CaseId { get; set; }
-    public decimal RequestedAmount { get; set; }
-    // The attorney of record for the request - free text, may differ from RequestedByDisplay
-    // (whoever actually clicked submit).
-    public string? RequestingAttorney { get; set; }
-    public string? RequestNotes { get; set; }
-    // "Pending" | "Approved" | "Denied" | "InfoRequested" - enforced in C#
-    // (ISettlementAuthorityRequestStore.DecideAsync), not a DB constraint, matching
-    // manager_tier's/CaseStatus's existing convention. Manager Dashboard sign-off consolidation,
-    // item 4: recording any of these three outcomes is open to anyone with case-write access, not
-    // gated to Chief Counsel - see DecideAsync's doc comment.
-    public string Status { get; set; } = "Pending";
-    // Only ever set when Status="Approved" - defaults to RequestedAmount when whoever records the
-    // grant doesn't override it with a different DecideSettlementAuthorityRequest.GrantedAmount.
-    public decimal? GrantedAmount { get; set; }
-    public string RequestedAt { get; set; } = "";
-    public string? RequestedByUserId { get; set; }
-    public string? RequestedByDisplay { get; set; }
-    // Decision fields stay null until a decision is actually made. DecidedAt/DecidedByDisplay are
-    // "date-recorded"/"recorded-by" - when and by whom the system entry was made. For a grant
-    // (Status="Approved"), GrantedBy/GrantedByRole/GrantedDate below capture the separate
-    // real-world fact of who actually granted the authority and when, which often differs from
-    // "recorded" (e.g. Chief Counsel grants verbally or by email; a Legal Assistant records it here
-    // later).
-    public string? DecidedAt { get; set; }
-    public string? DecidedByUserId { get; set; }
-    public string? DecidedByDisplay { get; set; }
-    // From IApplicationActorContext.Role at decision time - stored as free text (not re-derived)
-    // like ActivityLogEntry.ActorRoleAtAction. This is the role of whoever RECORDED the outcome,
-    // not necessarily the role of whoever granted it (see GrantedByRole).
-    public string? DecidedByRole { get; set; }
-    // The most recent decision's comment ("every action requires a comment" - see DecideAsync). The
-    // full audit trail of every decision ever made lives in activity_log, not here.
-    public string? DecisionComment { get; set; }
-    // Only meaningful when Status="Approved" - who actually granted the authority (free text; may
-    // be a name and title, e.g. "Michelle Davenport") and their role/title (free text - there is no
-    // requirement that this be a system user or a recognized manager_tier value, since the grant
-    // itself may have happened entirely outside the system).
-    public string? GrantedBy { get; set; }
-    public string? GrantedByRole { get; set; }
-    // The real-world date authority was granted - editable/backdatable, distinct from DecidedAt
-    // (when the system entry was made). Defaults to DecidedAt's date when the client doesn't supply
-    // one (see DecideAsync).
-    public string? GrantedDate { get; set; }
-    // Optional pointer to supporting correspondence/paperwork (e.g. an email subject line, a
-    // document platform reference, a file path) - free text, not validated or resolved to an actual
-    // file/record.
-    public string? DocumentReference { get; set; }
-    // SQL Server optimistic-concurrency token. Null while the active runtime remains SQLite.
-    public string? RowVersion { get; set; }
-}
-
-// Client-facing shape for POST /api/cases/{caseId}/settlement-authority-requests - the initial ask.
-// No special role gate: any user with normal case write access can submit one, matching how any
-// attorney would actually ask for authority.
-public sealed class CreateSettlementAuthorityRequest
-{
-    public decimal RequestedAmount { get; set; }
-    public string? RequestingAttorney { get; set; }
-    public string? RequestNotes { get; set; }
-}
-
-// Client-facing shape for POST /api/settlement-authority-requests/{id}/decide - pure record-keeping
-// (Manager Dashboard sign-off consolidation, item 4), open to anyone with case-write access, not
-// gated to a specific role (see Program.cs's endpoint mapping). Comment is required for every
-// Action.
-public sealed class DecideSettlementAuthorityRequest
-{
-    // "Approved" | "Denied" | "InfoRequested".
-    public string Action { get; set; } = "";
-    public string Comment { get; set; } = "";
-    // Only meaningful when Action="Approved" - null means "grant exactly what was requested".
-    public decimal? GrantedAmount { get; set; }
-    // Only meaningful when Action="Approved" - who actually granted the authority and their
-    // role/title, both free text. Null/blank GrantedBy is allowed (the grant still gets recorded;
-    // this is a fact worth capturing, not a required field, matching the "pure record-keeping, no
-    // enforcement" spirit of this change).
-    public string? GrantedBy { get; set; }
-    public string? GrantedByRole { get; set; }
-    // Only meaningful when Action="Approved" - the real-world date authority was granted;
-    // editable/backdatable. Null defaults to today (see DecideAsync).
-    public string? GrantedDate { get; set; }
-    // Optional for any Action - a pointer to supporting correspondence/paperwork.
-    public string? DocumentReference { get; set; }
 }
 
 public sealed class WorkTemplateCandidate

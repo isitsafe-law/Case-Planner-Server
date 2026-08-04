@@ -269,12 +269,6 @@ builder.Services.AddSingleton<INewspaperStore>(services =>
     activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
         ? services.GetRequiredService<SqlServerNewspaperStore>()
         : services.GetRequiredService<SqliteNewspaperStore>());
-builder.Services.AddSingleton<SqliteSettlementAuthorityRequestStore>();
-builder.Services.AddSingleton<SqlServerSettlementAuthorityRequestStore>();
-builder.Services.AddSingleton<ISettlementAuthorityRequestStore>(services =>
-    activeProvider.Equals(DatabaseProviders.SqlServer,StringComparison.OrdinalIgnoreCase)
-        ? services.GetRequiredService<SqlServerSettlementAuthorityRequestStore>()
-        : services.GetRequiredService<SqliteSettlementAuthorityRequestStore>());
 builder.Services.AddSingleton<SqlitePreFilingMilestoneStore>();
 builder.Services.AddSingleton<SqlServerPreFilingMilestoneStore>();
 builder.Services.AddSingleton<IPreFilingMilestoneStore>(services =>
@@ -694,30 +688,13 @@ app.MapPost("/api/newspapers", async (NewspaperRecord model, INewspaperStore new
     return Results.Ok(await newspapers.SaveAsync(model, token));
 });
 
-// Manager/Administrator Dashboard Milestone 3: the Settlement Authority workflow. The manager
-// dashboard's Approvals surface (list + create) was removed as redundant with the Risk Analysis
-// tab's offer/counteroffer negotiation - see ManagerDashboard.tsx. This decide route stays as
-// backend-only infrastructure with no UI caller: it's still the only path that ever updates
-// CaseRecord.SettlementAuthorizedCeiling, which the Attorney Dashboard's Trial Watch displays, so
-// removing it would silently freeze that field. Pure record-keeping (Manager Dashboard sign-off
-// consolidation, item 4) - only ordinary case-write access is required, no Chief-Counsel-only gate.
-app.MapPost("/api/settlement-authority-requests/{id:long}/decide", async (long id, DecideSettlementAuthorityRequest decision, ISettlementAuthorityRequestStore requests, CaseAccessService access, CancellationToken token) =>
-{
-    var existing = (await requests.GetAsync(null, token)).FirstOrDefault(r => r.Id == id);
-    if (existing is null) return Results.NotFound();
-    if (!await access.CanWriteAsync(existing.CaseId, token)) return Results.Forbid();
-    try { return Results.Ok(await requests.DecideAsync(id, decision, token)); }
-    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
-    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
-});
-
 // Manager/Administrator Dashboard Milestone 4 correction: the pre-filing milestone tracker - see
 // PreFilingMilestoneRecord's doc comment (DomainModels.cs) for the full rationale on why this
 // replaces part of Milestone 2's Filing Approval gate. Data model + write-action endpoints only -
 // no dashboard UI consumes these yet (Milestone 5's "Needs Attention" tab). GET is open to any
 // authenticated user (or unrestricted when Entra is disabled), matching circuit-clerks/
-// pipeline-approvals/settlement-authority-requests above. Mark/unmark are both gated by
-// CanActOnPreFilingMilestone (see its doc comment above).
+// pipeline-approvals above. Mark/unmark are both gated by CanActOnPreFilingMilestone (see its doc
+// comment above).
 app.MapGet("/api/cases/{caseId:long}/prefiling-milestones", async (long caseId, IPreFilingMilestoneStore milestones, CancellationToken token) =>
     Results.Ok(await milestones.GetAsync(caseId, token)));
 app.MapPost("/api/cases/{caseId:long}/prefiling-milestones/{milestone}/mark", async (long caseId, string milestone, MarkPreFilingMilestoneRequest request, IPreFilingMilestoneStore milestones, HttpContext context, CaseAccessService access, CancellationToken token) =>
@@ -884,20 +861,6 @@ app.MapGet("/api/cases/{id:long}/activity", async (long id,IActivityStore activi
     Results.Ok(await activity.GetAsync(id,token)));
 app.MapPost("/api/cases/{id:long}/activity", async (long id, RecordActivityRequest request,IActivityStore activity,CancellationToken token) =>
     Results.Ok(await activity.RecordAsync(id,request,token)));
-app.MapPut("/api/activity/{id:long}", async (long id,UpdateActivityRequest request,IActivityStore activity,CaseAccessService access,CancellationToken token) =>
-{
-    var caseId=await activity.GetCaseIdAsync(id,token);if(caseId is null)return Results.NotFound();if(!await access.CanWriteAsync(caseId.Value,token))return Results.Forbid();
-    try
-    {
-        return Results.Ok(await activity.UpdateAsync(id,request,token));
-    }
-    catch(WorkItemConcurrencyException ex){return Results.Conflict(new{error=ex.Message});}
-    catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}
-    catch (InvalidOperationException ex)
-    {
-        return Results.BadRequest(new { error = ex.Message });
-    }
-});
 // Manager/Administrator Dashboard sign-off consolidation, item 5: a thin, read-only filter over
 // the existing activity_log (already the shared audit substrate every sign-off-shaped feature in
 // this app writes through - pre-filing milestones, settlement authority, and holder-change history
@@ -2159,11 +2122,6 @@ app.MapPost("/api/database/sqlserver-pilot/activity/{caseId:long}",async(long ca
 {
     if(!configuration.GetValue("Database:SqlServerPilotWritesEnabled",false))return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
     try{return Results.Ok(await store.RecordAsync(caseId,request.ActivityType,request.Notes,request.OccurredAt,token));}catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}catch(InvalidOperationException ex){return Results.BadRequest(new{error=ex.Message});}
-});
-app.MapPut("/api/database/sqlserver-pilot/activity/{id:long}",async(long id,string? rowVersion,UpdateActivityRequest request,SqlServerActivityStore store,IConfiguration configuration,CancellationToken token)=>
-{
-    if(!configuration.GetValue("Database:SqlServerPilotWritesEnabled",false))return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-    try{return Results.Ok(await store.UpdateAsync(id,request,rowVersion,token));}catch(WorkItemConcurrencyException ex){return Results.Conflict(new{error=ex.Message});}catch(ArgumentException ex){return Results.BadRequest(new{error=ex.Message});}catch(InvalidOperationException ex){return Results.BadRequest(new{error=ex.Message});}
 });
 app.MapGet("/api/database/sqlserver-pilot/document-exports",async(long? caseId,SqlServerDocumentExportStore store,CancellationToken token)=>Results.Ok(await store.GetAsync(caseId,token)));
 app.MapPost("/api/database/sqlserver-pilot/document-exports/{caseId:long}/text",async(long caseId,SaveGeneratedDocumentRequest request,SqlServerDocumentPilotService service,IConfiguration configuration,CancellationToken token)=>

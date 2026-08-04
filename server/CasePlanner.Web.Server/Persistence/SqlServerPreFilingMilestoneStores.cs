@@ -9,12 +9,10 @@ namespace CasePlanner.Web.Server.Persistence;
 // shared rationale). dbo.case_prefiling_milestones (060_case_prefiling_milestones.sql) updates in
 // place per (case_id, milestone) and carries a row_version rowversion column, unlike the
 // append-only pipeline_holder_approvals table - so this needs the same
-// EnsureCaseExistsAsync/AuditAsync helpers SqlServerSettlementAuthorityRequestStore uses (via
-// SqlServerLitigationStoreBase), plus a SqlServerActivityStore dependency to write the user-facing
-// activity_log entry after each mark/unmark - the exact composition
-// SqlServerSettlementAuthorityRequestStore already uses for its own actions. There is no live SQL
-// Server sandbox available here to exercise this against a real pilot instance - same caveat
-// already noted for the rest of the dormant multi-user foundation.
+// EnsureCaseExistsAsync/AuditAsync helpers (via SqlServerLitigationStoreBase), plus a
+// SqlServerActivityStore dependency to write the user-facing activity_log entry after each
+// mark/unmark. There is no live SQL Server sandbox available here to exercise this against a real
+// pilot instance - same caveat already noted for the rest of the dormant multi-user foundation.
 public sealed class SqlServerPreFilingMilestoneStore(
     IDatabaseConnectionFactory connections,
     IHttpContextAccessor accessor,
@@ -114,9 +112,9 @@ public sealed class SqlServerPreFilingMilestoneStore(
             await transaction.CommitAsync(token);
         }
 
-        // Same convention as SqlServerSettlementAuthorityRequestStore's actions - the user-facing
-        // activity_log write happens as its own call, on its own connection/transaction, after the
-        // main insert/update has already committed.
+        // Audit write happens as its own call, on its own connection/transaction, after the main
+        // insert/update has already committed - same convention used throughout the SQL Server
+        // pilot stores.
         await activity.RecordAsync(caseId, "PreFilingMilestoneMarked", request.Note, null, token, milestone, "Unmarked", request.OccurredDate);
 
         var saved = await GetAsync(caseId, token);

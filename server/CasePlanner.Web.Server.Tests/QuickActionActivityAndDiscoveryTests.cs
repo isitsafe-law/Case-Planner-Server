@@ -26,7 +26,7 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
         });
 
     [Fact]
-    public async Task ActivityAudit_PersistsAuthenticatedActorOnEntryAndEditHistory()
+    public async Task ActivityAudit_PersistsAuthenticatedActorOnEntry()
     {
         var userId=Guid.NewGuid();
         await using var fixture=await RepositoryTestFixture.CreateAsync(new TestActor(userId,"Attorney Example"));
@@ -35,14 +35,8 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
         Assert.Equal(userId.ToString("D"),entry.ActorUserId);
         Assert.Equal("Attorney Example",entry.ActorDisplay);
 
-        await fixture.Repository.UpdateActivityEntryAsync(entry.Id,new UpdateActivityRequest
-        {
-            ActivityType="Other",OccurredAt="2026-07-16",Notes="Corrected note",Reason="Corrected date"
-        });
         var saved=Assert.Single(await fixture.Repository.GetActivityLogAsync(c.Id),x=>x.Id==entry.Id);
-        var history=Assert.Single(saved.History);
-        Assert.Equal(userId.ToString("D"),history.EditedByUserId);
-        Assert.Equal("Attorney Example",history.EditedByDisplay);
+        Assert.Empty(saved.History);
     }
 
     private sealed record TestActor(Guid Id,string Label):IApplicationActorContext
@@ -263,11 +257,20 @@ public class QuickActionActivityAndDiscoveryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ConsolidatedStatusMapsSettlementTrackAndTrialStage()
+    public async Task ConsolidatedStatusMapsTrialStageAndIgnoresRetiredTrackField()
     {
-        var settlement = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName="Settlement mapping", County="Pulaski", Status="Active", Track="Settlement", Stage="Discovery & Evaluation" });
+        // CaseStatus is now the directly-set source of truth for "Settlement Pending" - the client
+        // sends it explicitly on every save (see App.tsx's serializeCaseDraft), rather than it being
+        // derived from the retired `track` field. A blank CaseStatus with Track="Settlement" no
+        // longer auto-maps to "Settlement Pending" (track's fallback branch was removed); it falls
+        // through to whatever Status/Stage otherwise indicate.
+        var settlementByTrackAlone = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName="Track-only mapping", County="Pulaski", Status="Active", Track="Settlement", Stage="Discovery & Evaluation" });
+        Assert.Equal("Active Litigation", (await _fixture.Repository.GetCaseWorkspaceAsync(settlementByTrackAlone.Id))!.Case.CaseStatus);
+
+        var settlementDirect = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName="Direct settlement status", County="Pulaski", Status="Active", Stage="Discovery & Evaluation", CaseStatus="Settlement Pending" });
+        Assert.Equal("Settlement Pending", (await _fixture.Repository.GetCaseWorkspaceAsync(settlementDirect.Id))!.Case.CaseStatus);
+
         var trial = await _fixture.Repository.SaveCaseAsync(new CaseRecord { CaseName="Trial mapping", County="Pulaski", Status="Active", Track="Contested", Stage="Trial Track" });
-        Assert.Equal("Settlement Pending", (await _fixture.Repository.GetCaseWorkspaceAsync(settlement.Id))!.Case.CaseStatus);
         Assert.Equal("Trial Preparation", (await _fixture.Repository.GetCaseWorkspaceAsync(trial.Id))!.Case.CaseStatus);
     }
 }

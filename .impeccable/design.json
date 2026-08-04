@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-04T00:00:00.000Z",
+  "title": "Design System: ARDOT Case Planner",
+  "extensions": {
+    "colorMeta": {
+      "docket-blue": { "role": "primary", "displayName": "Docket Blue", "canonical": "#14538F", "tonalRamp": ["#071B2C", "#0C2C47", "#123F66", "#14538F", "#3E76A8", "#7BA7CC", "#B9D3E8", "#E3EDF7"] },
+      "docket-navy": { "role": "neutral", "displayName": "Docket Navy", "canonical": "#0E2E4E", "tonalRamp": ["#05121F", "#081D30", "#0B2740", "#0E2E4E", "#2C4E6E", "#5E7C99", "#9BB1C6", "#D3DEE8"] },
+      "cool-fog": { "role": "neutral", "displayName": "Cool Fog", "canonical": "#F3F6F9", "tonalRamp": ["#16232F", "#2A3A48", "#5A6B7D", "#8595A6", "#B9C6D4", "#D8E0E9", "#EAEFF4", "#F3F6F9"] },
+      "meadow-green": { "role": "tertiary", "displayName": "Meadow Green", "canonical": "#1E7A44", "tonalRamp": ["#0A2818", "#114023", "#1A5A32", "#1E7A44", "#4C9868", "#82B896", "#B7DAC3", "#E7F4EC"] },
+      "amber-clay": { "role": "tertiary", "displayName": "Amber Clay", "canonical": "#A85B00", "tonalRamp": ["#2E1900", "#4D2A00", "#7A4300", "#A85B00", "#C67D2E", "#DDA468", "#EFC79D", "#FBF1E2"] },
+      "brick-red": { "role": "tertiary", "displayName": "Brick Red", "canonical": "#B3261E", "tonalRamp": ["#360C09", "#591511", "#8A1E17", "#B3261E", "#C85850", "#DD8B85", "#EEB6B1", "#FBEAE8"] },
+      "arkansas-crimson": { "role": "secondary", "displayName": "Arkansas Crimson", "canonical": "#9E1B32", "tonalRamp": ["#2E070D", "#4D0C16", "#7A1424", "#9E1B32", "#BD4A5B", "#D67E8A", "#EAB0B7", "#F7DEE1"] }
+    },
+    "typographyMeta": {
+      "ui": { "displayName": "IBM Plex Sans", "purpose": "The engineered grotesque used for all UI chrome, labels, and body copy." },
+      "data": { "displayName": "IBM Plex Mono", "purpose": "The data face. Every numeric, date, case-number, and currency value renders in this font with tabular figures — never the UI font." },
+      "page-title": { "displayName": "Page Title", "purpose": "One per page, top of the page-level heading." },
+      "panel-title": { "displayName": "Panel Title", "purpose": "Panel and modal headers." },
+      "body": { "displayName": "Body", "purpose": "The app's default text size — table cells, controls, body copy." },
+      "label": { "displayName": "Label", "purpose": "Table headers and fine print only; the sole size ever uppercased." }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "0 8px 24px rgba(15, 25, 40, .10)", "purpose": "The only shadow role in the system: modals, popovers, and drawers exclusively. Panels at rest never carry a shadow." },
+      { "name": "overlay-dark", "value": "0 8px 24px rgba(0, 0, 0, .35)", "purpose": "Dark-theme equivalent of the overlay shadow." }
+    ],
+    "motion": [
+      { "name": "ease-state", "value": "120ms ease-out", "purpose": "Default timing for state changes: hover, expand, tab switch." },
+      { "name": "ease-overlay", "value": "160ms ease-out", "purpose": "Timing for overlays entering (modal, popover, drawer)." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled button in the system; used for the single primary action in a form or panel.",
+      "html": "<button class=\"ds-btn-primary\">File Deadline</button>",
+      "css": ".ds-btn-primary { height: 30px; padding: 0 12px; border-radius: var(--r-ctl); border: 1px solid var(--primary); background: var(--primary); color: #fff; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background-color 120ms ease-out, border-color 120ms ease-out; } .ds-btn-primary:hover { background: var(--primary-strong); border-color: var(--primary-strong); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default button — white surface, hairline border; hover shifts to the primary color rather than filling the background.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { height: 30px; padding: 0 12px; border-radius: var(--r-ctl); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font-size: 13px; font-weight: 500; transition: border-color 120ms ease-out, color 120ms ease-out; } .ds-btn-secondary:hover { border-color: var(--primary); color: var(--primary); }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive actions. Color changes on hover, never layout — a destructive control should never visually jump.",
+      "html": "<button class=\"ds-btn-danger\">Delete</button>",
+      "css": ".ds-btn-danger { height: 30px; padding: 0 12px; border-radius: var(--r-ctl); border: 1px solid var(--danger-border); background: var(--surface); color: var(--danger-text); font-size: 13px; font-weight: 500; transition: background-color 120ms ease-out, border-color 120ms ease-out; } .ds-btn-danger:hover { background: var(--danger-bg); border-color: var(--danger-text); }"
+    },
+    {
+      "name": "Status Chip (Ok)",
+      "kind": "chip",
+      "refersTo": "status-chip-ok",
+      "description": "Dot-plus-text status indicator. Tone comes from a single status-to-tone map, never assigned ad hoc.",
+      "html": "<span class=\"ds-status ds-status-ok\"><i class=\"ds-status-dot\"></i><span>Served</span></span>",
+      "css": ".ds-status { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: var(--r-ctl); font-size: 12px; font-weight: 500; border: 1px solid; line-height: 1; } .ds-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; } .ds-status-ok { color: var(--success-text); background: var(--success-bg); border-color: color-mix(in srgb, var(--success-text) 40%, transparent); }"
+    },
+    {
+      "name": "Type Chip",
+      "kind": "chip",
+      "refersTo": "type-chip",
+      "description": "Marks a work item's kind (deadline, task, event, service). Always uppercase, never a dot — visually distinct from a Status Chip on purpose.",
+      "html": "<span class=\"ds-typechip ds-typechip-deadline\">Deadline</span>",
+      "css": ".ds-typechip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--r-ctl); } .ds-typechip-deadline { color: var(--danger-text); background: var(--danger-bg); }"
+    },
+    {
+      "name": "Metric Tile",
+      "kind": "card",
+      "refersTo": "metric-tile",
+      "description": "Static display or, with a click handler, a toggleable filter facet — one component serves both.",
+      "html": "<div class=\"ds-tile\"><span class=\"ds-tile-label\">Overdue</span><span class=\"ds-tile-value\">7</span></div>",
+      "css": ".ds-tile { min-width: 0; height: 64px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel); display: flex; flex-direction: column; justify-content: space-between; } .ds-tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); font-weight: 600; } .ds-tile-value { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 500; line-height: 1; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat at rest, hairline border, no shadow. The base container for nearly every surface in the app.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-header\"><h3>Case Summary</h3></div><div class=\"ds-panel-body\">Panel content goes here.</div></div>",
+      "css": ".ds-panel { background: var(--surface); border-radius: var(--r-panel); border: 1px solid var(--border); overflow: hidden; } .ds-panel-header { padding: 0.9rem 1.1rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; } .ds-panel-header h3 { margin: 0; font-size: 15px; font-weight: 600; } .ds-panel-body { padding: 0.95rem 1.1rem 1.1rem; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "filter-bar",
+      "description": "Facet toggle inside the Filter Bar. On-state uses the same primary-soft/primary treatment as an active Metric Tile.",
+      "html": "<button class=\"ds-chip ds-chip-on\">Overdue <span class=\"ds-chip-count\">4</span></button>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--r-ctl); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-muted); font-size: 12px; font-weight: 500; transition: border-color 120ms ease-out, background-color 120ms ease-out, color 120ms ease-out; } .ds-chip-on { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); } .ds-chip-count { color: var(--warning-text); font-weight: 600; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "empty-state",
+      "description": "Left-aligned title, optional muted hint, optional action. Has a dedicated table-row mode so an empty table never needs a hand-built row.",
+      "html": "<div class=\"ds-empty\" role=\"status\"><p class=\"ds-empty-title\">No matching cases</p><p class=\"ds-empty-hint\">Try clearing a filter.</p></div>",
+      "css": ".ds-empty { display: grid; gap: 6px; justify-items: start; padding: 24px 16px; text-align: left; } .ds-empty-title { margin: 0; font-weight: 500; color: var(--text); } .ds-empty-hint { margin: 0; font-size: 12px; color: var(--text-muted); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Docket — engineered civic",
+    "overview": "A state-agency litigation tool should feel like a precisely engineered public document: calm, exact, authoritative, zero decoration. The voice comes from three deliberate choices working together — an engineered grotesque paired with a monospaced data face, a disciplined cool-neutral surface system, and exactly one confident accent blue. Arkansas crimson appears exactly once in the entire system, as the brand tick in the app bar; it is never reused as a semantic or decorative color anywhere else. This identity was chosen over a \"Brief\" legal-paper direction (Source Serif display, warm neutrals, oxblood accent) specifically because the daily surface is dense tables that attorneys scan all day: the warm/serif direction softened data contrast, complicated dark mode, and traded scanability for atmosphere. It was also chosen over a slate-and-signal-orange \"ops console\" direction, rejected because it read as SRE tooling rather than counsel, and its orange collided with the warning color in a deadline-heavy interface.",
+    "keyCharacteristics": [
+      "One accent color carries every action and active state; nothing else competes with it.",
+      "Status is never color-only — a dot plus text label together carry every state.",
+      "Panels are flat with a single hairline border; elevation is a last resort, reserved for true overlays.",
+      "Every numeric, date, case-number, or currency value renders in the monospaced data face with tabular figures.",
+      "Sixteen selectable themes share one semantic contract, so which theme is active never changes what a color communicates."
+    ],
+    "rules": [
+      { "name": "The One Tick Rule", "body": "Arkansas Crimson appears in exactly one place: the brand tick in the app bar. It is never a status color, never a hover state, never reused for emphasis.", "section": "colors" },
+      { "name": "The Dot-Plus-Text Rule", "body": "Status is never carried by color alone. Every status chip pairs a colored dot with a text label; every chart uses direct labels rather than a color-only legend.", "section": "colors" },
+      { "name": "The Tabular Everything Rule", "body": "Every numeric, date, case-number, and currency value in a table cell or metric tile renders in the data font with tabular-nums — no exceptions.", "section": "typography" },
+      { "name": "The No-Italics Rule", "body": "UI chrome never uses italics. No 700-weight type exists anywhere in the system — 600 is the ceiling.", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "A panel earns a shadow only by becoming an overlay (modal, popover, drawer). A panel in the normal page flow is always flat with a border, never a shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep Docket Blue as the only accent color competing for attention on any screen.",
+      "Do pair every status indicator with a text label; color alone never carries a state.",
+      "Do render every number, date, case number, and currency value in the data font with tabular figures.",
+      "Do keep panels flat (border only) at rest; reserve the overlay shadow for modals, popovers, and drawers.",
+      "Do treat all sixteen themes as re-skins of one semantic contract.",
+      "Do use full month names with no ordinal for dates, always suffixed with CT for date-times.",
+      "Do render an unset value as an em dash in muted text rather than a repeated string like \"Not set\"."
+    ],
+    "donts": [
+      "Don't reuse Arkansas Crimson anywhere except the app-bar brand tick.",
+      "Don't introduce a new radius value outside 4px (controls) / 8px (panels) / 999px (circular).",
+      "Don't use italics anywhere in UI chrome, or any font weight heavier than 600.",
+      "Don't add decorative animation; motion is functional-only and disabled under prefers-reduced-motion.",
+      "Don't revive the rejected \"Brief\" (legal-paper) or \"Control\" (ops-console) directions."
+    ]
+  }
+}

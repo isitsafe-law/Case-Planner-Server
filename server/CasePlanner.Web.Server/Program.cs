@@ -1684,14 +1684,81 @@ app.MapDelete("/api/document-platform-generations/{id:long}", async (long id,IDo
 }).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/document-platform/templates", async (IDocumentPlatformService platform,CancellationToken token) =>
     Results.Ok(await platform.GetAllTemplatesAsync(token))).WithMetadata(new AssignmentAwareEndpointMetadata());
-// Upload/configuration/version-activate/delete admin endpoints were removed as unreachable surface
-// in a second leanness pass - the Document Templates management screen that called them was
-// already removed from Settings, and nothing else in the client calls these routes. The underlying
-// IDocumentPlatformService methods (UploadTemplateAsync/SaveConfigurationAsync/ActivateVersionAsync/
-// DeleteTemplateAsync) and their real, substantive test coverage (DocumentTemplateAdminTests.cs)
-// were deliberately left in place rather than deleted alongside the routes - that's tested,
-// working logic (DOCX linting, versioning, section carry-forward), not dead code, and stays ready
-// to be re-exposed if template administration needs an HTTP surface again.
+// Upload/configuration/version-activate/delete: the only way to add or manage a document template
+// once the Document Templates admin screen was removed from Settings (Phase 1's leanness cuts).
+// That removal was deliberately UI-only - "keeping template generation and the underlying server
+// routes intact" - so these stay reachable via direct API calls even with no in-app screen for
+// them. A later cleanup pass mistakenly treated "no current client caller" as "safe to delete" and
+// removed these routes; restored after the mistake was caught, since it left no path at all to add
+// a new template.
+app.MapPost("/api/document-platform/templates/upload", async (HttpRequest request,IDocumentPlatformService platform,CancellationToken token) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "Expected multipart form upload." });
+    }
+
+    var form = await request.ReadFormAsync(token);
+    var file = form.Files["file"];
+    if (file is null || file.Length == 0)
+    {
+        return Results.BadRequest(new { error = "Template file is required." });
+    }
+
+    var templateKey = form["templateKey"].FirstOrDefault() ?? "";
+    var title = form["title"].FirstOrDefault() ?? "";
+    var description = form["description"].FirstOrDefault();
+    var category = form["category"].FirstOrDefault() ?? "Other";
+
+    try
+    {
+        using var stream = new MemoryStream();
+        await file.CopyToAsync(stream, token);
+        return Results.Ok(await platform.UploadTemplateAsync(templateKey, title, description, category, stream.ToArray(), token));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPut("/api/document-platform/templates/{key}/configuration", async (string key,DocumentTemplateConfigurationRequest request,IDocumentPlatformService platform,CancellationToken token) =>
+{
+    try
+    {
+        return Results.Ok(await platform.SaveConfigurationAsync(key, request, token));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapPost("/api/document-platform/templates/{key}/versions/{version:int}/activate", async (string key,int version,IDocumentPlatformService platform,CancellationToken token) =>
+{
+    try
+    {
+        return Results.Ok(await platform.ActivateVersionAsync(key, version, token));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
+app.MapDelete("/api/document-platform/templates/{key}", async (string key,IDocumentPlatformService platform,CancellationToken token) =>
+{
+    try
+    {
+        await platform.DeleteTemplateAsync(key, token);
+        return Results.Ok();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).WithMetadata(new AssignmentAwareEndpointMetadata());
 app.MapGet("/api/document-platform/sample-template", () =>
 {
     var bytes = DocumentGenerationEngine.BuildSampleMergeFieldTemplateDocx();

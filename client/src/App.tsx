@@ -57,7 +57,7 @@ type ThemeMode = 'light' | 'dark' | 'system' | 'high-contrast' | 'high-contrast-
 type ModalKind = 'case' | 'deadline' | 'checklist' | 'discovery' | 'comparableSale' | 'witness' | 'exhibit' | 'trialMotion' | 'event'
 type ModalMode = 'create' | 'edit'
 type FieldErrors = Partial<Record<string, string>>
-type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'actionability' | 'developer'
+type SettingsSectionKey = 'appearance' | 'import' | 'diagnostics' | 'storage' | 'about' | 'documentDefaults' | 'referenceLibrary' | 'checklistTemplates' | 'deadlineTemplates' | 'backups' | 'documentPlatformTemplates' | 'issueTags' | 'staff' | 'countyReference' | 'notifications' | 'actionability' | 'developer'
 
 export type CaseRecord = {
   id: number
@@ -443,6 +443,8 @@ const partyRoleOptions = ['Defendant', 'Unknown Heirs', 'Lienholder', 'Tenant', 
 
 const issueTagCategories = ['Valuation', 'Parties', 'Procedure', 'Trial'] as const
 
+const documentTemplateCategories = ['Discovery', 'Judgment', 'Settlement', 'Correspondence', 'Pleadings', 'Motions', 'Other'] as const
+
 type ServiceLogEntry = {
   id: number
   caseId: number
@@ -815,6 +817,15 @@ type DocumentTemplateAdminSummary = {
   overlaps: DocumentSectionOverlapPair[]
   runtimeInputs: DocumentRuntimeInput[]
   lintIssues: string[]
+}
+type DocumentTemplateCompletenessReport = {
+  templateKey: string
+  title: string
+  version: number
+  storagePath: string
+  audit: { discoveredTags: string[]; knownTags: string[]; unknownTags: string[]; blankValues: string[] }
+  runtimeInputTags: string[]
+  passed: boolean
 }
 
 type DataQualityIssue = {
@@ -1601,6 +1612,7 @@ const settingsSections: { key: SettingsSectionKey; label: string }[] = [
   { key: 'documentDefaults', label: 'Document Defaults' },
   { key: 'checklistTemplates', label: 'Work-Item Templates' },
   { key: 'deadlineTemplates', label: 'Deadline Rules' },
+  { key: 'documentPlatformTemplates', label: 'Document Templates' },
   { key: 'issueTags', label: 'Issue Tags' },
   { key: 'referenceLibrary', label: 'Reference Library' },
   { key: 'backups', label: 'Backups' },
@@ -1617,7 +1629,7 @@ const settingsCategories: { label: string; sections: SettingsSectionKey[] }[] = 
   { label: 'Appearance', sections: ['appearance'] },
   { label: 'Case Workflow', sections: ['documentDefaults', 'referenceLibrary'] },
   { label: 'Work Planning', sections: ['checklistTemplates', 'deadlineTemplates'] },
-  { label: 'Issue Tags', sections: ['issueTags'] },
+  { label: 'Document Templates', sections: ['documentPlatformTemplates', 'issueTags'] },
   { label: 'Data Management', sections: ['import', 'backups', 'storage'] },
   { label: 'Staff', sections: ['staff', 'notifications', 'actionability'] },
   { label: 'County & Publication Reference', sections: ['countyReference'] },
@@ -2460,6 +2472,23 @@ function App() {
   const [platformGenerationHistory, setPlatformGenerationHistory] = useState<DocumentGenerationHistoryItem[]>([])
   const [platformBusy, setPlatformBusy] = useState(false)
   const [platformTemplates, setPlatformTemplates] = useState<DocumentTemplateAdminSummary[]>([])
+  const [selectedPlatformTemplateKey, setSelectedPlatformTemplateKey] = useState<string | null>(null)
+  const [platformUploadDraft, setPlatformUploadDraft] = useState({ templateKey: '', title: '', description: '', category: '' })
+  const [platformUploadFile, setPlatformUploadFile] = useState<File | null>(null)
+  const [platformUploadKeyLocked, setPlatformUploadKeyLocked] = useState(false)
+  const [platformConfigDraft, setPlatformConfigDraft] = useState<{ sections: DocumentTemplateSection[]; overlaps: DocumentSectionOverlapPair[]; runtimeInputs: DocumentRuntimeInput[] }>({ sections: [], overlaps: [], runtimeInputs: [] })
+  const [platformCompleteness, setPlatformCompleteness] = useState<DocumentTemplateCompletenessReport | null>(null)
+  const [platformCompletenessByKey, setPlatformCompletenessByKey] = useState<Record<string, DocumentTemplateCompletenessReport>>({})
+  // Forces the Advanced disclosure below to mount fresh (see the CollapsiblePanel `key` at its
+  // render site): incremented whenever navigation should open it automatically (the Issue Tags
+  // "Used By" link), matched against platformAdvancedAutoOpenKey to decide defaultOpen for that
+  // one mount. A plain click on "Advanced…" in the table does not touch either of these, so it
+  // always mounts collapsed - the disclosure's resting state.
+  const [platformAdvancedNonce, setPlatformAdvancedNonce] = useState(0)
+  const [platformAdvancedAutoOpenKey, setPlatformAdvancedAutoOpenKey] = useState<string | null>(null)
+  const [newSectionDraft, setNewSectionDraft] = useState({ sectionKey: '', label: '', description: '', issueTagName: '' })
+  const [newOverlapDraft, setNewOverlapDraft] = useState({ sectionAKey: '', sectionBKey: '', note: '' })
+  const [newRuntimeInputDraft, setNewRuntimeInputDraft] = useState({ fieldKey: '', label: '', fieldType: 'text', isRequired: true })
   const [issueTagUsage, setIssueTagUsage] = useState<IssueTagUsage[]>([])
   const [newIssueTagDraft, setNewIssueTagDraft] = useState({ name: '', description: '', category: '' })
   const [issueTagEditDraft, setIssueTagEditDraft] = useState<{ id: number; name: string; description: string; category: string } | null>(null)
@@ -5232,6 +5261,207 @@ function App() {
       await persistDeadline({ ...existing, assignedStaffName: assignee }, 'Assistant work owner updated.', false)
       await api('/api/cases/' + item.caseId + '/activity', { method: 'POST', body: JSON.stringify({ activityType: 'WorkOwnerChanged', notes: 'Deadline "' + (item.title || 'Untitled') + '" reassigned from ' + previousOwner + ' to ' + (assignee || 'Unassigned') + '.', fieldChanged: 'AssignedStaffName', previousValue: previousOwner, newValue: assignee || 'Unassigned' }) })
     }
+  }
+
+  // Build-plan step 5: Document Templates admin (upload, section/overlap/runtime-input
+  // configuration, version activation) and Issue Tags admin (create/rename/retire, usage lookup).
+  async function loadPlatformTemplates() {
+    try {
+      setErrorMessage('')
+      const templates = await api<DocumentTemplateAdminSummary[]>('/api/document-platform/templates')
+      setPlatformTemplates(templates)
+      if (selectedPlatformTemplateKey) {
+        const refreshed = templates.find((t) => t.template.templateKey === selectedPlatformTemplateKey)
+        if (refreshed) selectPlatformTemplate(refreshed)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load document templates.')
+    }
+  }
+
+  function selectPlatformTemplate(summary: DocumentTemplateAdminSummary) {
+    setSelectedPlatformTemplateKey(summary.template.templateKey)
+    setPlatformConfigDraft({ sections: summary.sections, overlaps: summary.overlaps, runtimeInputs: summary.runtimeInputs })
+    setPlatformCompleteness(null)
+  }
+
+  async function auditPlatformTemplate(templateKey: string) {
+    try {
+      setErrorMessage('')
+      setPlatformCompleteness(await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${templateKey}/completeness`))
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit template merge tags.')
+    }
+  }
+
+  async function auditAllPlatformTemplates() {
+    try {
+      setErrorMessage('')
+      const reports = await Promise.all(platformTemplates.map(async (template) => {
+        const report = await api<DocumentTemplateCompletenessReport>(`/api/document-platform/templates/${template.template.templateKey}/completeness`)
+        return [template.template.templateKey, report] as const
+      }))
+      setPlatformCompletenessByKey(Object.fromEntries(reports))
+      const unknownCount = reports.filter(([, report]) => report.audit.unknownTags.length > 0).length
+      setMessage(unknownCount === 0 ? 'All active document templates passed the merge-tag audit.' : `${unknownCount} active template(s) need merge-tag review.`)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to audit all document templates.')
+    }
+  }
+
+  // Issue Tags' "Used By" column links a template title to its Advanced disclosure on the
+  // Document Templates settings screen. Titles (not keys) are what GetIssueTagUsageAsync returns,
+  // so this reloads the template catalog and matches by title - fine for an occasional admin
+  // click, and it means the Issue Tags screen never has to know a template's key.
+  async function navigateToTemplateAdvanced(templateTitle: string) {
+    try {
+      setErrorMessage('')
+      const templates = await api<DocumentTemplateAdminSummary[]>('/api/document-platform/templates')
+      setPlatformTemplates(templates)
+      const match = templates.find((t) => t.template.title.toLowerCase() === templateTitle.toLowerCase())
+      setPage('settings')
+      setSettingsSection('documentPlatformTemplates')
+      if (match) {
+        selectPlatformTemplate(match)
+        setPlatformAdvancedAutoOpenKey(match.template.templateKey)
+        setPlatformAdvancedNonce((n) => n + 1)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load document templates.')
+    }
+  }
+
+  async function uploadPlatformTemplate() {
+    if (!platformUploadFile) {
+      setErrorMessage('Choose a .docx file to upload.')
+      return
+    }
+    try {
+      setErrorMessage('')
+      const form = new FormData()
+      form.set('templateKey', platformUploadDraft.templateKey)
+      form.set('title', platformUploadDraft.title)
+      form.set('description', platformUploadDraft.description)
+      form.set('category', platformUploadDraft.category)
+      form.set('file', platformUploadFile)
+      const accessToken = await getApiAccessToken()
+      const headers = new Headers()
+      if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+      const response = await fetch('/api/document-platform/templates/upload', { method: 'POST', body: form, headers })
+      if (!response.ok) {
+        const parsed = await response.json().catch(() => null) as ApiError | null
+        throw new Error(parsed?.error ?? 'Unable to upload template.')
+      }
+      setMessage('Template uploaded.')
+      setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
+      setPlatformUploadFile(null)
+      setPlatformUploadKeyLocked(false)
+      await loadPlatformTemplates()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to upload template.')
+    }
+  }
+
+  function startUploadNewVersion(summary: DocumentTemplateAdminSummary) {
+    setPlatformUploadDraft({
+      templateKey: summary.template.templateKey,
+      title: summary.template.title,
+      description: summary.template.description || '',
+      category: summary.template.category,
+    })
+    setPlatformUploadFile(null)
+    setPlatformUploadKeyLocked(true)
+  }
+
+  function startNewPlatformTemplateUpload() {
+    setPlatformUploadDraft({ templateKey: '', title: '', description: '', category: '' })
+    setPlatformUploadFile(null)
+    setPlatformUploadKeyLocked(false)
+  }
+
+  async function savePlatformConfiguration() {
+    if (!selectedPlatformTemplateKey) return
+    try {
+      setErrorMessage('')
+      await api(`/api/document-platform/templates/${selectedPlatformTemplateKey}/configuration`, {
+        method: 'PUT',
+        body: JSON.stringify(platformConfigDraft),
+      })
+      setMessage('Configuration saved.')
+      await loadPlatformTemplates()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save configuration.')
+    }
+  }
+
+  async function activatePlatformVersion(templateKey: string, version: number) {
+    try {
+      setErrorMessage('')
+      await api(`/api/document-platform/templates/${templateKey}/versions/${version}/activate`, { method: 'POST' })
+      setMessage(`Version ${version} activated.`)
+      await loadPlatformTemplates()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to activate version.')
+    }
+  }
+
+  async function deletePlatformTemplate(templateKey: string, templateTitle: string) {
+    if (!(await confirmAction({ title: 'Delete template?', message: `"${templateTitle}" will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return
+    try {
+      setErrorMessage('')
+      await api(`/api/document-platform/templates/${templateKey}`, { method: 'DELETE' })
+      setMessage('Template deleted.')
+      if (selectedPlatformTemplateKey === templateKey) setSelectedPlatformTemplateKey(null)
+      await loadPlatformTemplates()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete template.')
+    }
+  }
+
+  function addSectionDraft() {
+    if (!newSectionDraft.sectionKey.trim() || !newSectionDraft.label.trim()) return
+    setPlatformConfigDraft((current) => ({
+      ...current,
+      sections: [...current.sections, {
+        sectionKey: newSectionDraft.sectionKey.trim(),
+        label: newSectionDraft.label.trim(),
+        description: newSectionDraft.description || null,
+        issueTagName: newSectionDraft.issueTagName || null,
+        sortOrder: current.sections.length,
+      }],
+    }))
+    setNewSectionDraft({ sectionKey: '', label: '', description: '', issueTagName: '' })
+  }
+
+  function removeSectionDraft(sectionKey: string) {
+    setPlatformConfigDraft((current) => ({
+      ...current,
+      sections: current.sections.filter((s) => s.sectionKey !== sectionKey),
+      overlaps: current.overlaps.filter((o) => o.sectionAKey !== sectionKey && o.sectionBKey !== sectionKey),
+    }))
+  }
+
+  function addOverlapDraft() {
+    if (!newOverlapDraft.sectionAKey || !newOverlapDraft.sectionBKey || newOverlapDraft.sectionAKey === newOverlapDraft.sectionBKey) return
+    setPlatformConfigDraft((current) => ({ ...current, overlaps: [...current.overlaps, { ...newOverlapDraft, note: newOverlapDraft.note || null }] }))
+    setNewOverlapDraft({ sectionAKey: '', sectionBKey: '', note: '' })
+  }
+
+  function removeOverlapDraft(index: number) {
+    setPlatformConfigDraft((current) => ({ ...current, overlaps: current.overlaps.filter((_, i) => i !== index) }))
+  }
+
+  function addRuntimeInputDraft() {
+    if (!newRuntimeInputDraft.fieldKey.trim() || !newRuntimeInputDraft.label.trim()) return
+    setPlatformConfigDraft((current) => ({
+      ...current,
+      runtimeInputs: [...current.runtimeInputs, { ...newRuntimeInputDraft, fieldKey: newRuntimeInputDraft.fieldKey.trim(), sortOrder: current.runtimeInputs.length }],
+    }))
+    setNewRuntimeInputDraft({ fieldKey: '', label: '', fieldType: 'text', isRequired: true })
+  }
+
+  function removeRuntimeInputDraft(fieldKey: string) {
+    setPlatformConfigDraft((current) => ({ ...current, runtimeInputs: current.runtimeInputs.filter((i) => i.fieldKey !== fieldKey) }))
   }
 
   async function loadIssueTagUsage() {
@@ -8253,6 +8483,7 @@ function App() {
               <span className="helper-text">Case utilities</span>
               <button className="compact-action-button" onClick={() => void generateDocument('summary')}>Generate Case Summary</button>
               <button className="compact-action-button" onClick={() => void generateDocument('memo')}>Generate Case Review</button>
+              <button className="compact-action-button" onClick={() => { setPage('settings'); setSettingsSection('documentPlatformTemplates') }}>Manage Document Templates</button>
               <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
             </div>
 
@@ -11854,6 +12085,199 @@ function App() {
             </Panel>
           )}
 
+          {settingsSection === 'documentPlatformTemplates' && (
+            <Panel title="Document Templates">
+              <div className="settings-subpanel">
+                <p className="helper-text">Edit the document in Word, then upload it — merge fields and optional section blocks are read from the file automatically. Advanced configuration (issue-tag links, generation-time prompts) is available per template below.</p>
+              </div>
+              <div className="button-row compact-actions">
+                <button className="compact-action-button" onClick={() => void loadPlatformTemplates()}>Load Templates</button>
+                <button className="compact-action-button" onClick={() => void auditAllPlatformTemplates()} disabled={platformTemplates.length === 0}>Audit All Active Templates</button>
+                <button className="compact-action-button" onClick={() => setShowMergeTagsModal(true)}>Available Merge Fields</button>
+              </div>
+
+              <h4 className="top-gap">{platformUploadKeyLocked ? `Upload New Version of "${platformUploadDraft.title}"` : 'Upload a New Template'}</h4>
+              <div className="form-grid top-gap-small">
+                <label><span>Title</span><input value={platformUploadDraft.title} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, title: e.target.value })} /></label>
+                <label><span>Category</span><select value={platformUploadDraft.category} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, category: e.target.value })}><option value="">Select category…</option>{documentTemplateCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+                <label className="full-span"><span>Description (optional)</span><input value={platformUploadDraft.description} onChange={(e) => setPlatformUploadDraft({ ...platformUploadDraft, description: e.target.value })} /></label>
+                <label className="full-span"><span>File (.docx)</span><input type="file" accept=".docx" onChange={(e) => setPlatformUploadFile(e.target.files?.[0] ?? null)} /></label>
+                <div className="full-span button-row compact-actions">
+                  <button className="primary" onClick={() => void uploadPlatformTemplate()}>{platformUploadKeyLocked ? 'Upload New Version' : 'Upload Template'}</button>
+                  {platformUploadKeyLocked && <button type="button" onClick={startNewPlatformTemplateUpload}>Cancel (upload a different template instead)</button>}
+                </div>
+              </div>
+
+              <h4 className="top-gap">Templates</h4>
+              <div className="table-wrap top-gap-small">
+                <table className="compact-table">
+                  <thead><tr><th>Title</th><th>Category</th><th>Active Version</th><th>Type</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {platformTemplates.map((t) => (
+                      <tr key={t.template.templateKey}>
+                        <td>{t.template.title}</td>
+                        <td>{t.template.category}</td>
+                        <td>{t.activeVersion ? `v${t.activeVersion.version}` : '—'}</td>
+                        <td>{t.template.isBuiltin ? <span className="pill pill-neutral">Built-in</span> : <span className="pill pill-success">Custom</span>}</td>
+                        <td>
+                          <div className="button-row compact-actions row-actions">
+                            <button className="primary" onClick={() => startUploadNewVersion(t)}>Upload New Version</button>
+                            <button onClick={() => selectPlatformTemplate(t)}>Advanced…</button>
+                            {!t.template.isBuiltin && <button onClick={() => void deletePlatformTemplate(t.template.templateKey, t.template.title)}>Delete</button>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {platformTemplates.length === 0 && <tr><td colSpan={5} className="helper-text">Click "Load Templates" to see the catalog.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+
+              {Object.keys(platformCompletenessByKey).length > 0 && (
+                <div className="inline-message top-gap-small">
+                  <p><strong>Catalog audit:</strong> {Object.values(platformCompletenessByKey).filter((report) => report.passed).length} of {Object.keys(platformCompletenessByKey).length} active template(s) have no unknown merge tags.</p>
+                  <p className="helper-text">Blank values are reported inside each template's audit; they are valid fields that may simply be empty for a particular case.</p>
+                </div>
+              )}
+
+              {selectedPlatformTemplateKey && (() => {
+                const selected = platformTemplates.find((t) => t.template.templateKey === selectedPlatformTemplateKey)
+                if (!selected) return null
+                return (
+                  <div className="top-gap">
+                    <CollapsiblePanel
+                      key={`advanced-${selected.template.templateKey}-${platformAdvancedNonce}`}
+                      title={`Advanced configuration — ${selected.template.title}`}
+                      defaultOpen={platformAdvancedAutoOpenKey === selected.template.templateKey}
+                    >
+                    <div className="inline-message warn"><p>Technical settings; most templates never need changes here. Sections and merge fields are detected automatically on upload.</p></div>
+                    <p className="helper-text">Template key: <code>{selected.template.templateKey}</code></p>
+                    <div className="button-row compact-actions top-gap-small">
+                      <button onClick={() => void auditPlatformTemplate(selected.template.templateKey)}>Audit Merge Tags</button>
+                      {platformCompleteness?.templateKey === selected.template.templateKey && <span className={platformCompleteness.passed ? 'pill pill-success' : 'pill pill-warning'}>{platformCompleteness.passed ? 'No unknown tags' : `${platformCompleteness.audit.unknownTags.length} unknown tag(s)`}</span>}
+                    </div>
+                    {platformCompleteness?.templateKey === selected.template.templateKey && (
+                      <div className={`inline-message ${platformCompleteness.passed ? 'success' : 'warn'}`}>
+                        <p><strong>Merge-tag audit for v{platformCompleteness.version}:</strong> {platformCompleteness.audit.discoveredTags.length} discovered, {platformCompleteness.audit.knownTags.length} known, {platformCompleteness.runtimeInputTags.length} runtime input(s).</p>
+                        {platformCompleteness.audit.unknownTags.length > 0 && <p>Unknown: {platformCompleteness.audit.unknownTags.join(', ')}</p>}
+                        {platformCompleteness.audit.blankValues.length > 0 && <p>Valid tags with no current value: {platformCompleteness.audit.blankValues.join(', ')}. These will appear as <code>MISSING</code> during generation when the case or runtime input does not supply a value.</p>}
+                        {platformCompleteness.audit.unknownTags.length === 0 && platformCompleteness.audit.blankValues.length === 0 && <p>All discovered tags resolve to a registered field or declared runtime input.</p>}
+                      </div>
+                    )}
+                    <p className="helper-text">A <strong>section</strong> is a <code>{'{{#Key}}'}...{'{{/Key}}'}</code> block in the .docx; new versions detect these automatically, but you can rename a section's label or link it to an issue tag here (linking pre-checks it on the case Documents tab when the case carries that tag). A <strong>runtime input</strong> makes an existing <code>{'{{FieldKey}}'}</code> token prompt the attorney for a value at generation time instead of pulling it from the case record. An <strong>overlap warning</strong> just flags two sections that cover similar ground — it never blocks generation.</p>
+                    {selected.lintIssues.length > 0 && (
+                      <div className="inline-message warn">{selected.lintIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>
+                    )}
+
+                    <h5>Versions</h5>
+                    <p className="helper-text">The active version is used for new drafts. Older versions remain available for audit and can be reactivated; generated documents retain the version used at generation time.</p>
+                    <div className="button-row compact-actions">
+                      {selected.versions.map((v) => (
+                        <span key={v.id} className="button-row compact-actions">
+                          <button className={v.isActive ? 'primary' : ''} disabled={v.isActive}
+                            onClick={() => void activatePlatformVersion(selected.template.templateKey, v.version)}>
+                            {v.isActive ? `v${v.version} Active` : `Activate v${v.version}`}
+                          </button>
+                          <span className="helper-text">{displayDateTime(v.createdAt)}{v.createdBy ? ` · ${v.createdBy}` : ''}{v.unknownTokens.length > 0 ? ` · ${v.unknownTokens.length} unknown tag(s)` : ''}</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    <h5 className="top-gap-small">Sections</h5>
+                    <p className="helper-text">Each row must match a {'{{#Key}}'} / {'{{/Key}}'} pair in the uploaded .docx. Tying a section to an issue tag pre-checks it on the case Documents tab when that case carries the tag.</p>
+                    <div className="table-wrap">
+                      <table className="compact-table">
+                        <thead><tr><th>Key</th><th>Label</th><th>Issue Tag</th><th>Actions</th></tr></thead>
+                        <tbody>
+                          {platformConfigDraft.sections.map((s) => (
+                            <tr key={s.sectionKey}>
+                              <td>{s.sectionKey}</td><td>{s.label}</td><td>{s.issueTagName || '—'}</td>
+                              <td><button onClick={() => removeSectionDraft(s.sectionKey)}>Remove</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="form-grid top-gap-small">
+                      <label><span>Section Key</span><input value={newSectionDraft.sectionKey} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, sectionKey: e.target.value })} placeholder="matches {{#Key}} in the .docx" /></label>
+                      <label><span>Label</span><input value={newSectionDraft.label} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, label: e.target.value })} /></label>
+                      <label><span>Issue Tag (optional)</span>
+                        <select value={newSectionDraft.issueTagName} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, issueTagName: e.target.value })}>
+                          <option value="">None</option>
+                          {allIssueTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+                        </select>
+                      </label>
+                      <label className="full-span"><span>Description</span><input value={newSectionDraft.description} onChange={(e) => setNewSectionDraft({ ...newSectionDraft, description: e.target.value })} /></label>
+                      <div className="full-span"><button onClick={addSectionDraft}>Add Section</button></div>
+                    </div>
+
+                    <h5 className="top-gap-small">Overlap Warnings</h5>
+                    <p className="helper-text">When two sections both fire, the case checklist shows a warning so the attorney can drop one rather than filing duplicated questions.</p>
+                    <div className="table-wrap">
+                      <table className="compact-table">
+                        <thead><tr><th>Section A</th><th>Section B</th><th>Note</th><th>Actions</th></tr></thead>
+                        <tbody>
+                          {platformConfigDraft.overlaps.map((o, i) => (
+                            <tr key={`${o.sectionAKey}-${o.sectionBKey}`}>
+                              <td>{o.sectionAKey}</td><td>{o.sectionBKey}</td><td>{o.note}</td>
+                              <td><button onClick={() => removeOverlapDraft(i)}>Remove</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="form-grid top-gap-small">
+                      <label><span>Section A</span>
+                        <select value={newOverlapDraft.sectionAKey} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, sectionAKey: e.target.value })}>
+                          <option value="">Select...</option>
+                          {platformConfigDraft.sections.map((s) => <option key={s.sectionKey} value={s.sectionKey}>{s.label}</option>)}
+                        </select>
+                      </label>
+                      <label><span>Section B</span>
+                        <select value={newOverlapDraft.sectionBKey} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, sectionBKey: e.target.value })}>
+                          <option value="">Select...</option>
+                          {platformConfigDraft.sections.map((s) => <option key={s.sectionKey} value={s.sectionKey}>{s.label}</option>)}
+                        </select>
+                      </label>
+                      <label className="full-span"><span>Note</span><input value={newOverlapDraft.note} onChange={(e) => setNewOverlapDraft({ ...newOverlapDraft, note: e.target.value })} /></label>
+                      <div className="full-span"><button onClick={addOverlapDraft}>Add Overlap</button></div>
+                    </div>
+
+                    <h5 className="top-gap-small">Runtime Inputs</h5>
+                    <p className="helper-text">Fields prompted for at generation time rather than resolved from the case (e.g. opposing counsel, a hearing date).</p>
+                    <div className="table-wrap">
+                      <table className="compact-table">
+                        <thead><tr><th>Field Key</th><th>Label</th><th>Type</th><th>Required</th><th>Actions</th></tr></thead>
+                        <tbody>
+                          {platformConfigDraft.runtimeInputs.map((i) => (
+                            <tr key={i.fieldKey}>
+                              <td>{i.fieldKey}</td><td>{i.label}</td><td>{i.fieldType}</td><td>{i.isRequired ? 'Yes' : 'No'}</td>
+                              <td><button onClick={() => removeRuntimeInputDraft(i.fieldKey)}>Remove</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="form-grid top-gap-small">
+                      <label><span>Field Key</span><input value={newRuntimeInputDraft.fieldKey} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, fieldKey: e.target.value })} placeholder="e.g. OpposingCounsel" /></label>
+                      <label><span>Label</span><input value={newRuntimeInputDraft.label} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, label: e.target.value })} /></label>
+                      <label><span>Type</span>
+                        <select value={newRuntimeInputDraft.fieldType} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, fieldType: e.target.value })}>
+                          <option value="text">Text</option><option value="date">Date</option><option value="number">Number</option><option value="textarea">Textarea</option>
+                        </select>
+                      </label>
+                      <label className="toggle-inline"><span>Required</span><input type="checkbox" checked={newRuntimeInputDraft.isRequired} onChange={(e) => setNewRuntimeInputDraft({ ...newRuntimeInputDraft, isRequired: e.target.checked })} /></label>
+                      <div className="full-span"><button onClick={addRuntimeInputDraft}>Add Runtime Input</button></div>
+                    </div>
+
+                    <button className="primary top-gap" onClick={() => void savePlatformConfiguration()}>Save Configuration</button>
+                    </CollapsiblePanel>
+                  </div>
+                )
+              })()}
+            </Panel>
+          )}
+
           {settingsSection === 'issueTags' && (
             <Panel title="Issue Tags">
               <p className="helper-text">Tags describe the issues a case involves (e.g. Timber, Access). Tagging a case automatically pre-checks that issue's questions when generating discovery documents.</p>
@@ -11884,7 +12308,14 @@ function App() {
                               <td><select value={issueTagEditDraft.category} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, category: e.target.value })}>{issueTagCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></td>
                               <td><input value={issueTagEditDraft.description} onChange={(e) => setIssueTagEditDraft({ ...issueTagEditDraft, description: e.target.value })} /></td>
                               <td>
-                                {usage && usage.templateTitles.length > 0 ? usage.templateTitles.join(', ') : '—'}
+                                {usage && usage.templateTitles.length > 0
+                                  ? usage.templateTitles.map((title, idx) => (
+                                      <span key={title}>
+                                        {idx > 0 && ', '}
+                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
+                                      </span>
+                                    ))
+                                  : '—'}
                               </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">
@@ -11899,7 +12330,14 @@ function App() {
                               <td>{tag.category}</td>
                               <td>{tag.description}</td>
                               <td>
-                                {usage && usage.templateTitles.length > 0 ? usage.templateTitles.join(', ') : '—'}
+                                {usage && usage.templateTitles.length > 0
+                                  ? usage.templateTitles.map((title, idx) => (
+                                      <span key={title}>
+                                        {idx > 0 && ', '}
+                                        <button type="button" className="link-button" onClick={() => void navigateToTemplateAdvanced(title)}>{title}</button>
+                                      </span>
+                                    ))
+                                  : '—'}
                               </td>
                               <td>
                                 <div className="button-row compact-actions row-actions">

@@ -119,10 +119,15 @@ components instead of one-off styles or a second date formatter.
 Microsoft Entra auth is scaffolded (`Security/`, `EntraOptions`, `EntraClaims`,
 `EntraUserProvisioningMiddleware`) but disabled by default (`Authentication:Entra:Enabled=false`).
 `CaseAccessService`/`CaseAccessEvaluator` implement per-user case assignment; `IsUnrestricted` covers
-Administrators plus any user flagged `is_manager` or with `manager_tier` Chief Counsel/Deputy Chief
-Counsel — a broad rule affecting every assignment-aware endpoint (case list, workspaces, exports,
-dashboards). There is no per-action role exception left in the codebase (the former Settlement
-Authority workflow, which used to be Chief-Counsel-exclusive, was removed entirely — see below).
+Administrators, any user flagged `is_manager` or with `manager_tier` Chief Counsel/Deputy Chief
+Counsel, and Legal Assistants (`IsLegalAssistant`, added so assistants get the same unrestricted
+access as a Manager rather than being scoped to supported attorneys' cases at this layer — that
+narrower default view is a client-side Staff Directory-linked dashboard concern, not a second
+access-control path) — a broad rule affecting every assignment-aware endpoint (case list,
+workspaces, exports, dashboards). There is no per-action role exception for Legal Assistants (e.g.
+deleting a service-log entry or confirming service perfected use the same check as an ordinary
+write — a deliberate choice, revisit only if it matters in practice). The former Settlement
+Authority workflow, which used to be Chief-Counsel-exclusive, was removed entirely.
 
 ### Document generation
 

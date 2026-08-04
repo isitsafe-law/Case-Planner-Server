@@ -80,6 +80,22 @@ Jury Trial is an Events event type and is the preferred editing path for trial d
 
 Close and Reopen are administrative actions inside Edit Case in the SQLite preview. They preserve tasks, deadlines, events, notes, documents, and audit history. Entra authorization is planned for a later deployment stage.
 
+A leanness audit against the goal of fairly comparing this system to Lawtoolbox removed seven pieces of dead or low-value functionality: the Settlement Authority workflow (Trial Watch now shows the latest Risk Analysis offer/counteroffer instead), the orphaned/unmounted Manager Approvals surface, edit capability on the activity trail (append-only from here on; history remains readable), the Document Templates management screen in Settings (generation and the underlying routes are unchanged), the admin-adjustable Needs Attention staleness threshold (now a fixed 60 days with explanatory copy; discovery/trial-prep/trial-watch look-ahead windows stay configurable), and `cases.track` as an input to case-status computation (`CaseStatus` is the directly-set source of truth; the search autocomplete for cases stayed).
+
+Checklist tasks carry an `owner_role` (`Attorney` | `LegalAssistant` | `Either`, default `Either`), set through a "Shows on" selector on the manual task form. The Legal Assistant dashboard's work queues exclude Attorney-only tasks; the Attorney Dashboard/general Work Queue remain unfiltered for now. Deadlines don't carry this field. Existing checklist-template tasks were not auto-classified from their text — that's a human-judgment call deferred to a later pass.
+
+Pre-filing tracts (`MatterType=PreFilingTract`) can carry a `RowIntakeStatus` — a different axis from the internal Legal Assistant → Attorney → Deputy Chief Counsel → Chief Counsel review chain, tracking where a tract sits relative to ROW/the title attorney before it's even assigned for that internal review (`Received from ROW` → `In Title Review` → `Returned to ROW`/`Ready for Assignment`, or a terminal outcome: `Acquired by Agreement`, `Project Revised`, `Withdrawn`). Title-review rounds are recorded on the case's pre-filing review-event log, prompting for the reviewer fresh each round rather than inferring it from the acting user. A case parked with ROW or at a terminal outcome drops out of the Attorney/Legal Assistant dashboards' active set while remaining fully queryable in the general case list.
+
+## Legal Assistant dashboard
+
+Role-routed for Entra deployments (a configurable `CasePlanner.LegalAssistant` app role) or reachable in the SQLite preview through the app-bar Local preview role switcher. It composes existing case, pipeline, event, work-item, and service records rather than introducing a second task/checklist system — see `docs/legal-assistant-dashboard-audit.md` for the full current-state audit and phased design this dashboard was built against.
+
+Event preparation links ordinary checklist/deadline work to a proceeding through `RelatedEventId` and opens a dedicated workspace with derived open/overdue/waiting counts, template application, and date-change proposal/review; approved event-date changes recalculate only open, non-overridden linked work.
+
+Attorney reminders are a durable, append-only record (one thread per case, optionally scoped to a specific proceeding) rather than the case-level waiting fields used before: repeated reminders on a still-open thread append history instead of opening a duplicate, and open threads surface as their own entries in the existing Attorney Action Queue (with a Resolve control) rather than a second inbox. No email is ever sent by this feature — the UI says "follow-up recorded."
+
+The Service and Publication section reads the same `ServiceStatusEngine` output used elsewhere (graduated checkin/warning/high/urgent/overdue bands) instead of a simple case-status boolean, sorted by severity, plus a publication-proof-outstanding exception list drawn from existing publication-entry records. Assistants can add/edit service and publication records; there is currently no field-level restriction distinguishing that from an attorney's ability to confirm perfected service (a deliberate decision — see `IsLegalAssistant` in `CaseAccessService.cs` — revisit only if it matters in practice).
+
 ## Management dashboard
 
 The Division Overview summarizes upcoming events, needs-attention cases, pipeline matters, and open tracts across the management scope. Open tracts include pipeline and filed work and exclude resolved/closed, legacy closed/complete, and Triage cases. Unassigned pipeline cases remain available through the pipeline data-quality/reporting views but are not a separate Division Overview card.
@@ -107,6 +123,8 @@ The manager dashboard does not show a permanent Awaiting Triage card. Triage is 
 The By Attorney view's Next Hard Date uses open case deadlines, jury-trial dates, and scheduled Hearing/Deposition/Mediation/Filing Deadline events. Completed or canceled events, generic Other events, tasks, and pipeline follow-up dates are not substituted as hard dates. The display includes the date and its label.
 
 Service-pending alerts use graduated bands from the filing date: day 60 is an attorney check-in, day 90 begins management-visible developing risk, days 105 and 115 increase urgency, and day 120 is due/overdue. Pipeline, closed, and perfected matters are excluded. The manager Needs Attention list does not promote ordinary 60-day check-ins.
+
+Division Overview includes a compact Legal Assistant Coverage panel: open waiting-on-attorney reminder threads, assistant-owned open/overdue work, unassigned-work coverage gaps, event-preparation risk (linked prep work that's actually overdue), and a pre-filing holder distribution strip (the same 5-bucket vocabulary as the Attorney Dashboard's Filing Pipeline panel — grouped by holder only, since `PipelineStage` data isn't reliably populated). These are risk/coverage counts and exception lists, not a per-assistant activity ranking. The panel's own service-risk count, and the KPI strip's `Service Risk` tile, both now read the shared `ServiceStatusEngine` bands rather than an independent raw-filing-date-age calculation.
 
 ## County and publication references
 

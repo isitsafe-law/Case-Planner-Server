@@ -3254,6 +3254,46 @@ table.ui-table {
   font-weight: 600;
 }
 
+/* Pinned beside the greeting (prominence investigation, 2026-08-05) - margin-left: auto pushes it
+   to the far right of .dash-hd's flex row without disturbing the greeting/date/summary group's own
+   layout; align-self overrides the header's baseline alignment since this is a padded box, not text. */
+.dash-next-trial-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-self: center;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--r-ctl);
+  background: var(--warning-bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease-out;
+}
+
+.dash-next-trial-badge:hover {
+  border-color: var(--warning-text);
+}
+
+.dash-next-trial-label {
+  font-size: var(--text-xs, 11px);
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--warning-text);
+}
+
+.dash-next-trial-value {
+  font-size: var(--text-sm, 12px);
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--warning-text);
+}
+
 /* Metric tile facet row (MetricTile) */
 .ui-tiles {
   display: flex;

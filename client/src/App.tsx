@@ -10854,6 +10854,23 @@ function App() {
                 {dashboardHeadline.dueThisWeekCount} due this week
               </span>
             )}
+            {/* Its own fixture beside the greeting rather than a KPI tile or a row inside Upcoming
+                Schedule (both tried and found wanting - see the prominence investigation, 2026-08-05):
+                pinned at the very top, above the fold on every load, in the page's real "coming up"
+                amber rather than the selection-blue wash the schedule row used. */}
+            <button
+              type="button"
+              className="dash-next-trial-badge"
+              onClick={openDashboardJuryTrials}
+              aria-label={dashboardPlanningSummary.nextJuryTrial ? `Next jury trial: ${dashboardPlanningSummary.nextJuryTrial.caseName}, ${dashboardPlanningSummary.nextJuryTrial.date}` : 'No jury trial scheduled within 180 days'}
+            >
+              <span className="dash-next-trial-label">Next trial</span>
+              <span className="dash-next-trial-value">
+                {dashboardPlanningSummary.nextJuryTrial
+                  ? `${dashboardPlanningSummary.nextJuryTrial.date} · ${dashboardPlanningSummary.nextJuryTrial.daysRemaining === 0 ? 'Today' : `${dashboardPlanningSummary.nextJuryTrial.daysRemaining} days`}`
+                  : 'None scheduled'}
+              </span>
+            </button>
           </div>
 
           {attorneyDashboardError && <ErrorState message={attorneyDashboardError} onRetry={() => void loadAttorneyDashboard({})} />}

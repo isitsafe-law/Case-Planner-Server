@@ -16,13 +16,28 @@ export function DashboardCompactSummaries({ planning, onJuryTrial, schedule, onE
   onViewCalendar: () => void
 }) {
   const trial = planning.nextJuryTrial
-  return <div className="dashboard-planning-column">
-    <button type="button" className="dashboard-next-trial-card" onClick={onJuryTrial} aria-label={trial ? `Next jury trial: ${trial.caseName}, ${trial.date}` : 'No upcoming jury trial'}>
-      <span>Next jury trial</span>
-      <strong>{trial ? trial.date : 'None scheduled'}</strong>
-      <small>{trial ? trial.caseName : `${planning.juryTrials} within 180 days`}</small>
-      {trial && <em>{trial.daysRemaining === 0 ? 'Today' : `${trial.daysRemaining} days remaining`}</em>}
-    </button>
-    <DashboardUpcomingSchedule items={schedule} onEvent={onEvent} onViewCalendar={onViewCalendar} />
-  </div>
+  return (
+    <DashboardUpcomingSchedule
+      items={schedule}
+      onEvent={onEvent}
+      onViewCalendar={onViewCalendar}
+      featured={
+        <button
+          type="button"
+          className="dashboard-schedule-item dashboard-schedule-item-featured"
+          onClick={onJuryTrial}
+          aria-label={trial ? `Next jury trial: ${trial.caseName}, ${trial.date}` : 'No upcoming jury trial'}
+        >
+          <span className="dashboard-schedule-date">
+            {trial ? trial.date : 'None scheduled'}
+            <small>{trial ? (trial.daysRemaining === 0 ? 'Today' : `${trial.daysRemaining} days`) : `${planning.juryTrials} in 180 days`}</small>
+          </span>
+          <span className="dashboard-schedule-detail">
+            <strong>Next Jury Trial</strong>
+            <span>{trial ? trial.caseName : 'None currently scheduled'}</span>
+          </span>
+        </button>
+      }
+    />
+  )
 }

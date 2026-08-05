@@ -5,7 +5,6 @@ import { PRIORITY_TILES, DISCOVERY_STRATEGIES } from './dashboard/types'
 import { ManagerDashboard } from './dashboard/ManagerDashboard'
 import { GlobalCalendarTab, type CalendarEventPage, type CalendarEventQuery } from './dashboard/GlobalCalendarTab'
 import { CASE_EVENT_TYPES } from './eventTypes'
-import { ActionQueueFilters } from './dashboard/ActionQueueFilters'
 import { ActionQueueRow, type ActionQueueHandlers } from './dashboard/ActionQueueRow'
 import { DiscoveryControlPanel } from './dashboard/DiscoveryControlPanel'
 import { MomentumReviewPanel } from './dashboard/MomentumReviewPanel'
@@ -2346,7 +2345,6 @@ function App() {
   const [attorneyDashboard, setAttorneyDashboard] = useState<AttorneyDashboardResponse | null>(null)
   const [attorneyDashboardLoading, setAttorneyDashboardLoading] = useState(false)
   const [attorneyDashboardError, setAttorneyDashboardError] = useState('')
-  const [attorneyDashboardFilters, setAttorneyDashboardFilters] = useState<AttorneyDashboardFilters>({})
   // All four priority levels start active - a silently-filtered default queue can read as "all
   // clear" when it isn't, the worst failure mode for deadline-tracking software (critique P0,
   // 2026-08-04). Levels 1/2 only had toggle affordances in the visible KPI strip anyway, so a
@@ -2629,7 +2627,6 @@ function App() {
   }
   const [paletteCaseQuery, setPaletteCaseQuery] = useState('')
   const [paletteCaseResults, setPaletteCaseResults] = useState<CaseRecord[]>([])
-  const [dashboardFiltersOpen, setDashboardFiltersOpen] = useState(false)
   const [dashboardPanelTab, setDashboardPanelTab] = useState<'discovery' | 'momentum' | 'pipeline' | 'trial' | 'projects' | 'docket'>(() => {
     const saved = window.localStorage.getItem('case-insight-tab')
     return saved === 'discovery' || saved === 'momentum' || saved === 'pipeline' || saved === 'trial' || saved === 'projects' || saved === 'docket' ? saved : 'docket'
@@ -2835,10 +2832,10 @@ function App() {
 
   useEffect(() => {
     if (page === 'dashboard') {
-      void loadAttorneyDashboard(attorneyDashboardFilters)
+      void loadAttorneyDashboard({})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, attorneyDashboardFilters])
+  }, [page])
 
   useEffect(() => {
     const caseId = selectedCaseId
@@ -3807,7 +3804,7 @@ function App() {
   }
 
   async function refreshAttorneyDashboard() {
-    await loadAttorneyDashboard(attorneyDashboardFilters)
+    await loadAttorneyDashboard({})
   }
 
   async function saveReferenceDocument() {
@@ -10859,7 +10856,7 @@ function App() {
             )}
           </div>
 
-          {attorneyDashboardError && <ErrorState message={attorneyDashboardError} onRetry={() => void loadAttorneyDashboard(attorneyDashboardFilters)} />}
+          {attorneyDashboardError && <ErrorState message={attorneyDashboardError} onRetry={() => void loadAttorneyDashboard({})} />}
 
           {attorneyDashboardLoading && !attorneyDashboard ? (
             <LoadingSkeleton rows={6} />
@@ -10867,35 +10864,11 @@ function App() {
             <>
               <div className="ui-tiles dashboard-kpi-strip" style={{ marginBottom: '1rem' }}>
                 <MetricTile label="Immediate" value={dashboardOverdueItems.length + dashboardUpcomingWorkItems.filter((item) => item.dueDate === new Date().toISOString().slice(0, 10)).length} tone="danger" hint="Overdue or due today" onClick={() => { setWorkQueueUrgency('Immediate'); setWorkQueueFilter('all'); setWorkQueueSearch(''); setPage('queues') }} />
-                <MetricTile label="Attorney decision" value={priorityQueueCounts[2] ?? 0} tone="warn" hint="Cases requiring your decision" />
+                <MetricTile label="Attorney decision" value={priorityQueueCounts[2] ?? 0} tone="warn" active={activeQueueTiles.size === 1 && activeQueueTiles.has(2)} onClick={() => setActiveQueueTiles(new Set([2]))} />
                 <MetricTile label="Upcoming work" value={dashboardUpcomingWorkItems8To30.length} hint="Open work due in 8–30 days" onClick={openUpcomingWork} />
-                <MetricTile label="Jury trials" value={dashboardPlanningSummary.juryTrials} hint="Within 180 days" onClick={openDashboardJuryTrials} />
+                <MetricTile label="Jury trials" value={dashboardPlanningSummary.juryTrials} hint="Jury trials in the next 180 days" onClick={openDashboardJuryTrials} />
                 {attorneyDashboard.triageCaseCount > 0 && <MetricTile label="Awaiting triage" value={attorneyDashboard.triageCaseCount} onClick={() => goToTriageQueue()} />}
               </div>
-
-              <div className="button-row compact-actions">
-                <button onClick={() => setDashboardFiltersOpen(true)}>
-                  Filters{Object.values(attorneyDashboardFilters).filter((value) => value !== undefined && value !== '' && value !== null).length > 0 ? ` (${Object.values(attorneyDashboardFilters).filter((value) => value !== undefined && value !== '' && value !== null).length})` : ''}
-                </button>
-              </div>
-
-              {dashboardFiltersOpen && (
-                <>
-                  <div className="slideover-backdrop" onClick={() => setDashboardFiltersOpen(false)} />
-                  <aside className="filter-slideover" role="dialog" aria-label="Dashboard filters">
-                    <div className="button-row split-row">
-                      <strong>Filters</strong>
-                      <button onClick={() => setDashboardFiltersOpen(false)}>Close</button>
-                    </div>
-                    <ActionQueueFilters
-                      filters={attorneyDashboardFilters}
-                      counties={arkansasCounties}
-                      projects={Array.from(new Set(attorneyDashboard.projectWatch.map((p) => p.projectName)))}
-                      onChange={setAttorneyDashboardFilters}
-                    />
-                  </aside>
-                </>
-              )}
 
               <div className="dashboard-card-grid">
               <div className="dash-cols">

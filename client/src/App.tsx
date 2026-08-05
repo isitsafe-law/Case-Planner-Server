@@ -10907,6 +10907,9 @@ function App() {
                       </FilterChip>
                     ))}
                     <FilterSep />
+                    <Btn size="sm" variant="ghost" onClick={() => setActiveQueueTiles(new Set(PRIORITY_TILES.map((tile) => tile.level)))}>Select all</Btn>
+                    <Btn size="sm" variant="ghost" onClick={() => setActiveQueueTiles(new Set())}>Clear selected</Btn>
+                    <FilterSep />
                     <FilterSummary>{activeQueueTiles.size} of {PRIORITY_TILES.length} shown</FilterSummary>
                   </FilterBar>
                   {queueHearings.filter((event) => pendingEventChangeIds.has(event.id)).length > 0 && <div className="pending-approval-strip">
